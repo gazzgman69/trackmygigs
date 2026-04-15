@@ -41,6 +41,16 @@ app.use(express.static(path.join(__dirname, 'public'), {
 app.use('/auth', authRoutes);
 app.use('/api', apiRoutes);
 
+// Serve config.js as valid JS regardless of browser cache state.
+// Old index.html versions reference this file; returning valid JS prevents
+// the "Unexpected token '<'" crash caused by a cached HTML response.
+app.get('/config.js', (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID || '775009954166-8ngl19vdj033jv0mbquoll385c8cd58t.apps.googleusercontent.com';
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, private');
+  res.setHeader('Content-Type', 'application/javascript');
+  res.send(`window.GOOGLE_CLIENT_ID = window.GOOGLE_CLIENT_ID || "${clientId}";\n`);
+});
+
 // Asset requests that don't exist as static files → 404 (never return HTML)
 const ASSET_EXTENSIONS = /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff|woff2|ttf|map)$/i;
 
@@ -50,7 +60,7 @@ app.get('*', (req, res) => {
     return;
   }
   // Serve the pre-built index.html with injected BUILD_ID — never cached
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, private');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
