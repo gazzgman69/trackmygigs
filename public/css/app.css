@@ -797,6 +797,17 @@ body {
   transform: translateY(-1px);
 }
 
+.button-success {
+  background-color: var(--success);
+  color: #fff;
+}
+
+.button-outline {
+  background-color: var(--card);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+
 .button-secondary {
   background-color: var(--card);
   color: var(--text);

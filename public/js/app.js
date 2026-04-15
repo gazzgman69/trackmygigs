@@ -653,9 +653,9 @@ function renderCreateGigScreen() {
   content.innerHTML = `
     <div class="wizard-container">
       <div class="wizard-header">
-        <button class="wizard-back-btn" id="wizardBackBtn" onclick="wizardBack()">←</button>
-        <div class="wizard-title">Add a Gig</div>
-        <div class="wizard-step-counter" id="wizardStepCounter">1 of 5</div>
+        <button class="wizard-back-btn" id="wizardBackBtn" onclick="wizardBack()">&#8249; Back</button>
+        <div class="wizard-title">New Gig</div>
+        <div class="wizard-step-counter" id="wizardStepCounter" onclick="renderFullGigForm()" style="cursor:pointer;color:var(--text-3);font-size:12px;">Show full form</div>
       </div>
       <div class="wizard-progress" id="wizardProgress">
         <div class="wizard-dot active" id="wizardDot1"></div>
@@ -687,25 +687,22 @@ function renderWizardStep(step) {
     else if (i === step) dot.classList.add('active');
   }
 
-  if (backBtn) backBtn.disabled = step === 1;
-  if (counter) counter.textContent = `${step} of 5`;
-
-  const isLastStep = step === 5;
-  const nextLabel = isLastStep ? 'Save Gig' : 'Next →';
+  if (backBtn) backBtn.style.visibility = step === 1 ? 'hidden' : 'visible';
 
   let stepHTML = '';
 
   if (step === 1) {
     const recentBands = getRecentBands();
     stepHTML = `
-      <div class="wizard-step-question">Which band or project? 🎸</div>
-      <div class="wizard-step-hint">Who are you playing with?</div>
+      <div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Step 1 of 5</div>
+      <div class="wizard-step-question">Who's the gig with?</div>
+      <div class="wizard-step-hint">Band name, client, or your own booking</div>
       <div class="form-group">
         <input
           type="text"
           class="form-input"
           id="wBandName"
-          placeholder="e.g. The Jazz Collective"
+          placeholder="Start typing a name..."
           value="${escapeHtml(gigWizardData.band_name)}"
           autocomplete="off"
           oninput="filterBandSuggestions(this.value)"
@@ -734,40 +731,37 @@ function renderWizardStep(step) {
     `;
   } else if (step === 2) {
     stepHTML = `
-      <div class="wizard-step-question">Where is it? 📍</div>
-      <div class="wizard-step-hint">Venue name and address</div>
+      <div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Step 2 of 5</div>
+      <div class="wizard-step-question">Where's the gig?</div>
+      <div class="wizard-step-hint">Search for the venue - we'll grab the full address for directions & mileage</div>
       <div class="form-group">
-        <label class="form-label">Venue Name *</label>
         <input
           type="text"
           class="form-input"
           id="wVenueName"
-          placeholder="e.g. The Royal Oak"
+          placeholder="Search venues..."
           value="${escapeHtml(gigWizardData.venue_name)}"
           autocomplete="off"
         >
         <div class="wizard-error" id="wVenueError">Please enter the venue name</div>
       </div>
-      <div class="form-group">
-        <label class="form-label" style="display:flex; gap: var(--spacing-2);">
-          Address
-          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);">(optional)</span>
-        </label>
+      <div class="form-group" style="display:none;">
         <input
           type="text"
           class="form-input"
           id="wVenueAddress"
-          placeholder="e.g. 123 High Street, Manchester"
+          placeholder=""
           value="${escapeHtml(gigWizardData.venue_address)}"
         >
       </div>
     `;
   } else if (step === 3) {
     stepHTML = `
-      <div class="wizard-step-question">When is it? 📅</div>
-      <div class="wizard-step-hint">Date and set times</div>
+      <div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Step 3 of 5</div>
+      <div class="wizard-step-question">When is it?</div>
+      <div class="wizard-step-hint">Date and times</div>
       <div class="form-group">
-        <label class="form-label">Date *</label>
+        <label class="form-label">Date</label>
         <input
           type="date"
           class="form-input"
@@ -777,41 +771,36 @@ function renderWizardStep(step) {
         <div class="wizard-error" id="wDateError">Please pick a date</div>
       </div>
       <div class="form-group">
-        <label class="form-label">
-          Set Times
-          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);"> (optional)</span>
-        </label>
         <div class="time-row">
           <div>
-            <label style="font-size: var(--font-size-sm); color: var(--text-2); display: block; margin-bottom: 4px;">Start</label>
+            <label class="form-label">Start time</label>
             <input type="time" class="form-input" id="wStartTime" value="${gigWizardData.start_time}">
           </div>
           <div>
-            <label style="font-size: var(--font-size-sm); color: var(--text-2); display: block; margin-bottom: 4px;">End</label>
+            <label class="form-label">End time</label>
             <input type="time" class="form-input" id="wEndTime" value="${gigWizardData.end_time}">
           </div>
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">
-          Load-in Time
-          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);"> (optional)</span>
-        </label>
+        <label class="form-label">Load-in / arrival (optional)</label>
         <input type="time" class="form-input" id="wLoadIn" value="${gigWizardData.load_in_time}" style="max-width: 50%;">
       </div>
     `;
   } else if (step === 4) {
     stepHTML = `
-      <div class="wizard-step-question">Fee and status 💷</div>
-      <div class="wizard-step-hint">How much are you getting paid?</div>
+      <div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Step 4 of 5</div>
+      <div class="wizard-step-question">How much & what's the status?</div>
+      <div class="wizard-step-hint">Your fee and whether it's confirmed</div>
       <div class="form-group">
+        <label class="form-label">Fee (&pound;)</label>
         <div class="fee-input-wrapper">
-          <span class="fee-currency">£</span>
+          <span class="fee-currency">&pound;</span>
           <input
             type="number"
             class="fee-input-big"
             id="wFee"
-            placeholder="0"
+            placeholder="280"
             value="${gigWizardData.fee}"
             min="0"
             step="1"
@@ -825,83 +814,87 @@ function renderWizardStep(step) {
           <button
             class="chip chip-confirmed ${gigWizardData.status === 'confirmed' ? 'selected' : ''}"
             onclick="selectGigStatus('confirmed')"
-          >✓ Confirmed</button>
+          >Confirmed</button>
           <button
             class="chip chip-pencilled ${gigWizardData.status === 'tentative' ? 'selected' : ''}"
             onclick="selectGigStatus('tentative')"
-          >✏ Pencilled</button>
+          >Pencilled</button>
           <button
             class="chip chip-enquiry ${gigWizardData.status === 'enquiry' ? 'selected' : ''}"
             onclick="selectGigStatus('enquiry')"
-          >? Enquiry</button>
+          >Enquiry</button>
         </div>
       </div>
     `;
   } else if (step === 5) {
     const gigTypes = [
-      'Wedding',
-      'Corporate',
-      'Pub',
-      'Club',
-      'Festival',
-      'Function',
-      'Theatre',
-      'Other',
+      { label: '\u{1F492} Wedding', value: 'Wedding' },
+      { label: '\u{1F3E2} Corporate', value: 'Corporate' },
+      { label: '\u{1F37A} Pub / Club', value: 'Pub / Club' },
+      { label: '\u{1F389} Private party', value: 'Private party' },
+      { label: '\u{1F3AA} Festival', value: 'Festival' },
+      { label: '\u{1F3E8} Hotel', value: 'Hotel' },
+      { label: '\u{1F3AD} Theatre', value: 'Theatre' },
+      { label: '\u26EA Church', value: 'Church' },
+      { label: '\u{1F37D}\uFE0F Restaurant', value: 'Restaurant' },
+      { label: '\u{1F4CC} Other', value: 'Other' },
     ];
     stepHTML = `
-      <div class="wizard-step-question">Any extras? 🎉</div>
-      <div class="wizard-step-hint">Gig type, dress code, notes</div>
+      <div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Step 5 of 5</div>
+      <div class="wizard-step-question">Quick extras</div>
+      <div class="wizard-step-hint">All optional - skip any you don't need</div>
       <div class="form-group">
-        <label class="form-label">
-          Gig Type
-          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);"> (optional)</span>
-        </label>
+        <label class="form-label">What type of gig?</label>
         <div class="chip-group">
           ${gigTypes
             .map(
               (t) => `
             <button
-              class="chip ${gigWizardData.gig_type === t ? 'selected' : ''}"
-              onclick="toggleGigType('${t}', this)"
-            >${t}</button>
+              class="chip ${gigWizardData.gig_type === t.value ? 'selected' : ''}"
+              onclick="toggleGigType('${t.value}', this)"
+            >${t.label}</button>
           `
             )
             .join('')}
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">
-          Dress Code
-          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);"> (optional)</span>
-        </label>
+        <label class="form-label">Dress code</label>
         <input
           type="text"
           class="form-input"
           id="wDressCode"
-          placeholder="e.g. Smart Casual, Black Tie"
+          placeholder="e.g. Smart casual, Black tie"
           value="${escapeHtml(gigWizardData.dress_code)}"
         >
       </div>
       <div class="form-group">
-        <label class="form-label">
-          Notes
-          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);"> (optional)</span>
-        </label>
+        <label class="form-label">Notes</label>
         <textarea
           class="form-textarea"
           id="wNotes"
-          placeholder="Parking, contact info, set length..."
+          placeholder="Parking info, contacts, anything useful..."
           rows="3"
         >${escapeHtml(gigWizardData.notes)}</textarea>
       </div>
     `;
   }
 
+  const nextLabels = {
+    1: 'Next \u2192 Where?',
+    2: 'Next \u2192 When?',
+    3: 'Next \u2192 How much?',
+    4: 'Next \u2192 Extras',
+    5: '\u2713 Save gig',
+  };
+  const nextLabel = nextLabels[step] || 'Next';
+  const isSave = step === 5;
+
   body.innerHTML = `
     ${stepHTML}
-    <div class="wizard-footer">
-      <button class="button button-primary button-block" id="wizardNextBtn" onclick="wizardNext()">${nextLabel}</button>
-      ${step === 1 ? `<button class="wizard-full-form-link" onclick="renderFullGigForm()">Show full form instead</button>` : ''}
+    <div class="wizard-footer" style="display:flex;gap:8px;">
+      ${step > 1 ? `<button class="button button-outline" style="width:80px;" onclick="wizardBack()">\u2190 Back</button>` : ''}
+      <button class="button ${isSave ? 'button-success' : 'button-primary'} button-block" id="wizardNextBtn" onclick="wizardNext()" style="flex:1;">${nextLabel}</button>
     </div>
   `;
 
