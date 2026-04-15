@@ -26,7 +26,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Serve static assets (JS, CSS, images) — never serve index.html from here
+// Serve static assets (JS, CSS, images) — never serve index.html or sw.js from here
+// sw.js is excluded because the server injects BUILD_ID into it dynamically
+app.use((req, res, next) => {
+  if (req.path === '/sw.js') return next(); // skip static, hit our custom route below
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public'), {
   index: false, // prevent express.static from serving index.html for /
   setHeaders: (res, filePath) => {
@@ -40,6 +45,22 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 app.use('/auth', authRoutes);
 app.use('/api', apiRoutes);
+
+// Serve sw.js with BUILD_ID injected so the service worker cache name changes
+// on every server restart — forcing browsers to install the new worker and
+// wipe out any stale cached responses.
+app.get('/sw.js', (req, res) => {
+  const swPath = path.join(__dirname, 'public', 'sw.js');
+  let swSource = fs.readFileSync(swPath, 'utf8');
+  // Replace the placeholder CACHE_VERSION with the real BUILD_ID
+  swSource = swSource.replace(
+    "const CACHE_VERSION = self.CACHE_VERSION || 'v-' + Date.now();",
+    `const CACHE_VERSION = '${BUILD_ID}';`
+  );
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, private');
+  res.setHeader('Content-Type', 'application/javascript');
+  res.send(swSource);
+});
 
 // Serve config.js as valid JS regardless of browser cache state.
 // Old index.html versions reference this file; returning valid JS prevents
