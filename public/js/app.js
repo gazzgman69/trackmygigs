@@ -54,6 +54,20 @@ function initApp(user) {
   setupScreenHandlers();
   renderHomeScreen();
   showScreen('home');
+
+  // Pre-fetch gigs in background so they're instant when the user taps the tab
+  prefetchGigs();
+}
+
+async function prefetchGigs() {
+  try {
+    const res = await fetch('/api/gigs');
+    if (res.ok) {
+      window._cachedGigs = await res.json();
+    }
+  } catch {
+    // silently ignore - will fetch when tab is tapped
+  }
 }
 
 function setupThemeToggle() {
@@ -242,6 +256,9 @@ function renderHomeScreen() {
 async function renderGigsScreen() {
   const content = document.getElementById('gigsScreen');
 
+  // If we already have cached gigs, render them instantly (no loading spinner)
+  const cached = window._cachedGigs;
+
   content.innerHTML = `
     <div class="section">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-4);">
@@ -249,10 +266,15 @@ async function renderGigsScreen() {
         <button class="button button-primary button-small" onclick="openGigWizard()">+ Add</button>
       </div>
       <div id="gigsListContent">
-        <div style="text-align: center; padding: var(--spacing-8); color: var(--text-2);">Loading...</div>
+        ${cached ? '' : '<div style="text-align: center; padding: var(--spacing-8); color: var(--text-2);">Loading...</div>'}
       </div>
     </div>
   `;
+
+  // Show cached data immediately while we fetch fresh data in the background
+  if (cached) {
+    renderGigsList(cached);
+  }
 
   try {
     const response = await fetch('/api/gigs');
@@ -260,53 +282,58 @@ async function renderGigsScreen() {
     const gigs = await response.json();
 
     window._cachedGigs = gigs;
-
-    const listContent = document.getElementById('gigsListContent');
-    if (!listContent) return;
-
-    if (gigs.length === 0) {
-      listContent.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-icon">🎸</div>
-          <div class="empty-state-title">No gigs yet</div>
-          <div class="empty-state-text">Tap + Add to log your first gig</div>
-        </div>
-      `;
-      return;
-    }
-
-    listContent.innerHTML = gigs
-      .map(
-        (gig) => `
-      <div class="gig-card ${gig.status === 'confirmed' ? 'upcoming' : gig.status === 'cancelled' ? 'cancelled' : ''}">
-        <div class="gig-date">${formatDate(gig.date)}</div>
-        <div class="gig-venue">${gig.band_name || 'Unnamed Gig'}</div>
-        <div class="gig-meta">
-          <div class="gig-meta-item">📍 ${gig.venue_name || 'No venue'}</div>
-          ${gig.start_time ? `<div class="gig-meta-item">🕐 ${formatTime(gig.start_time)}${gig.end_time ? ' – ' + formatTime(gig.end_time) : ''}</div>` : ''}
-        </div>
-        <div class="gig-bottom">
-          <span class="badge badge-${statusBadgeClass(gig.status)}">${statusLabel(gig.status)}</span>
-          ${gig.fee ? `<div class="gig-fee">£${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
-        </div>
-      </div>
-    `
-      )
-      .join('');
+    renderGigsList(gigs);
   } catch (err) {
     console.error('Load gigs error:', err);
-    const listContent = document.getElementById('gigsListContent');
-    if (listContent) {
-      listContent.innerHTML = `
-        <div class="alert alert-error" style="margin-bottom: var(--spacing-4);">Failed to load gigs</div>
-        <div class="empty-state">
-          <div class="empty-state-icon">📋</div>
-          <div class="empty-state-title">Couldn't load gigs</div>
-          <div class="empty-state-text">Check your connection and try again</div>
-        </div>
-      `;
+    // Only show error if we didn't already render from cache
+    if (!cached) {
+      const listContent = document.getElementById('gigsListContent');
+      if (listContent) {
+        listContent.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">📋</div>
+            <div class="empty-state-title">Couldn't load gigs</div>
+            <div class="empty-state-text">Check your connection and try again</div>
+          </div>
+        `;
+      }
     }
   }
+}
+
+function renderGigsList(gigs) {
+  const listContent = document.getElementById('gigsListContent');
+  if (!listContent) return;
+
+  if (gigs.length === 0) {
+    listContent.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">🎸</div>
+        <div class="empty-state-title">No gigs yet</div>
+        <div class="empty-state-text">Tap + Add to log your first gig</div>
+      </div>
+    `;
+    return;
+  }
+
+  listContent.innerHTML = gigs
+    .map(
+      (gig) => `
+    <div class="gig-card ${gig.status === 'confirmed' ? 'upcoming' : gig.status === 'cancelled' ? 'cancelled' : ''}">
+      <div class="gig-date">${formatDate(gig.date)}</div>
+      <div class="gig-venue">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
+      <div class="gig-meta">
+        <div class="gig-meta-item">${escapeHtml(gig.venue_name || 'No venue')}</div>
+        ${gig.start_time ? `<div class="gig-meta-item">${formatTime(gig.start_time)}${gig.end_time ? ' - ' + formatTime(gig.end_time) : ''}</div>` : ''}
+      </div>
+      <div class="gig-bottom">
+        <span class="badge badge-${statusBadgeClass(gig.status)}">${statusLabel(gig.status)}</span>
+        ${gig.fee ? `<div class="gig-fee">£${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
+      </div>
+    </div>
+  `
+    )
+    .join('');
 }
 
 function statusBadgeClass(status) {
