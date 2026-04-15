@@ -16,12 +16,6 @@ app.use(cookieParser());
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Serve Google Client ID to frontend (not a secret)
-app.get('/config.js', (req, res) => {
-  res.type('application/javascript');
-  res.send(`window.GOOGLE_CLIENT_ID = "${process.env.GOOGLE_CLIENT_ID || ''}";`);
-});
-
 app.use('/auth', authRoutes);
 app.use('/api', apiRoutes);
 
