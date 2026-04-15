@@ -4,6 +4,11 @@ let mockOffers = 4;
 let mockOverdueInvoices = 1;
 let mockDraftInvoices = 2;
 
+// Wizard state
+let gigWizardStep = 1;
+let gigWizardData = {};
+window._cachedGigs = null;
+
 const mockGigs = [
   {
     id: '1',
@@ -94,7 +99,6 @@ function setupScreenHandlers() {
   setupGigsScreen();
   setupInvoicesScreen();
   setupOffersScreen();
-  setupCreateGigScreen();
 }
 
 function showScreen(screenName) {
@@ -138,8 +142,6 @@ function showScreen(screenName) {
 function renderHomeScreen() {
   const content = document.getElementById('homeScreen');
   const nextGig = mockGigs[0];
-
-  const greeting = getGreeting();
 
   content.innerHTML = `
     <div class="section">
@@ -236,32 +238,96 @@ function renderHomeScreen() {
   `;
 }
 
-function renderGigsScreen() {
+async function renderGigsScreen() {
   const content = document.getElementById('gigsScreen');
 
   content.innerHTML = `
     <div class="section">
-      <div class="section-title">Your Gigs</div>
-      ${mockGigs
-        .map(
-          (gig) => `
-        <div class="gig-card ${gig.status === 'confirmed' ? 'upcoming' : ''}">
-          <div class="gig-date">${formatDate(gig.date)}</div>
-          <div class="gig-venue">${gig.band_name}</div>
-          <div class="gig-meta">
-            <div class="gig-meta-item">📍 ${gig.venue_name}</div>
-            <div class="gig-meta-item">🎵 ${gig.start_time} - ${gig.end_time}</div>
-          </div>
-          <div class="gig-bottom">
-            <span class="badge badge-${gig.status === 'confirmed' ? 'success' : 'info'}">${gig.status}</span>
-            <div class="gig-fee">£${gig.fee}</div>
-          </div>
-        </div>
-      `
-        )
-        .join('')}
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-4);">
+        <div class="section-title" style="margin-bottom: 0;">Your Gigs</div>
+        <button class="button button-primary button-small" onclick="openGigWizard()">+ Add</button>
+      </div>
+      <div id="gigsListContent">
+        <div style="text-align: center; padding: var(--spacing-8); color: var(--text-2);">Loading...</div>
+      </div>
     </div>
   `;
+
+  try {
+    const response = await fetch('/api/gigs');
+    if (!response.ok) throw new Error('Failed to fetch');
+    const gigs = await response.json();
+
+    window._cachedGigs = gigs;
+
+    const listContent = document.getElementById('gigsListContent');
+    if (!listContent) return;
+
+    if (gigs.length === 0) {
+      listContent.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">🎸</div>
+          <div class="empty-state-title">No gigs yet</div>
+          <div class="empty-state-text">Tap + Add to log your first gig</div>
+        </div>
+      `;
+      return;
+    }
+
+    listContent.innerHTML = gigs
+      .map(
+        (gig) => `
+      <div class="gig-card ${gig.status === 'confirmed' ? 'upcoming' : gig.status === 'cancelled' ? 'cancelled' : ''}">
+        <div class="gig-date">${formatDate(gig.date)}</div>
+        <div class="gig-venue">${gig.band_name || 'Unnamed Gig'}</div>
+        <div class="gig-meta">
+          <div class="gig-meta-item">📍 ${gig.venue_name || 'No venue'}</div>
+          ${gig.start_time ? `<div class="gig-meta-item">🕐 ${formatTime(gig.start_time)}${gig.end_time ? ' – ' + formatTime(gig.end_time) : ''}</div>` : ''}
+        </div>
+        <div class="gig-bottom">
+          <span class="badge badge-${statusBadgeClass(gig.status)}">${statusLabel(gig.status)}</span>
+          ${gig.fee ? `<div class="gig-fee">£${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
+        </div>
+      </div>
+    `
+      )
+      .join('');
+  } catch (err) {
+    console.error('Load gigs error:', err);
+    const listContent = document.getElementById('gigsListContent');
+    if (listContent) {
+      listContent.innerHTML = `
+        <div class="alert alert-error" style="margin-bottom: var(--spacing-4);">Failed to load gigs</div>
+        <div class="empty-state">
+          <div class="empty-state-icon">📋</div>
+          <div class="empty-state-title">Couldn't load gigs</div>
+          <div class="empty-state-text">Check your connection and try again</div>
+        </div>
+      `;
+    }
+  }
+}
+
+function statusBadgeClass(status) {
+  const map = {
+    confirmed: 'success',
+    tentative: 'warning',
+    enquiry: 'info',
+    cancelled: 'danger',
+    depped_out: 'info',
+  };
+  return map[status] || 'info';
+}
+
+function statusLabel(status) {
+  const map = {
+    confirmed: 'Confirmed',
+    tentative: 'Pencilled',
+    enquiry: 'Enquiry',
+    cancelled: 'Cancelled',
+    depped_out: 'Depped Out',
+  };
+  return map[status] || status;
 }
 
 function renderCalendarScreen() {
@@ -483,7 +549,7 @@ function renderOffersScreen() {
 function renderProfileScreen() {
   const content = document.getElementById('profileScreen');
 
-  const userInitial = (currentUser.name || 'G')[0].toUpperCase();
+  const userInitial = (currentUser.name || currentUser.email || 'G')[0].toUpperCase();
 
   content.innerHTML = `
     <div class="section">
@@ -520,7 +586,7 @@ function renderProfileScreen() {
       <div class="card">
         <div class="list-item">
           <div class="list-item-title">Version</div>
-          <div class="list-item-meta">0.1.0</div>
+          <div class="list-item-meta">0.2.0</div>
         </div>
         <div class="list-item">
           <div class="list-item-title">Last Updated</div>
@@ -531,73 +597,556 @@ function renderProfileScreen() {
   `;
 }
 
+// ── Gig Wizard ──────────────────────────────────────────────────────────────
+
+function openGigWizard() {
+  gigWizardStep = 1;
+  gigWizardData = {
+    band_name: '',
+    venue_name: '',
+    venue_address: '',
+    date: '',
+    start_time: '',
+    end_time: '',
+    load_in_time: '',
+    fee: '',
+    status: 'confirmed',
+    gig_type: '',
+    dress_code: '',
+    notes: '',
+  };
+  renderCreateGigScreen();
+  showScreen('createGig');
+}
+
 function renderCreateGigScreen() {
   const content = document.getElementById('createGigScreen');
 
   content.innerHTML = `
+    <div class="wizard-container">
+      <div class="wizard-header">
+        <button class="wizard-back-btn" id="wizardBackBtn" onclick="wizardBack()">←</button>
+        <div class="wizard-title">Add a Gig</div>
+        <div class="wizard-step-counter" id="wizardStepCounter">1 of 5</div>
+      </div>
+      <div class="wizard-progress" id="wizardProgress">
+        <div class="wizard-dot active" id="wizardDot1"></div>
+        <div class="wizard-dot" id="wizardDot2"></div>
+        <div class="wizard-dot" id="wizardDot3"></div>
+        <div class="wizard-dot" id="wizardDot4"></div>
+        <div class="wizard-dot" id="wizardDot5"></div>
+      </div>
+      <div id="wizardBody"></div>
+    </div>
+  `;
+
+  renderWizardStep(gigWizardStep);
+}
+
+function renderWizardStep(step) {
+  const body = document.getElementById('wizardBody');
+  const backBtn = document.getElementById('wizardBackBtn');
+  const counter = document.getElementById('wizardStepCounter');
+
+  if (!body) return;
+
+  // Update progress dots
+  for (let i = 1; i <= 5; i++) {
+    const dot = document.getElementById(`wizardDot${i}`);
+    if (!dot) continue;
+    dot.className = 'wizard-dot';
+    if (i < step) dot.classList.add('done');
+    else if (i === step) dot.classList.add('active');
+  }
+
+  if (backBtn) backBtn.disabled = step === 1;
+  if (counter) counter.textContent = `${step} of 5`;
+
+  const isLastStep = step === 5;
+  const nextLabel = isLastStep ? 'Save Gig' : 'Next →';
+
+  let stepHTML = '';
+
+  if (step === 1) {
+    const recentBands = getRecentBands();
+    stepHTML = `
+      <div class="wizard-step-question">Which band or project? 🎸</div>
+      <div class="wizard-step-hint">Who are you playing with?</div>
+      <div class="form-group">
+        <input
+          type="text"
+          class="form-input"
+          id="wBandName"
+          placeholder="e.g. The Jazz Collective"
+          value="${escapeHtml(gigWizardData.band_name)}"
+          autocomplete="off"
+          oninput="filterBandSuggestions(this.value)"
+          onblur="setTimeout(() => hideSuggestions('bandSuggestions'), 200)"
+        >
+        <div id="bandSuggestions" class="suggestions-list" style="display:none;"></div>
+        <div class="wizard-error" id="wBandError">Please enter a band or project name</div>
+      </div>
+      ${
+        recentBands.length > 0
+          ? `
+        <div style="margin-top: var(--spacing-2);">
+          <div style="font-size: var(--font-size-sm); color: var(--text-2); margin-bottom: var(--spacing-2);">Recent</div>
+          <div class="chip-group">
+            ${recentBands
+              .map(
+                (b) =>
+                  `<button class="chip" onclick="selectBand(this)">${escapeHtml(b)}</button>`
+              )
+              .join('')}
+          </div>
+        </div>
+      `
+          : ''
+      }
+    `;
+  } else if (step === 2) {
+    stepHTML = `
+      <div class="wizard-step-question">Where is it? 📍</div>
+      <div class="wizard-step-hint">Venue name and address</div>
+      <div class="form-group">
+        <label class="form-label">Venue Name *</label>
+        <input
+          type="text"
+          class="form-input"
+          id="wVenueName"
+          placeholder="e.g. The Royal Oak"
+          value="${escapeHtml(gigWizardData.venue_name)}"
+          autocomplete="off"
+        >
+        <div class="wizard-error" id="wVenueError">Please enter the venue name</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" style="display:flex; gap: var(--spacing-2);">
+          Address
+          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);">(optional)</span>
+        </label>
+        <input
+          type="text"
+          class="form-input"
+          id="wVenueAddress"
+          placeholder="e.g. 123 High Street, Manchester"
+          value="${escapeHtml(gigWizardData.venue_address)}"
+        >
+      </div>
+    `;
+  } else if (step === 3) {
+    stepHTML = `
+      <div class="wizard-step-question">When is it? 📅</div>
+      <div class="wizard-step-hint">Date and set times</div>
+      <div class="form-group">
+        <label class="form-label">Date *</label>
+        <input
+          type="date"
+          class="form-input"
+          id="wDate"
+          value="${gigWizardData.date}"
+        >
+        <div class="wizard-error" id="wDateError">Please pick a date</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">
+          Set Times
+          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);"> (optional)</span>
+        </label>
+        <div class="time-row">
+          <div>
+            <label style="font-size: var(--font-size-sm); color: var(--text-2); display: block; margin-bottom: 4px;">Start</label>
+            <input type="time" class="form-input" id="wStartTime" value="${gigWizardData.start_time}">
+          </div>
+          <div>
+            <label style="font-size: var(--font-size-sm); color: var(--text-2); display: block; margin-bottom: 4px;">End</label>
+            <input type="time" class="form-input" id="wEndTime" value="${gigWizardData.end_time}">
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">
+          Load-in Time
+          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);"> (optional)</span>
+        </label>
+        <input type="time" class="form-input" id="wLoadIn" value="${gigWizardData.load_in_time}" style="max-width: 50%;">
+      </div>
+    `;
+  } else if (step === 4) {
+    stepHTML = `
+      <div class="wizard-step-question">Fee and status 💷</div>
+      <div class="wizard-step-hint">How much are you getting paid?</div>
+      <div class="form-group">
+        <div class="fee-input-wrapper">
+          <span class="fee-currency">£</span>
+          <input
+            type="number"
+            class="fee-input-big"
+            id="wFee"
+            placeholder="0"
+            value="${gigWizardData.fee}"
+            min="0"
+            step="1"
+            inputmode="decimal"
+          >
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Status</label>
+        <div class="chip-group">
+          <button
+            class="chip chip-confirmed ${gigWizardData.status === 'confirmed' ? 'selected' : ''}"
+            onclick="selectGigStatus('confirmed')"
+          >✓ Confirmed</button>
+          <button
+            class="chip chip-pencilled ${gigWizardData.status === 'tentative' ? 'selected' : ''}"
+            onclick="selectGigStatus('tentative')"
+          >✏ Pencilled</button>
+          <button
+            class="chip chip-enquiry ${gigWizardData.status === 'enquiry' ? 'selected' : ''}"
+            onclick="selectGigStatus('enquiry')"
+          >? Enquiry</button>
+        </div>
+      </div>
+    `;
+  } else if (step === 5) {
+    const gigTypes = [
+      'Wedding',
+      'Corporate',
+      'Pub',
+      'Club',
+      'Festival',
+      'Function',
+      'Theatre',
+      'Other',
+    ];
+    stepHTML = `
+      <div class="wizard-step-question">Any extras? 🎉</div>
+      <div class="wizard-step-hint">Gig type, dress code, notes</div>
+      <div class="form-group">
+        <label class="form-label">
+          Gig Type
+          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);"> (optional)</span>
+        </label>
+        <div class="chip-group">
+          ${gigTypes
+            .map(
+              (t) => `
+            <button
+              class="chip ${gigWizardData.gig_type === t ? 'selected' : ''}"
+              onclick="toggleGigType('${t}', this)"
+            >${t}</button>
+          `
+            )
+            .join('')}
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">
+          Dress Code
+          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);"> (optional)</span>
+        </label>
+        <input
+          type="text"
+          class="form-input"
+          id="wDressCode"
+          placeholder="e.g. Smart Casual, Black Tie"
+          value="${escapeHtml(gigWizardData.dress_code)}"
+        >
+      </div>
+      <div class="form-group">
+        <label class="form-label">
+          Notes
+          <span style="color: var(--text-2); font-weight: 400; font-size: var(--font-size-sm);"> (optional)</span>
+        </label>
+        <textarea
+          class="form-textarea"
+          id="wNotes"
+          placeholder="Parking, contact info, set length..."
+          rows="3"
+        >${escapeHtml(gigWizardData.notes)}</textarea>
+      </div>
+    `;
+  }
+
+  body.innerHTML = `
+    ${stepHTML}
+    <div class="wizard-footer">
+      <button class="button button-primary button-block" id="wizardNextBtn" onclick="wizardNext()">${nextLabel}</button>
+      ${step === 1 ? `<button class="wizard-full-form-link" onclick="renderFullGigForm()">Show full form instead</button>` : ''}
+    </div>
+  `;
+
+  // Auto-focus the first text input (skip for date/time steps)
+  if (step === 1 || step === 2) {
+    setTimeout(() => {
+      const firstInput = body.querySelector('input[type="text"]');
+      if (firstInput) firstInput.focus();
+    }, 100);
+  }
+}
+
+function wizardNext() {
+  const step = gigWizardStep;
+
+  if (step === 1) {
+    const val = document.getElementById('wBandName')?.value?.trim();
+    if (!val) {
+      document.getElementById('wBandError')?.classList.add('visible');
+      return;
+    }
+    gigWizardData.band_name = val;
+  } else if (step === 2) {
+    const val = document.getElementById('wVenueName')?.value?.trim();
+    if (!val) {
+      document.getElementById('wVenueError')?.classList.add('visible');
+      return;
+    }
+    gigWizardData.venue_name = val;
+    gigWizardData.venue_address =
+      document.getElementById('wVenueAddress')?.value?.trim() || '';
+  } else if (step === 3) {
+    const dateVal = document.getElementById('wDate')?.value;
+    if (!dateVal) {
+      document.getElementById('wDateError')?.classList.add('visible');
+      return;
+    }
+    gigWizardData.date = dateVal;
+    gigWizardData.start_time =
+      document.getElementById('wStartTime')?.value || '';
+    gigWizardData.end_time = document.getElementById('wEndTime')?.value || '';
+    gigWizardData.load_in_time =
+      document.getElementById('wLoadIn')?.value || '';
+  } else if (step === 4) {
+    gigWizardData.fee = document.getElementById('wFee')?.value || '';
+    // status is saved live via selectGigStatus()
+  } else if (step === 5) {
+    gigWizardData.dress_code =
+      document.getElementById('wDressCode')?.value?.trim() || '';
+    gigWizardData.notes =
+      document.getElementById('wNotes')?.value?.trim() || '';
+    submitGigWizard();
+    return;
+  }
+
+  gigWizardStep++;
+  renderWizardStep(gigWizardStep);
+  document.querySelector('.app-content').scrollTop = 0;
+}
+
+function wizardBack() {
+  if (gigWizardStep === 1) {
+    showScreen('gigs');
+    return;
+  }
+  gigWizardStep--;
+  renderWizardStep(gigWizardStep);
+  document.querySelector('.app-content').scrollTop = 0;
+}
+
+function selectGigStatus(status) {
+  gigWizardData.status = status;
+  document
+    .querySelectorAll('.chip-confirmed, .chip-pencilled, .chip-enquiry')
+    .forEach((c) => c.classList.remove('selected'));
+  const map = {
+    confirmed: 'chip-confirmed',
+    tentative: 'chip-pencilled',
+    enquiry: 'chip-enquiry',
+  };
+  document.querySelector(`.${map[status]}`)?.classList.add('selected');
+}
+
+function toggleGigType(type, btn) {
+  if (gigWizardData.gig_type === type) {
+    gigWizardData.gig_type = '';
+    btn.classList.remove('selected');
+  } else {
+    gigWizardData.gig_type = type;
+    document
+      .querySelectorAll('.chip-group .chip')
+      .forEach((c) => c.classList.remove('selected'));
+    btn.classList.add('selected');
+  }
+}
+
+function selectBand(btn) {
+  const name = btn.textContent;
+  gigWizardData.band_name = name;
+  const input = document.getElementById('wBandName');
+  if (input) input.value = name;
+}
+
+function filterBandSuggestions(query) {
+  const container = document.getElementById('bandSuggestions');
+  if (!container) return;
+  const recentBands = getRecentBands();
+  if (!query || recentBands.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+  const filtered = recentBands.filter((b) =>
+    b.toLowerCase().includes(query.toLowerCase())
+  );
+  if (filtered.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+  container.innerHTML = filtered
+    .map(
+      (b) =>
+        `<div class="suggestion-item" onmousedown="selectBandFromSuggestion('${escapeAttr(b)}')">${escapeHtml(b)}</div>`
+    )
+    .join('');
+  container.style.display = 'block';
+}
+
+function selectBandFromSuggestion(name) {
+  gigWizardData.band_name = name;
+  const input = document.getElementById('wBandName');
+  if (input) input.value = name;
+  hideSuggestions('bandSuggestions');
+}
+
+function hideSuggestions(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = 'none';
+}
+
+function getRecentBands() {
+  if (window._cachedGigs && window._cachedGigs.length > 0) {
+    const names = [
+      ...new Set(window._cachedGigs.map((g) => g.band_name).filter(Boolean)),
+    ];
+    return names.slice(0, 5);
+  }
+  return [];
+}
+
+async function submitGigWizard() {
+  const btn = document.getElementById('wizardNextBtn');
+  if (btn) {
+    btn.textContent = 'Saving...';
+    btn.disabled = true;
+  }
+
+  try {
+    const payload = {
+      band_name: gigWizardData.band_name,
+      venue_name: gigWizardData.venue_name,
+      venue_address: gigWizardData.venue_address || null,
+      date: gigWizardData.date,
+      start_time: gigWizardData.start_time || null,
+      end_time: gigWizardData.end_time || null,
+      load_in_time: gigWizardData.load_in_time || null,
+      fee: gigWizardData.fee ? parseFloat(gigWizardData.fee) : null,
+      status: gigWizardData.status,
+      notes: gigWizardData.notes
+        ? (gigWizardData.gig_type
+            ? `[${gigWizardData.gig_type}] `
+            : '') + gigWizardData.notes
+        : gigWizardData.gig_type
+          ? `[${gigWizardData.gig_type}]`
+          : null,
+      dress_code: gigWizardData.dress_code || null,
+      source: 'manual',
+    };
+
+    const response = await fetch('/api/gigs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      window._cachedGigs = null;
+      showScreen('gigs');
+      showToast('Gig saved!');
+    } else {
+      const err = await response.json();
+      const body = document.getElementById('wizardBody');
+      if (body) {
+        body.insertAdjacentHTML(
+          'afterbegin',
+          `<div class="alert alert-error" style="margin-bottom: var(--spacing-4);">
+            Failed to save: ${err.error || 'Unknown error'}
+          </div>`
+        );
+      }
+      if (btn) {
+        btn.textContent = 'Save Gig';
+        btn.disabled = false;
+      }
+    }
+  } catch (error) {
+    console.error('Submit gig error:', error);
+    if (btn) {
+      btn.textContent = 'Save Gig';
+      btn.disabled = false;
+    }
+  }
+}
+
+function renderFullGigForm() {
+  const content = document.getElementById('createGigScreen');
+
+  content.innerHTML = `
     <div class="section">
-      <div class="section-title">Add a Gig</div>
+      <div style="display: flex; align-items: center; gap: var(--spacing-3); margin-bottom: var(--spacing-4);">
+        <button style="background:none;border:none;color:var(--text);font-size:var(--font-size-xl);cursor:pointer;" onclick="openGigWizard()">←</button>
+        <div class="section-title" style="margin-bottom:0;">Add a Gig</div>
+      </div>
       <form id="createGigForm" class="card">
         <div class="form-group">
           <label class="form-label">Band Name *</label>
           <input type="text" class="form-input" name="band_name" required>
         </div>
-
         <div class="form-group">
           <label class="form-label">Venue Name *</label>
           <input type="text" class="form-input" name="venue_name" required>
         </div>
-
         <div class="form-group">
           <label class="form-label">Venue Address</label>
           <input type="text" class="form-input" name="venue_address">
         </div>
-
         <div class="form-group">
           <label class="form-label">Date *</label>
           <input type="date" class="form-input" name="date" required>
         </div>
-
         <div class="form-group">
           <label class="form-label">Start Time</label>
           <input type="time" class="form-input" name="start_time">
         </div>
-
         <div class="form-group">
           <label class="form-label">End Time</label>
           <input type="time" class="form-input" name="end_time">
         </div>
-
         <div class="form-group">
           <label class="form-label">Load-in Time</label>
           <input type="time" class="form-input" name="load_in_time">
         </div>
-
         <div class="form-group">
           <label class="form-label">Fee (£)</label>
-          <input type="number" class="form-input" name="fee" step="0.01" min="0">
+          <input type="number" class="form-input" name="fee" step="1" min="0">
         </div>
-
         <div class="form-group">
           <label class="form-label">Status</label>
-          <select class="form-select" name="status">
+          <select class="form-input" name="status">
             <option value="confirmed">Confirmed</option>
-            <option value="tentative">Tentative</option>
-            <option value="depped_out">Depped Out</option>
+            <option value="tentative">Pencilled</option>
+            <option value="enquiry">Enquiry</option>
             <option value="cancelled">Cancelled</option>
           </select>
         </div>
-
         <div class="form-group">
           <label class="form-label">Dress Code</label>
-          <input type="text" class="form-input" name="dress_code" placeholder="e.g., Smart Casual, Black Tie">
+          <input type="text" class="form-input" name="dress_code" placeholder="e.g. Smart Casual, Black Tie">
         </div>
-
         <div class="form-group">
           <label class="form-label">Notes</label>
           <textarea class="form-textarea" name="notes" placeholder="Any additional details..."></textarea>
         </div>
-
+        <div id="fullFormError" class="alert alert-error" style="display:none;margin-bottom:var(--spacing-4);"></div>
         <button type="submit" class="button button-primary button-block">Add Gig</button>
       </form>
     </div>
@@ -605,47 +1154,56 @@ function renderCreateGigScreen() {
 
   document.getElementById('createGigForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const submitBtn = e.target.querySelector('[type="submit"]');
+    submitBtn.textContent = 'Saving...';
+    submitBtn.disabled = true;
+
     const formData = new FormData(e.target);
     const data = Object.fromEntries(formData);
+    Object.keys(data).forEach((k) => {
+      if (data[k] === '') data[k] = null;
+    });
 
     try {
       const response = await fetch('/api/gigs', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
 
       if (response.ok) {
+        window._cachedGigs = null;
         showScreen('gigs');
+        showToast('Gig saved!');
+      } else {
+        const err = await response.json();
+        const errEl = document.getElementById('fullFormError');
+        if (errEl) {
+          errEl.textContent = err.error || 'Failed to save gig';
+          errEl.style.display = 'block';
+        }
+        submitBtn.textContent = 'Add Gig';
+        submitBtn.disabled = false;
       }
     } catch (error) {
       console.error('Create gig error:', error);
+      submitBtn.textContent = 'Add Gig';
+      submitBtn.disabled = false;
     }
   });
 }
 
-function setupGigsScreen() {
-  document.getElementById('gigsScreen');
-}
+// ── Screen setup stubs ──────────────────────────────────────────────────────
 
-function setupInvoicesScreen() {
-  document.getElementById('invoicesScreen');
-}
+function setupGigsScreen() {}
+function setupInvoicesScreen() {}
+function setupOffersScreen() {}
 
-function setupOffersScreen() {
-  document.getElementById('offersScreen');
-}
-
-function setupCreateGigScreen() {
-  document.getElementById('createGigScreen');
-}
+// ── Quick actions ────────────────────────────────────────────────────────────
 
 function handleQuickAction(action) {
   if (action === 'add-gig') {
-    renderCreateGigScreen();
-    showScreen('createGig');
+    openGigWizard();
   } else if (action === 'invoice') {
     showScreen('invoices');
   } else if (action === 'block-date') {
@@ -653,13 +1211,26 @@ function handleQuickAction(action) {
   } else if (action === 'send-dep') {
     showScreen('offers');
   } else if (action === 'receipt') {
-    alert('Receipt upload feature coming soon!');
+    alert('Receipt upload coming soon!');
   }
 }
 
 function updateOfferStatus(offerId, status) {
   console.log(`Updated offer ${offerId} to ${status}`);
-  alert(`Offer ${status}! We'll update your calendar.`);
+  showToast(status === 'accepted' ? 'Offer accepted!' : 'Offer declined');
+}
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+
+function showToast(message) {
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2200);
 }
 
 function getGreeting() {
@@ -673,23 +1244,31 @@ function formatDate(dateString) {
   const date = new Date(dateString + 'T00:00:00');
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
   ];
-  const day = days[date.getDay()];
-  const date_num = date.getDate();
-  const month = months[date.getMonth()];
-  return `${day}, ${date_num} ${month}`;
+  return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]}`;
+}
+
+function formatTime(timeStr) {
+  if (!timeStr) return '';
+  // DB returns "HH:MM:SS", we want "HH:MM"
+  return timeStr.substring(0, 5);
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeAttr(str) {
+  if (!str) return '';
+  return String(str).replace(/'/g, "\\'");
 }
 
 if ('serviceWorker' in navigator) {
