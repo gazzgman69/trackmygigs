@@ -292,6 +292,20 @@ async function getGoogleAuthForUser(userId) {
 // Export helper for use in API routes
 router.getGoogleAuthForUser = getGoogleAuthForUser;
 
+// ---- DEV LOGIN (for testing without email/Google) ----
+router.get('/dev-login', async (req, res) => {
+  try {
+    const email = req.query.email || 'gareth@trackmygigs.app';
+    const name = req.query.name || 'Gareth';
+    const user = await findOrCreateUser(email, name, null, null);
+    await createSession(res, user.id);
+    res.redirect('/');
+  } catch (error) {
+    console.error('Dev login error:', error);
+    res.status(500).json({ error: 'Dev login failed' });
+  }
+});
+
 // ---- SESSION ----
 
 router.get('/me', async (req, res) => {
