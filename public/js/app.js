@@ -652,10 +652,10 @@ function renderCreateGigScreen() {
 
   content.innerHTML = `
     <div class="wizard-container">
-      <div class="wizard-header">
-        <button class="wizard-back-btn" id="wizardBackBtn" onclick="wizardBack()">&#8249; Back</button>
-        <div class="wizard-title">New Gig</div>
-        <div class="wizard-step-counter" id="wizardStepCounter" onclick="renderFullGigForm()" style="cursor:pointer;color:var(--text-3);font-size:12px;">Show full form</div>
+      <div class="wizard-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface);">
+        <button onclick="showScreen('gigs')" style="color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;background:none;border:none;">&#8249; Back</button>
+        <div class="wizard-title" style="font-size:16px;font-weight:700;">New Gig</div>
+        <div onclick="renderFullGigForm()" style="font-size:12px;color:var(--text-3);cursor:pointer;">Show full form</div>
       </div>
       <div class="wizard-progress" id="wizardProgress">
         <div class="wizard-dot active" id="wizardDot1"></div>
@@ -673,8 +673,6 @@ function renderCreateGigScreen() {
 
 function renderWizardStep(step) {
   const body = document.getElementById('wizardBody');
-  const backBtn = document.getElementById('wizardBackBtn');
-  const counter = document.getElementById('wizardStepCounter');
 
   if (!body) return;
 
@@ -686,8 +684,6 @@ function renderWizardStep(step) {
     if (i < step) dot.classList.add('done');
     else if (i === step) dot.classList.add('active');
   }
-
-  if (backBtn) backBtn.style.visibility = step === 1 ? 'hidden' : 'visible';
 
   let stepHTML = '';
 
