@@ -1,50 +1,12 @@
 let currentUser = null;
 let currentScreen = 'home';
-let mockOffers = 4;
-let mockOverdueInvoices = 1;
-let mockDraftInvoices = 2;
 
 // Wizard state
 let gigWizardStep = 1;
 let gigWizardData = {};
 window._cachedGigs = null;
-
-const mockGigs = [
-  {
-    id: '1',
-    band_name: 'The Jazz Collective',
-    venue_name: 'The Blue Note',
-    date: '2026-04-20',
-    start_time: '20:00',
-    end_time: '23:00',
-    fee: 150,
-    status: 'confirmed',
-  },
-  {
-    id: '2',
-    band_name: 'Electric Dreams',
-    venue_name: 'Riverside Pavilion',
-    date: '2026-04-25',
-    start_time: '18:30',
-    end_time: '22:00',
-    fee: 200,
-    status: 'confirmed',
-  },
-  {
-    id: '3',
-    band_name: 'The Rhythm Kings',
-    venue_name: 'Downtown Hall',
-    date: '2026-05-02',
-    start_time: '19:00',
-    end_time: '23:30',
-    fee: 180,
-    status: 'tentative',
-  },
-];
-
-const monthlyEarnings = [
-  120, 180, 140, 200, 160, 220, 190, 170, 210, 150, 240, 200,
-];
+window._calViewMode = 'month';
+window._calDate = new Date();
 
 function initApp(user) {
   currentUser = user;
@@ -154,103 +116,164 @@ function showScreen(screenName) {
   }
 }
 
-function renderHomeScreen() {
+async function renderHomeScreen() {
   const content = document.getElementById('homeScreen');
-  const nextGig = mockGigs[0];
 
-  content.innerHTML = `
-    <div class="section">
-      <div class="banner warning">
-        <div>
-          <div style="font-weight: 600;">4 gig offers waiting</div>
-          <div class="banner-badge">2 FROM YOUR NETWORK</div>
+  // Show loading state
+  content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading home screen...</div>';
+
+  try {
+    const res = await fetch('/api/stats');
+    if (!res.ok) throw new Error('Failed to fetch stats');
+    const stats = await res.json();
+
+    const userInitial = (window._currentUser?.name || window._currentUser?.email || 'G')[0].toUpperCase();
+
+    // Determine greeting
+    const hour = new Date().getHours();
+    let greeting = 'Good morning';
+    if (hour >= 12 && hour < 18) greeting = 'Good afternoon';
+    if (hour >= 18) greeting = 'Good evening';
+
+    // Build HTML
+    let html = `
+      <div style="display:flex;align-items:center;padding:10px 20px 2px;gap:12px;">
+        <div onclick="openPanel('profile-panel')" style="width:38px;height:38px;border-radius:19px;background:var(--accent-dim);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--accent);cursor:pointer;flex-shrink:0;">${userInitial}</div>
+        <div style="flex:1;">
+          <div style="font-size:13px;color:var(--text-2);">${greeting}</div>
+          <div style="font-size:20px;font-weight:700;color:var(--text);">${escapeHtml(window._currentUser?.name || 'Guest')}</div>
         </div>
-        <div style="font-size: 1.5rem;">📬</div>
-      </div>
-    </div>
+        <div onclick="openPanel('notifications-panel')" style="width:36px;height:36px;border-radius:18px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;position:relative;flex-shrink:0;">🔔
+          ${stats.unread_notifications > 0 ? `<div style="position:absolute;top:3px;right:3px;width:8px;height:8px;background:var(--danger);border-radius:4px;border:2px solid var(--bg);"></div>` : ''}
+        </div>
+      </div>`;
 
-    <div class="section">
-      <div class="card success" style="border-left: 4px solid var(--success);">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Next Gig</div>
+    // Offer alert banner
+    if (stats.offer_count > 0) {
+      html += `
+      <div onclick="showScreen('offers')" style="margin:6px 16px;background:linear-gradient(135deg,rgba(240,165,0,.15) 0%,rgba(240,165,0,.06) 100%);border:1px solid rgba(240,165,0,.4);border-radius:var(--r);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;">
+        <div style="font-size:22px;">📬</div>
+        <div style="flex:1;">
+          <div class="ho-count" style="font-size:14px;font-weight:600;color:var(--text);">${stats.offer_count} gig offer${stats.offer_count === 1 ? '' : 's'} waiting</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
+            ${stats.network_offers > 0 ? `<span style="font-size:10px;font-weight:700;color:#000;background:var(--accent);padding:1px 6px;border-radius:3px;">${stats.network_offers} FROM YOUR NETWORK</span>` : ''}
           </div>
         </div>
-        <div class="gig-date">${formatDate(nextGig.date)}</div>
-        <div class="gig-venue">${nextGig.band_name}</div>
-        <div class="gig-meta">
-          <div class="gig-meta-item">📍 ${nextGig.venue_name}</div>
-          <div class="gig-meta-item">🎵 ${nextGig.start_time}</div>
-        </div>
-        <div class="gig-bottom">
-          <div>Confirmed</div>
-          <div class="gig-fee">£${nextGig.fee}</div>
-        </div>
-      </div>
-    </div>
+        <div style="color:var(--accent);font-size:20px;">›</div>
+      </div>`;
+    }
 
-    <div class="section">
-      <div class="banner" style="border-left: 4px solid var(--info);">
-        <div>
-          <div style="font-weight: 600;">Active dep request</div>
-          <div style="font-size: var(--font-size-sm); color: var(--text-2); margin-top: var(--spacing-2);">Looking for a drummer for The Jazz Collective - Tomorrow</div>
+    // Next gig card
+    if (stats.next_gig) {
+      const gig = stats.next_gig;
+      const daysUntil = Math.ceil((new Date(gig.date) - new Date()) / (1000 * 60 * 60 * 24));
+      html += `
+      <div onclick="openGigDetail('${gig.id}')" style="margin:0 16px 8px;background:linear-gradient(135deg,#1C2A1A,#182318);border:1px solid rgba(63,185,80,.3);border-radius:var(--r);padding:12px 14px;position:relative;cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+          <span style="font-size:10px;font-weight:600;color:var(--success);letter-spacing:1px;text-transform:uppercase;">⚡ Your next gig</span>
+          <span style="margin-left:auto;font-size:12px;font-weight:800;color:var(--success);">${daysUntil} day${daysUntil === 1 ? '' : 's'}</span>
         </div>
-        <div style="font-size: 1.5rem;">👥</div>
-      </div>
-    </div>
+        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(gig.band_name)}</div>
+        <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">📍 ${escapeHtml(gig.venue_name)} · 🕖 ${formatDateLong(gig.date)} · ${formatTime(gig.start_time)}${gig.end_time ? ' to ' + formatTime(gig.end_time) : ''}</div>
+        ${gig.dress_code ? `<div style="font-size:12px;color:var(--text-2);">👔 ${escapeHtml(gig.dress_code)} · 🎒 Gig pack ready</div>` : ''}
+      </div>`;
+    }
 
-    <div class="section">
-      <div class="grid grid-3">
-        <div class="mini-card">
-          <div class="mini-card-value" style="color: var(--danger);">${mockOverdueInvoices}</div>
-          <div class="mini-card-label">Overdue</div>
-        </div>
-        <div class="mini-card">
-          <div class="mini-card-value" style="color: var(--warning);">${mockDraftInvoices}</div>
-          <div class="mini-card-label">Drafts</div>
-        </div>
-        <div class="mini-card">
-          <div class="mini-card-value" style="color: var(--info);">2</div>
-          <div class="mini-card-label">Reminders</div>
-        </div>
-      </div>
-    </div>
+    // Compact alert row
+    html += `<div style="display:flex;gap:6px;margin:0 16px 6px;">`;
 
-    <div class="section">
-      <div class="section-title">Monthly Earnings</div>
-      <div class="chart-container">
-        ${monthlyEarnings
-          .map(
-            (value) =>
-              `<div class="chart-bar" style="height: ${(value / 250) * 100}%;" title="£${value}"></div>`
-          )
-          .join('')}
-      </div>
-    </div>
+    if (stats.overdue_invoices > 0) {
+      html += `
+      <div onclick="openPanel('invoices-panel')" style="flex:1;background:var(--danger-dim);border:1px solid rgba(248,81,73,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
+        <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📄 Invoice</div>
+        <div style="font-size:11px;font-weight:600;color:var(--danger);">£${stats.overdue_total} overdue</div>
+        <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.overdue_invoices} invoice${stats.overdue_invoices === 1 ? '' : 's'}</div>
+      </div>`;
+    }
 
-    <div class="section">
-      <div class="section-title">Recent Gigs</div>
-      ${mockGigs
-        .slice(0, 3)
-        .map(
-          (gig) => `
-        <div class="gig-card ${gig.status === 'confirmed' ? 'upcoming' : ''}">
-          <div class="gig-date">${formatDate(gig.date)}</div>
-          <div class="gig-venue">${gig.band_name}</div>
-          <div class="gig-meta">
-            <div class="gig-meta-item">📍 ${gig.venue_name}</div>
-            <div class="gig-meta-item">🎵 ${gig.start_time}</div>
+    if (stats.draft_invoices > 0) {
+      html += `
+      <div onclick="openPanel('invoices-panel')" style="flex:1;background:var(--info-dim);border:1px solid rgba(88,166,255,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
+        <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📄 Invoice</div>
+        <div style="font-size:11px;font-weight:600;color:var(--info);">£${stats.draft_total} draft</div>
+        <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.draft_invoices} ready</div>
+      </div>`;
+    }
+
+    html += `
+      <div onclick="showScreen('calendar')" style="flex:1;background:var(--accent-dim);border:1px solid rgba(240,165,0,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
+        <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📅 Calendar</div>
+        <div style="font-size:11px;font-weight:600;color:var(--accent);">Availability</div>
+        <div style="font-size:10px;color:var(--text-2);margin-top:2px;">Update now</div>
+      </div>
+    </div>`;
+
+    // Gig messages card
+    if (stats.unread_messages > 0) {
+      html += `
+      <div onclick="openPanel('chat-inbox')" style="margin:0 16px 6px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;cursor:pointer;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:14px;">💬</span>
+            <span style="font-size:12px;font-weight:700;color:var(--text);">Gig messages</span>
           </div>
-          <div class="gig-bottom">
-            <span class="badge badge-success">${gig.status}</span>
-            <div class="gig-fee">£${gig.fee}</div>
-          </div>
+          <div style="background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 5px;">${stats.unread_messages}</div>
         </div>
-      `
-        )
-        .join('')}
-    </div>
-  `;
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          ${(stats.recent_messages || []).slice(0, 2).map((msg) => `
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="width:24px;height:24px;border-radius:12px;background:var(--info-dim);border:1px solid var(--info);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--info);flex-shrink:0;">${(msg.sender || 'U')[0].toUpperCase()}</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:11px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(msg.sender)}</div>
+              <div style="font-size:10px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(msg.preview || '')}</div>
+            </div>
+            <span style="font-size:9px;color:var(--accent);font-weight:600;flex-shrink:0;">${msg.time_ago || 'now'}</span>
+          </div>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    // Quick stats
+    html += `
+    <div style="display:flex;gap:6px;margin:0 16px 6px;">
+      <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;">
+        <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">This month</div>
+        <div style="font-size:13px;font-weight:700;color:var(--success);">£${stats.month_earnings || 0}</div>
+        <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.month_gigs || 0} gig${stats.month_gigs === 1 ? '' : 's'}</div>
+      </div>
+      <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;">
+        <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Tax year</div>
+        <div style="font-size:13px;font-weight:700;color:var(--success);">£${stats.year_earnings || 0}</div>
+        <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.year_gigs || 0} gig${stats.year_gigs === 1 ? '' : 's'}</div>
+      </div>
+    </div>`;
+
+    // 12-month forecast
+    if (stats.monthly_breakdown) {
+      html += `
+      <div style="margin:0 16px 6px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">12-Month Forecast</div>
+        <div style="display:flex;align-items:flex-end;gap:2px;height:60px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:8px;">
+          ${stats.monthly_breakdown.map((m) => {
+            const height = Math.min(100, (m.earnings / (Math.max(...stats.monthly_breakdown.map(x => x.earnings)) || 1)) * 100);
+            const color = m.status === 'confirmed' ? 'var(--success)' : m.status === 'forecast' ? '#666' : 'var(--warning)';
+            return `<div style="flex:1;background:${color};border-radius:2px;opacity:${height < 5 ? 0.4 : 1};height:${Math.max(4, height)}%;" title="£${m.earnings}"></div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }
+
+    html += '</div>';
+    content.innerHTML = html;
+  } catch (err) {
+    console.error('Home screen error:', err);
+    content.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:8px;">⚠️</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load home</div>
+        <div style="font-size:13px;color:var(--text-2);">Check your connection and refresh</div>
+      </div>`;
+  }
 }
 
 // Current gig view state
@@ -471,271 +494,641 @@ function statusLabel(status) {
   return map[status] || status;
 }
 
-function renderCalendarScreen() {
+async function renderCalendarScreen() {
   const content = document.getElementById('calendarScreen');
+  content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading calendar...</div>';
 
-  const today = new Date(2026, 3, 15);
-  const daysInMonth = 30;
-  const firstDay = new Date(2026, 3, 1).getDay();
+  try {
+    const gigsRes = await fetch('/api/gigs');
+    const gigsData = gigsRes.ok ? await gigsRes.json() : [];
 
-  let calendarHTML = `
-    <div class="section">
-      <div class="section-title">April 2026</div>
-      <div class="card">
-        <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; padding: var(--spacing-4);">
-  `;
+    const blockedRes = await fetch('/api/calendar/blocked-dates');
+    const blockedData = blockedRes.ok ? await blockedRes.json() : [];
 
-  const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  dayLabels.forEach((day) => {
-    calendarHTML += `<div style="text-align: center; font-weight: 600; padding: 8px; font-size: var(--font-size-sm); color: var(--text-2);">${day}</div>`;
+    const view = window._calViewMode || 'month';
+    const currentDate = window._calDate || new Date();
+
+    let html = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <div style="font-size:24px;font-weight:700;color:var(--text);">Calendar</div>
+        <div style="display:flex;gap:8px;">
+          <div onclick="toggleCalendarMenu()" style="width:32px;height:32px;border-radius:16px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;">⋯</div>
+        </div>
+      </div>
+      <div id="calendarMenu" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px;z-index:10;">
+        <div onclick="handleCalendarAction('add-gig')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;">Add gig</div>
+        <div onclick="handleCalendarAction('add-event')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Add event</div>
+        <div onclick="handleCalendarAction('block-dates')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Block dates</div>
+      </div>
+      <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;gap:8px;">
+        <div class="tb ${view === 'day' ? 'ac' : ''}" onclick="switchCalendarView('day')">Day</div>
+        <div class="tb ${view === 'week' ? 'ac' : ''}" onclick="switchCalendarView('week')">Week</div>
+        <div class="tb ${view === 'month' ? 'ac' : ''}" onclick="switchCalendarView('month')">Month</div>
+      </div>`;
+
+    if (view === 'month') {
+      html += renderCalendarMonth(currentDate, gigsData, blockedData);
+    } else if (view === 'week') {
+      html += renderCalendarWeek(currentDate, gigsData, blockedData);
+    } else if (view === 'day') {
+      html += renderCalendarDay(currentDate, gigsData, blockedData);
+    }
+
+    content.innerHTML = html;
+  } catch (err) {
+    console.error('Calendar error:', err);
+    content.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:8px;">⚠️</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load calendar</div>
+        <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
+      </div>`;
+  }
+}
+
+function toggleCalendarMenu() {
+  const menu = document.getElementById('calendarMenu');
+  if (menu) {
+    menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+    menu.style.flexDirection = 'column';
+  }
+}
+
+function handleCalendarAction(action) {
+  if (action === 'add-gig') {
+    openGigWizard();
+  } else if (action === 'add-event') {
+    // TODO: implement add-event panel
+  } else if (action === 'block-dates') {
+    openPanel('block-dates-panel');
+  }
+  toggleCalendarMenu();
+}
+
+function switchCalendarView(view) {
+  window._calViewMode = view;
+  renderCalendarScreen();
+}
+
+function renderCalendarMonth(currentDate, gigs, blocked) {
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const today = new Date();
+  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+
+  let html = `<div style="padding:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <button onclick="prevCalendarMonth()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">‹</button>
+      <div style="font-size:16px;font-weight:600;color:var(--text);">${new Date(year, month, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</div>
+      <button onclick="nextCalendarMonth()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">›</button>
+    </div>
+    <button onclick="goCalendarToday()" style="width:100%;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);color:var(--accent);border-radius:6px;padding:8px;font-size:12px;font-weight:600;margin-bottom:12px;cursor:pointer;">Today</button>
+    <div class="cg">
+      <div class="cdh">Mo</div><div class="cdh">Tu</div><div class="cdh">We</div><div class="cdh">Th</div><div class="cdh">Fr</div><div class="cdh">Sa</div><div class="cdh">Su</div>`;
+
+  // Empty cells
+  for (let i = 1; i < firstDay; i++) {
+    html += `<div class="cd empty"></div>`;
+  }
+
+  // Days
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const isToday = isCurrentMonth && day === today.getDate();
+
+    const gigsOnDay = gigs.filter(g => g.date === dateStr);
+    const blockedOnDay = blocked.some(b => b.date === dateStr);
+
+    html += `<div class="cd ${isToday ? 'today' : ''}" onclick="selectCalendarDate('${dateStr}')" style="position:relative;">
+      ${day}
+      ${gigsOnDay.length > 0 || blockedOnDay ? `
+      <div class="cd-dots">
+        ${gigsOnDay.slice(0, 3).map(() => `<div class="cd-dot" style="background:var(--success);"></div>`).join('')}
+        ${blockedOnDay ? `<div class="cd-dot" style="background:var(--danger);"></div>` : ''}
+      </div>` : ''}
+    </div>`;
+  }
+
+  html += `</div>`;
+
+  // List gigs for this month
+  const monthGigs = gigs.filter(g => g.date.startsWith(`${year}-${String(month + 1).padStart(2, '0')}`));
+  if (monthGigs.length > 0) {
+    html += `<div style="margin-top:16px;">
+      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Gigs this month</div>`;
+    monthGigs.forEach(gig => {
+      html += `<div class="gi" onclick="openGigDetail('${gig.id}')">
+        <div style="display:flex;align-items:flex-start;gap:14px;">
+          <div class="gdb">
+            <div class="gdd">${new Date(gig.date).getDate()}</div>
+            <div class="gdm">${new Date(gig.date).toLocaleDateString('en-GB', { month: 'short' }).toUpperCase()}</div>
+          </div>
+          <div style="flex:1;">
+            <div class="gt">${escapeHtml(gig.band_name)}</div>
+            <div class="gv">${escapeHtml(gig.venue_name)}${gig.start_time ? ' · ' + formatTime(gig.start_time) : ''}</div>
+            ${gig.fee ? `<div class="gf">£${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function renderCalendarWeek(currentDate, gigs, blocked) {
+  // Get week start (Monday)
+  const d = new Date(currentDate);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const weekStart = new Date(d.setDate(diff));
+
+  let html = `<div style="padding:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <button onclick="prevCalendarWeek()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">‹</button>
+      <div style="font-size:14px;font-weight:600;color:var(--text);">${weekStart.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })} - ${new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })}</div>
+      <button onclick="nextCalendarWeek()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">›</button>
+    </div>
+    <button onclick="goCalendarToday()" style="width:100%;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);color:var(--accent);border-radius:6px;padding:8px;font-size:12px;font-weight:600;margin-bottom:12px;cursor:pointer;">Today</button>
+    <div style="display:flex;gap:4px;margin-bottom:12px;">`;
+
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const isToday = dateStr === new Date().toISOString().split('T')[0];
+
+    html += `<div style="flex:1;text-align:center;padding:8px;border-radius:6px;background:${isToday ? 'var(--accent)' : 'var(--card)'};border:1px solid ${isToday ? 'var(--accent)' : 'var(--border)'};cursor:pointer;color:${isToday ? '#000' : 'var(--text)'};font-weight:${isToday ? '700' : '600'};font-size:12px;">
+      ${d.toLocaleDateString('en-GB', { weekday: 'short' })}<br>${d.getDate()}
+    </div>`;
+  }
+
+  html += `</div>`;
+
+  // List gigs for week
+  const weekGigs = gigs.filter(g => {
+    const gDate = new Date(g.date);
+    return gDate >= weekStart && gDate < new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
   });
 
-  for (let i = 0; i < firstDay; i++) {
-    calendarHTML += `<div></div>`;
-  }
-
-  for (let day = 1; day <= daysInMonth; day++) {
-    const isToday = day === 15;
-    const hasGig = mockGigs.some((g) => parseInt(g.date.split('-')[2]) === day);
-
-    calendarHTML += `
-      <div style="
-        padding: 8px;
-        border-radius: 4px;
-        text-align: center;
-        background-color: ${isToday ? 'var(--accent)' : 'transparent'};
-        color: ${isToday ? 'var(--bg)' : 'var(--text)'};
-        border: ${hasGig ? '2px solid var(--success)' : 'none'};
-        font-weight: ${isToday ? '600' : '400'};
-      ">
-        ${day}
-      </div>
-    `;
-  }
-
-  calendarHTML += `
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">Gigs This Month</div>
-      ${mockGigs
-        .map(
-          (gig) => `
-        <div class="gig-card">
-          <div class="gig-date">${formatDate(gig.date)}</div>
-          <div class="gig-venue">${gig.band_name} at ${gig.venue_name}</div>
-          <div class="gig-meta">
-            <div class="gig-meta-item">🎵 ${gig.start_time}</div>
+  if (weekGigs.length > 0) {
+    html += `<div style="margin-top:12px;">
+      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Gigs this week</div>`;
+    weekGigs.forEach(gig => {
+      html += `<div class="gi" onclick="openGigDetail('${gig.id}')">
+        <div style="display:flex;align-items:flex-start;gap:14px;">
+          <div class="gdb">
+            <div class="gdd">${new Date(gig.date).getDate()}</div>
+            <div class="gdm">${new Date(gig.date).toLocaleDateString('en-GB', { month: 'short' }).toUpperCase()}</div>
+          </div>
+          <div style="flex:1;">
+            <div class="gt">${escapeHtml(gig.band_name)}</div>
+            <div class="gv">${escapeHtml(gig.venue_name)}${gig.start_time ? ' · ' + formatTime(gig.start_time) : ''}</div>
+            ${gig.fee ? `<div class="gf">£${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
           </div>
         </div>
-      `
-        )
-        .join('')}
-    </div>
-  `;
+      </div>`;
+    });
+    html += `</div>`;
+  }
 
-  content.innerHTML = calendarHTML;
+  html += `</div>`;
+  return html;
 }
 
-function renderInvoicesScreen() {
+function renderCalendarDay(currentDate, gigs, blocked) {
+  const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+  const dayGigs = gigs.filter(g => g.date === dateStr).sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+
+  let html = `<div style="padding:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <button onclick="prevCalendarDay()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">‹</button>
+      <div style="font-size:16px;font-weight:600;color:var(--text);">${currentDate.toLocaleDateString('en-GB', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+      <button onclick="nextCalendarDay()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">›</button>
+    </div>
+    <button onclick="goCalendarToday()" style="width:100%;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);color:var(--accent);border-radius:6px;padding:8px;font-size:12px;font-weight:600;margin-bottom:12px;cursor:pointer;">Today</button>`;
+
+  if (dayGigs.length === 0) {
+    html += `<div style="text-align:center;padding:40px 20px;color:var(--text-2);">No gigs scheduled for this day</div>`;
+  } else {
+    html += `<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Gigs today</div>`;
+    dayGigs.forEach(gig => {
+      html += `<div class="gi" onclick="openGigDetail('${gig.id}')">
+        <div style="display:flex;align-items:flex-start;gap:14px;">
+          <div class="gdb">
+            <div class="gdd" style="font-size:14px;">${formatTime(gig.start_time)}</div>
+          </div>
+          <div style="flex:1;">
+            <div class="gt">${escapeHtml(gig.band_name)}</div>
+            <div class="gv">${escapeHtml(gig.venue_name)}</div>
+            ${gig.fee ? `<div class="gf">£${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
+    });
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function selectCalendarDate(dateStr) {
+  window._calDate = new Date(dateStr);
+  renderCalendarScreen();
+}
+
+function prevCalendarMonth() {
+  const d = new Date(window._calDate);
+  d.setMonth(d.getMonth() - 1);
+  window._calDate = d;
+  renderCalendarScreen();
+}
+
+function nextCalendarMonth() {
+  const d = new Date(window._calDate);
+  d.setMonth(d.getMonth() + 1);
+  window._calDate = d;
+  renderCalendarScreen();
+}
+
+function prevCalendarWeek() {
+  const d = new Date(window._calDate);
+  d.setDate(d.getDate() - 7);
+  window._calDate = d;
+  renderCalendarScreen();
+}
+
+function nextCalendarWeek() {
+  const d = new Date(window._calDate);
+  d.setDate(d.getDate() + 7);
+  window._calDate = d;
+  renderCalendarScreen();
+}
+
+function prevCalendarDay() {
+  const d = new Date(window._calDate);
+  d.setDate(d.getDate() - 1);
+  window._calDate = d;
+  renderCalendarScreen();
+}
+
+function nextCalendarDay() {
+  const d = new Date(window._calDate);
+  d.setDate(d.getDate() + 1);
+  window._calDate = d;
+  renderCalendarScreen();
+}
+
+function goCalendarToday() {
+  window._calDate = new Date();
+  renderCalendarScreen();
+}
+
+async function renderInvoicesScreen() {
   const content = document.getElementById('invoicesScreen');
+  content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading invoices...</div>';
 
-  const mockInvoices = [
-    {
-      id: '1',
-      band_name: 'The Jazz Collective',
-      amount: 150,
-      status: 'paid',
-      due_date: '2026-04-10',
-    },
-    {
-      id: '2',
-      band_name: 'Electric Dreams',
-      amount: 200,
-      status: 'overdue',
-      due_date: '2026-04-01',
-    },
-    {
-      id: '3',
-      band_name: 'The Rhythm Kings',
-      amount: 180,
-      status: 'draft',
-      due_date: null,
-    },
-  ];
+  try {
+    const res = await fetch('/api/invoices');
+    if (!res.ok) throw new Error('Failed to fetch invoices');
+    const invoices = await res.json();
 
-  content.innerHTML = `
-    <div class="section">
-      <div class="grid grid-3">
-        <div class="mini-card">
-          <div class="mini-card-value" style="color: var(--success);">£1,450</div>
-          <div class="mini-card-label">Total Paid</div>
+    // Calculate totals
+    const paid = invoices.filter(i => i.status === 'paid').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+    const overdue = invoices.filter(i => i.status === 'overdue').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+    const draft = invoices.filter(i => i.status === 'draft').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+    const sent = invoices.filter(i => i.status === 'sent').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+
+    let html = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div style="font-size:24px;font-weight:700;color:var(--text);">Invoices</div>
+          <div style="font-size:13px;color:var(--text-2);margin-top:2px;">${invoices.length} total · £${(paid + overdue + draft + sent).toFixed(0)} invoiced</div>
         </div>
-        <div class="mini-card">
-          <div class="mini-card-value" style="color: var(--danger);">£200</div>
-          <div class="mini-card-label">Overdue</div>
-        </div>
-        <div class="mini-card">
-          <div class="mini-card-value" style="color: var(--warning);">£360</div>
-          <div class="mini-card-label">Pending</div>
-        </div>
+        <button onclick="openPanel('create-invoice')" style="background:var(--accent);color:#000;border:none;border-radius:24px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;">+ New</button>
       </div>
-    </div>
+      <div style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
+        <button class="filter-badge ac" onclick="filterInvoicesByStatus('all')">All</button>
+        <button class="filter-badge" onclick="filterInvoicesByStatus('overdue')">Overdue</button>
+        <button class="filter-badge" onclick="filterInvoicesByStatus('draft')">Draft</button>
+        <button class="filter-badge" onclick="filterInvoicesByStatus('sent')">Sent</button>
+        <button class="filter-badge" onclick="filterInvoicesByStatus('paid')">Paid</button>
+      </div>
+      <div id="invoicesList" style="padding:0 16px;">`;
 
-    <div class="section">
-      <div class="section-title">Recent Invoices</div>
-      ${mockInvoices
-        .map(
-          (inv) => `
-        <div class="card">
-          <div class="list-item-header">
-            <div>
-              <div class="list-item-title">${inv.band_name}</div>
-              <div class="list-item-meta">Invoice #${inv.id}</div>
-            </div>
-            <div style="text-align: right;">
-              <div style="font-weight: 600;">£${inv.amount}</div>
-              <span class="badge ${
-                inv.status === 'paid'
-                  ? 'badge-success'
-                  : inv.status === 'overdue'
-                    ? 'badge-danger'
-                    : 'badge-warning'
-              }">${inv.status}</span>
-            </div>
-          </div>
-          ${inv.due_date ? `<div class="list-item-meta">Due: ${formatDate(inv.due_date)}</div>` : ''}
+    invoices.forEach(inv => {
+      const dotColor = inv.status === 'paid' ? 'var(--success)' :
+                       inv.status === 'overdue' ? 'var(--danger)' :
+                       inv.status === 'draft' ? 'var(--info)' : 'var(--warning)';
+
+      html += `
+      <div class="inv-i" onclick="openInvoiceDetail('${inv.id}')">
+        <div class="inv-dot" style="background:${dotColor};"></div>
+        <div style="flex:1;min-width:0;">
+          <div class="inv-t">${escapeHtml(inv.band_name || 'Unnamed')}</div>
+          <div class="inv-m">INV-${String(inv.id).padStart(3, '0')} · ${formatDateShort(inv.created_at || inv.date)}</div>
         </div>
-      `
-        )
-        .join('')}
-    </div>
-  `;
+        <div style="text-align:right;flex-shrink:0;">
+          <div class="inv-a" style="color:var(--success);">£${parseFloat(inv.amount).toFixed(0)}</div>
+          <div style="font-size:10px;color:var(--text-2);margin-top:2px;text-transform:capitalize;">${inv.status}</div>
+        </div>
+      </div>`;
+    });
+
+    html += `</div>
+      <div style="padding:0 16px;margin-top:12px;">
+        <button onclick="openPanel('create-standalone-invoice')" class="pill-g">Create standalone invoice</button>
+      </div>`;
+
+    content.innerHTML = html;
+  } catch (err) {
+    console.error('Invoices screen error:', err);
+    content.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:8px;">⚠️</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load invoices</div>
+        <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
+      </div>`;
+  }
 }
 
-function renderOffersScreen() {
+function filterInvoicesByStatus(status) {
+  document.querySelectorAll('.filter-badge').forEach(b => b.classList.remove('ac'));
+  event.target.classList.add('ac');
+  // TODO: implement filtering
+}
+
+async function openInvoiceDetail(invoiceId) {
+  const panel = document.getElementById('invoice-detail');
+  if (!panel) return;
+
+  panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading invoice...</div>';
+  openPanel('invoice-detail');
+
+  try {
+    const res = await fetch(`/api/invoices/${invoiceId}`);
+    if (!res.ok) throw new Error('Failed to fetch invoice');
+    const invoice = await res.json();
+
+    let html = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <button onclick="closePanel('invoice-detail')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <div style="flex:1;text-align:center;">
+          <div style="font-size:16px;font-weight:700;color:var(--text);">${escapeHtml(invoice.band_name)}</div>
+          <span style="font-size:11px;background:${invoice.status === 'paid' ? 'var(--success-dim);color:var(--success)' : invoice.status === 'overdue' ? 'var(--danger-dim);color:var(--danger)' : 'var(--info-dim);color:var(--info)'};padding:2px 8px;border-radius:12px;text-transform:capitalize;font-weight:600;">${invoice.status}</span>
+        </div>
+        <div style="width:32px;"></div>
+      </div>
+      <div style="padding:0 16px 16px;border-bottom:1px solid var(--border);margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+          <span style="color:var(--text-2);font-size:12px;">Invoice number</span>
+          <span style="font-weight:600;color:var(--text);">INV-${String(invoice.id).padStart(3, '0')}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+          <span style="color:var(--text-2);font-size:12px;">Date created</span>
+          <span style="font-weight:600;color:var(--text);">${formatDateShort(invoice.created_at || invoice.date)}</span>
+        </div>
+        ${invoice.due_date ? `
+        <div style="display:flex;justify-content:space-between;">
+          <span style="color:var(--text-2);font-size:12px;">Due date</span>
+          <span style="font-weight:600;color:var(--text);">${formatDateShort(invoice.due_date)}</span>
+        </div>` : ''}
+      </div>`;
+
+    if (invoice.line_items && invoice.line_items.length > 0) {
+      html += `<div style="padding:0 16px 12px;border-bottom:1px solid var(--border);margin-bottom:12px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Line items</div>`;
+      invoice.line_items.forEach(item => {
+        html += `
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px;">
+          <span style="color:var(--text);">${escapeHtml(item.description)}</span>
+          <span style="font-weight:600;color:var(--text);">£${parseFloat(item.amount).toFixed(0)}</span>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    html += `
+      <div style="padding:0 16px 12px;border-bottom:1px solid var(--border);margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:14px;font-weight:600;color:var(--text);">Total</span>
+          <span style="font-size:20px;font-weight:700;color:var(--success);">£${parseFloat(invoice.amount).toFixed(0)}</span>
+        </div>
+      </div>
+      <div style="padding:0 16px;display:flex;flex-direction:column;gap:8px;">
+        ${invoice.status === 'draft' ? `<button onclick="openPanel('send-invoice')" class="pill">Send invoice</button>` : ''}
+        ${invoice.status !== 'paid' ? `<button onclick="markInvoiceAsPaid('${invoice.id}')" class="pill-o">Mark as paid</button>` : ''}
+        <button onclick="downloadInvoicePDF('${invoice.id}')" class="pill-g">Download PDF</button>
+        ${invoice.status === 'sent' ? `<button onclick="chaseInvoicePayment('${invoice.id}')" class="pill-g">Chase payment</button>` : ''}
+      </div>`;
+
+    panel.innerHTML = html;
+  } catch (err) {
+    console.error('Invoice detail error:', err);
+    panel.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load invoice</div>`;
+  }
+}
+
+async function renderOffersScreen() {
   const content = document.getElementById('offersScreen');
+  content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading offers...</div>';
 
-  const mockOffersData = [
-    {
-      id: '1',
-      sender: 'The Jazz Collective',
-      type: 'dep_request',
-      gig: 'Drummer needed',
-      date: '2026-04-16',
-      fee: 120,
-      status: 'pending',
-    },
-    {
-      id: '2',
-      sender: 'Electric Dreams',
-      type: 'lineup_callout',
-      gig: 'Guitarist wanted',
-      date: '2026-04-20',
-      fee: 150,
-      status: 'pending',
-    },
-    {
-      id: '3',
-      sender: 'The Rhythm Kings',
-      type: 'marketplace',
-      gig: 'Bassist needed',
-      date: '2026-04-25',
-      fee: 180,
-      status: 'pending',
-    },
-    {
-      id: '4',
-      sender: 'Soul Sessions',
-      type: 'marketplace',
-      gig: 'Keyboard player',
-      date: '2026-05-01',
-      fee: 160,
-      status: 'pending',
-    },
-  ];
+  try {
+    const res = await fetch('/api/offers');
+    if (!res.ok) throw new Error('Failed to fetch offers');
+    const offers = await res.json();
 
-  content.innerHTML = `
-    <div class="section">
-      <div class="section-title">Gig Offers (${mockOffersData.length})</div>
-      ${mockOffersData
-        .map(
-          (offer) => `
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <div class="card-title">${offer.sender}</div>
-              <div class="card-subtitle">${offer.gig}</div>
-            </div>
-            <span class="badge badge-accent">${offer.type.replace('_', ' ')}</span>
-          </div>
-          <div class="gig-meta" style="margin: var(--spacing-3) 0;">
-            <div class="gig-meta-item">📅 ${formatDate(offer.date)}</div>
-            <div class="gig-meta-item">💷 £${offer.fee}</div>
-          </div>
-          <div style="display: flex; gap: var(--spacing-2);">
-            <button class="button button-primary button-small" onclick="updateOfferStatus('${offer.id}', 'accepted')">Accept</button>
-            <button class="button button-secondary button-small" onclick="updateOfferStatus('${offer.id}', 'declined')">Decline</button>
+    const accepted = offers.filter(o => o.status === 'accepted').length;
+
+    let html = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button onclick="showScreen('home')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+          <div>
+            <div style="font-size:24px;font-weight:700;color:var(--text);">Offers</div>
           </div>
         </div>
-      `
-        )
-        .join('')}
-    </div>
-  `;
+        <span style="background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:24px;height:24px;border-radius:12px;display:flex;align-items:center;justify-content:center;padding:0 6px;">${accepted}</span>
+      </div>
+      <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;">
+        <div class="tb ac" onclick="switchOffersTab('incoming')">Incoming</div>
+        <div class="tb" onclick="switchOffersTab('my-deps')">My deps</div>
+      </div>
+      <div id="offersListContent" style="padding:0 16px;">`;
+
+    offers.forEach(offer => {
+      const deadline = new Date(offer.deadline);
+      const now = new Date();
+      const hoursLeft = Math.ceil((deadline - now) / (1000 * 60 * 60));
+      const daysLeft = Math.ceil(hoursLeft / 24);
+
+      html += `
+      <div class="oc">
+        <div class="o-act">${offer.source || 'OFFER'}</div>
+        <div class="o-title">${escapeHtml(offer.band_name)}</div>
+        <div class="o-det">📍 ${escapeHtml(offer.venue_name)}</div>
+        <div class="o-det">📅 ${formatDateLong(offer.gig_date)}</div>
+        <div class="o-det">💷 £${parseFloat(offer.fee).toFixed(0)}</div>
+        <div class="o-timer">
+          ⏳ Expires in ${daysLeft > 0 ? daysLeft + 'd' : hoursLeft + 'h'}
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <button onclick="acceptOffer('${offer.id}')" class="o-acc">Accept</button>
+          <button onclick="declineOffer('${offer.id}')" class="o-dec">Decline</button>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 1)">1h</button>
+          <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 24)">1d</button>
+          <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 168)">1w</button>
+        </div>
+      </div>`;
+    });
+
+    html += `</div>`;
+    content.innerHTML = html;
+  } catch (err) {
+    console.error('Offers screen error:', err);
+    content.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:8px;">⚠️</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load offers</div>
+        <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
+      </div>`;
+  }
 }
 
-function renderProfileScreen() {
+function switchOffersTab(tab) {
+  document.querySelectorAll('#offersScreen .tb').forEach(t => t.classList.remove('ac'));
+  event.target.classList.add('ac');
+  // TODO: filter offers by tab
+}
+
+async function renderProfileScreen() {
   const content = document.getElementById('profileScreen');
+  content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading profile...</div>';
 
-  const userInitial = (currentUser.name || currentUser.email || 'G')[0].toUpperCase();
+  try {
+    const res = await fetch('/api/user/profile');
+    const profile = res.ok ? await res.json() : { name: window._currentUser?.name || 'Guest', email: window._currentUser?.email || '' };
 
-  content.innerHTML = `
-    <div class="section">
-      <div style="text-align: center; padding: var(--spacing-8); background-color: var(--card); border-radius: var(--radius-lg); border: 1px solid var(--border);">
-        <div style="width: 80px; height: 80px; margin: 0 auto var(--spacing-4); border-radius: 50%; background-color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 2rem; color: var(--bg); font-weight: bold;">
-          ${userInitial}
-        </div>
-        <div style="font-size: var(--font-size-lg); font-weight: 600; margin-bottom: var(--spacing-2);">${currentUser.name || 'Guest'}</div>
-        <div style="color: var(--text-2); margin-bottom: var(--spacing-4);">${currentUser.email}</div>
-        <button class="button button-secondary button-block" onclick="logout()">Sign Out</button>
+    const userInitial = (profile.name || profile.email || 'G')[0].toUpperCase();
+
+    let html = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <button onclick="closePanel('profile-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <div style="font-size:16px;font-weight:700;color:var(--text);">Profile</div>
+        <button onclick="editProfile()" style="background:none;border:none;color:var(--accent);font-size:14px;cursor:pointer;font-weight:600;">Edit</button>
       </div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">Settings</div>
-      <div class="card">
-        <div class="list-item">
-          <div class="list-item-title">Notifications</div>
-        </div>
-        <div class="list-item">
-          <div class="list-item-title">Calendar Sync</div>
-        </div>
-        <div class="list-item">
-          <div class="list-item-title">Billing</div>
-        </div>
-        <div class="list-item">
-          <div class="list-item-title">Help & Support</div>
+      <div style="padding:0 16px 12px;">
+        <div style="text-align:center;">
+          <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:32px;background:var(--accent-dim);border:3px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:var(--accent);">${userInitial}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(profile.name || 'Guest')}</div>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(profile.instruments || 'No instruments listed')}</div>
+          <div style="font-size:12px;color:var(--text-2);">📍 ${escapeHtml(profile.location || 'Location not set')}</div>
+          ${profile.available_to_dep ? `<span style="display:inline-block;background:var(--success-dim);color:var(--success);padding:4px 10px;border-radius:12px;font-size:10px;font-weight:600;margin-top:6px;">Available to dep</span>` : ''}
         </div>
       </div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">App Info</div>
-      <div class="card">
-        <div class="list-item">
-          <div class="list-item-title">Version</div>
-          <div class="list-item-meta">0.2.0</div>
+      <div style="padding:0 16px 12px;display:flex;gap:6px;">
+        <button onclick="shareProfile()" class="pill-o" style="flex:1;">Share profile</button>
+        <button onclick="viewEPK()" class="pill-o" style="flex:1;">View EPK</button>
+      </div>
+      <div style="display:flex;gap:6px;padding:0 16px 12px;margin-bottom:8px;">
+        <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:8px 10px;text-align:center;">
+          <div style="font-size:13px;font-weight:700;color:var(--text);">${profile.gigs_count || 0}</div>
+          <div style="font-size:10px;color:var(--text-2);">Gigs</div>
         </div>
-        <div class="list-item">
-          <div class="list-item-title">Last Updated</div>
-          <div class="list-item-meta">April 2026</div>
+        <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:8px 10px;text-align:center;">
+          <div style="font-size:13px;font-weight:700;color:var(--text);">${profile.acts_count || 0}</div>
+          <div style="font-size:10px;color:var(--text-2);">Acts</div>
+        </div>
+        <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:8px 10px;text-align:center;">
+          <div style="font-size:13px;font-weight:700;color:var(--success);">£${profile.total_earned || 0}</div>
+          <div style="font-size:10px;color:var(--text-2);">Earned</div>
         </div>
       </div>
-    </div>
-  `;
+      <div style="padding:0 16px;margin-bottom:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;cursor:pointer;" onclick="shareAvailability()">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">🔗</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);">Share your availability</div>
+            <div style="font-size:11px;color:var(--text-2);">Send calendar link to band leaders</div>
+          </div>
+          <span style="color:var(--accent);font-size:16px;">›</span>
+        </div>
+      </div>
+      <div style="padding:0 16px 12px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Menu</div>
+        <div onclick="openPanel('network-panel')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+          <span style="color:var(--text);font-size:14px;">My Network</span>
+          <span style="color:var(--accent);font-size:16px;">›</span>
+        </div>
+        <div onclick="openPanel('repertoire-panel')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+          <span style="color:var(--text);font-size:14px;">Repertoire library</span>
+          <span style="color:var(--accent);font-size:16px;">›</span>
+        </div>
+        <div onclick="openPanel('epk-panel')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+          <span style="color:var(--text);font-size:14px;">Professional EPK</span>
+          <span style="color:var(--accent);font-size:16px;">›</span>
+        </div>
+        <div onclick="toggleDocs()" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+          <span style="color:var(--text);font-size:14px;">Documents & certs</span>
+          <span style="color:var(--accent);font-size:16px;" id="docs-arrow">›</span>
+        </div>
+        <div id="docs-section" style="display:none;background:var(--card);padding:8px 14px;border-bottom:1px solid var(--border);">
+          <div style="font-size:12px;color:var(--text-2);padding:6px 0;">DBS Check · Public Liability Insurance · Risk Assessment</div>
+        </div>
+        <div onclick="openPanel('finance-panel')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+          <span style="color:var(--text);font-size:14px;">Earnings & tax summary</span>
+          <span style="color:var(--accent);font-size:16px;">›</span>
+        </div>
+        <div onclick="openPanel('notifications-settings')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+          <span style="color:var(--text);font-size:14px;">Notification settings</span>
+          <span style="color:var(--accent);font-size:16px;">›</span>
+        </div>
+        <div onclick="toggleConnected()" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+          <span style="color:var(--text);font-size:14px;">Connected acts</span>
+          <span style="color:var(--accent);font-size:16px;" id="connected-arrow">›</span>
+        </div>
+        <div id="connected-section" style="display:none;background:var(--card);padding:8px 14px;border-bottom:1px solid var(--border);">
+          <div style="font-size:12px;color:var(--text-2);padding:6px 0;">Musician Tracker · ClientFlow CRM</div>
+        </div>
+        <div style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text);font-size:14px;">Google Calendar</span>
+          <input type="checkbox" style="cursor:pointer;" onchange="toggleCalendarSync()">
+        </div>
+        <div style="padding:12px 14px;background:var(--card);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text);font-size:14px;">Theme</span>
+          <button onclick="toggleTheme()" style="background:none;border:none;cursor:pointer;font-size:16px;">🌙</button>
+        </div>
+      </div>
+      <div style="padding:0 16px;margin-top:12px;">
+        <button onclick="logout()" class="pill" style="background:var(--danger);color:#fff;">Sign Out</button>
+      </div>`;
+
+    content.innerHTML = html;
+  } catch (err) {
+    console.error('Profile error:', err);
+    const userInitial = (window._currentUser?.name || window._currentUser?.email || 'G')[0].toUpperCase();
+    content.innerHTML = `<div style="padding:40px 20px;text-align:center;">Error loading profile</div>`;
+  }
+}
+
+function toggleDocs() {
+  const section = document.getElementById('docs-section');
+  const arrow = document.getElementById('docs-arrow');
+  section.style.display = section.style.display === 'none' ? 'block' : 'none';
+  arrow.textContent = section.style.display === 'none' ? '›' : '‹';
+}
+
+function toggleConnected() {
+  const section = document.getElementById('connected-section');
+  const arrow = document.getElementById('connected-arrow');
+  section.style.display = section.style.display === 'none' ? 'block' : 'none';
+  arrow.textContent = section.style.display === 'none' ? '›' : '‹';
 }
 
 // ── Gig Wizard ──────────────────────────────────────────────────────────────
@@ -1617,6 +2010,11 @@ async function openGigDetail(gigId) {
   const doneCount = fields.filter((f) => f.ok).length;
 
   body.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--border);">
+      <button onclick="closePanel('panel-gig-detail')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+      <div style="font-size:14px;font-weight:700;color:var(--text);">Gig Details</div>
+      <button onclick="openEditGig('${gig.id}')" style="background:none;border:none;color:var(--accent);font-size:14px;cursor:pointer;font-weight:600;">Edit</button>
+    </div>
     <div style="background:var(--surface);padding:16px 20px 20px;">
       <div style="font-size:13px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
       <div style="font-size:22px;font-weight:700;color:var(--text);margin-bottom:16px;">${escapeHtml(gig.venue_name || 'No venue')}</div>
@@ -1764,6 +2162,601 @@ async function deleteGig(gigId) {
   } catch (e) {
     console.error('Delete gig error:', e);
   }
+}
+
+async function openEditGig(gigId) {
+  const panel = document.getElementById('edit-gig-panel');
+  if (!panel) return;
+
+  panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading gig...</div>';
+  openPanel('edit-gig-panel');
+
+  try {
+    let gig = (window._cachedGigs || []).find(g => g.id === gigId);
+    if (!gig) {
+      const res = await fetch(`/api/gigs/${gigId}`);
+      if (!res.ok) throw new Error('Failed to fetch gig');
+      gig = await res.json();
+    }
+
+    let html = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <button onclick="closePanel('edit-gig-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <div style="font-size:16px;font-weight:700;color:var(--text);">Edit Gig</div>
+        <button onclick="deleteGig('${gig.id}')" style="background:none;border:none;color:var(--danger);font-size:14px;cursor:pointer;font-weight:600;">Delete</button>
+      </div>
+      <div style="padding:0 16px 20px;">
+        <div class="form-group">
+          <label class="fl">Band name</label>
+          <input type="text" class="fi" id="editBandName" value="${escapeHtml(gig.band_name || '')}" />
+        </div>
+        <div class="form-group">
+          <label class="fl">Venue</label>
+          <input type="text" class="fi" id="editVenue" value="${escapeHtml(gig.venue_name || '')}" />
+        </div>
+        <div class="form-group">
+          <label class="fl">Date</label>
+          <input type="date" class="fi" id="editDate" value="${gig.date || ''}" />
+        </div>
+        <div style="display:flex;gap:10px;">
+          <div class="form-group" style="flex:1;">
+            <label class="fl">Start time</label>
+            <input type="time" class="fi" id="editStartTime" value="${gig.start_time || ''}" />
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label class="fl">End time</label>
+            <input type="time" class="fi" id="editEndTime" value="${gig.end_time || ''}" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="fl">Fee (£)</label>
+          <input type="number" class="fi" id="editFee" value="${gig.fee || ''}" />
+        </div>
+        <div class="form-group">
+          <label class="fl">Status</label>
+          <select class="fi" id="editStatus">
+            <option value="confirmed" ${gig.status === 'confirmed' ? 'selected' : ''}>Confirmed</option>
+            <option value="tentative" ${gig.status === 'tentative' ? 'selected' : ''}>Pencilled</option>
+            <option value="enquiry" ${gig.status === 'enquiry' ? 'selected' : ''}>Enquiry</option>
+            <option value="cancelled" ${gig.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="fl">Dress code</label>
+          <input type="text" class="fi" id="editDressCode" value="${escapeHtml(gig.dress_code || '')}" />
+        </div>
+        <div class="form-group">
+          <label class="fl">Notes</label>
+          <textarea class="fi" id="editNotes" style="resize:vertical;height:80px;">${escapeHtml(gig.notes || '')}</textarea>
+        </div>
+        <button onclick="saveEditGig('${gig.id}')" class="pill">Save Changes</button>
+      </div>`;
+
+    panel.innerHTML = html;
+  } catch (err) {
+    console.error('Edit gig error:', err);
+    panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load gig</div>';
+  }
+}
+
+async function saveEditGig(gigId) {
+  try {
+    const data = {
+      band_name: document.getElementById('editBandName').value,
+      venue_name: document.getElementById('editVenue').value,
+      date: document.getElementById('editDate').value,
+      start_time: document.getElementById('editStartTime').value,
+      end_time: document.getElementById('editEndTime').value,
+      fee: parseFloat(document.getElementById('editFee').value) || 0,
+      status: document.getElementById('editStatus').value,
+      dress_code: document.getElementById('editDressCode').value,
+      notes: document.getElementById('editNotes').value,
+    };
+
+    const res = await fetch(`/api/gigs/${gigId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+
+    if (!res.ok) throw new Error('Failed to save gig');
+
+    // Update cache
+    window._cachedGigs = (window._cachedGigs || []).map(g => g.id === gigId ? { ...g, ...data, id: gigId } : g);
+    closePanel('edit-gig-panel');
+    renderGigsList(window._cachedGigs);
+  } catch (err) {
+    console.error('Save gig error:', err);
+    alert('Failed to save gig');
+  }
+}
+
+async function openPanel(panelId) {
+  const panel = document.getElementById(panelId);
+  if (panel) {
+    panel.classList.add('active');
+  }
+}
+
+function closePanel(panelId) {
+  const panel = document.getElementById(panelId);
+  if (panel) {
+    panel.classList.remove('active');
+  }
+}
+
+function editProfile() {
+  // TODO: implement edit profile
+  alert('Edit profile coming soon');
+}
+
+function shareProfile() {
+  // TODO: implement share profile
+  alert('Share profile coming soon');
+}
+
+function viewEPK() {
+  openPanel('epk-panel');
+}
+
+function shareAvailability() {
+  // TODO: implement share availability
+  alert('Share availability coming soon');
+}
+
+function toggleTheme() {
+  document.body.classList.toggle('light-mode');
+  const newTheme = document.body.classList.contains('light-mode') ? 'light' : 'dark';
+  localStorage.setItem('theme', newTheme);
+}
+
+function toggleCalendarSync() {
+  // TODO: implement calendar sync toggle
+  alert('Calendar sync coming soon');
+}
+
+async function openNetworkPanel() {
+  const body = document.getElementById('networkBody');
+  if (!body) return;
+
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading contacts...</div>';
+
+  try {
+    const res = await fetch('/api/contacts');
+    if (!res.ok) throw new Error('Failed to fetch contacts');
+    const contacts = await res.json();
+
+    let html = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <button onclick="closePanel('network-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <div style="font-size:16px;font-weight:700;color:var(--text);">My Network</div>
+        <button onclick="openPanel('add-contact')" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
+      </div>
+      <div style="padding:0 16px 8px;">
+        <input type="text" class="fi" placeholder="Search contacts..." id="contactSearch" oninput="filterContacts()" />
+      </div>
+      <div style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
+        <button class="filter-badge ac" onclick="filterContactsByType('all')">All</button>
+        <button class="filter-badge" onclick="filterContactsByType('favourite')">Favourites</button>
+        <button class="filter-badge" onclick="filterContactsByType('instrument')">By instrument</button>
+      </div>
+      <div id="contactsList" style="padding:0 16px;">`;
+
+    contacts.forEach(contact => {
+      const initial = (contact.name || 'U')[0].toUpperCase();
+      html += `
+      <div onclick="openContactDetail('${contact.id}')" style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
+        <div style="width:40px;height:40px;border-radius:20px;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--accent);flex-shrink:0;">${initial}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(contact.name)}</div>
+          <div style="font-size:11px;color:var(--text-2);">${escapeHtml(contact.instruments || 'No instruments')}</div>
+          <div style="font-size:10px;color:var(--text-3);">Last gig: ${contact.last_gig_date ? formatDateShort(contact.last_gig_date) : 'Never'}</div>
+        </div>
+        <span style="font-size:14px;cursor:pointer;" onclick="toggleFavourite('${contact.id}', event)">${contact.favourite ? '⭐' : '☆'}</span>
+      </div>`;
+    });
+
+    html += `</div>`;
+    body.innerHTML = html;
+  } catch (err) {
+    console.error('Network panel error:', err);
+    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load contacts</div>';
+  }
+}
+
+async function openContactDetail(contactId) {
+  const panel = document.getElementById('contact-detail-panel');
+  if (!panel) return;
+
+  panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading contact...</div>';
+  openPanel('contact-detail-panel');
+
+  try {
+    const res = await fetch(`/api/contacts/${contactId}`);
+    if (!res.ok) throw new Error('Failed to fetch contact');
+    const contact = await res.json();
+
+    const initial = (contact.name || 'U')[0].toUpperCase();
+
+    let html = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <button onclick="closePanel('contact-detail-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <div style="font-size:16px;font-weight:700;color:var(--text);">Contact</div>
+        <div style="width:32px;"></div>
+      </div>
+      <div style="padding:0 16px;text-align:center;margin-bottom:12px;">
+        <div style="width:48px;height:48px;margin:0 auto 12px;border-radius:24px;background:var(--accent-dim);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--accent);">${initial}</div>
+        <div style="font-size:16px;font-weight:700;color:var(--text);">${escapeHtml(contact.name)}</div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:2px;">${escapeHtml(contact.instruments || 'No instruments')}</div>
+        ${contact.location ? `<div style="font-size:12px;color:var(--text-2);">📍 ${escapeHtml(contact.location)}</div>` : ''}
+      </div>
+      <div style="padding:0 16px;margin-bottom:12px;">
+        ${contact.phone ? `<div style="padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Phone</span><br/><span style="color:var(--text);font-weight:600;">${escapeHtml(contact.phone)}</span></div>` : ''}
+        ${contact.email ? `<div style="padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Email</span><br/><span style="color:var(--text);font-weight:600;">${escapeHtml(contact.email)}</span></div>` : ''}
+        ${contact.gigs_together ? `<div style="padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Gigs together</span><br/><span style="color:var(--text);font-weight:600;">${contact.gigs_together}</span></div>` : ''}
+        ${contact.last_gig_date ? `<div style="padding:10px 0;font-size:13px;"><span style="color:var(--text-2);">Last gig</span><br/><span style="color:var(--text);font-weight:600;">${formatDateShort(contact.last_gig_date)}</span></div>` : ''}
+      </div>
+      <div style="padding:0 16px;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
+        <button onclick="sendDepOffer('${contact.id}')" class="pill-o">Send dep offer</button>
+        <button onclick="messageContact('${contact.id}')" class="pill-o">Message</button>
+        <button onclick="callContact('${contact.id}')" class="pill-g">Call</button>
+      </div>
+      ${contact.notes ? `<div style="padding:0 16px;margin-bottom:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Notes</div>
+        <div style="font-size:13px;color:var(--text);">${escapeHtml(contact.notes)}</div>
+      </div>` : ''}`;
+
+    panel.innerHTML = html;
+  } catch (err) {
+    console.error('Contact detail error:', err);
+    panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load contact</div>';
+  }
+}
+
+async function openRepertoirePanel() {
+  const body = document.getElementById('repertoireBody');
+  if (!body) return;
+
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading repertoire...</div>';
+
+  try {
+    const songsRes = await fetch('/api/songs');
+    const songs = songsRes.ok ? await songsRes.json() : [];
+
+    const setlistsRes = await fetch('/api/setlists');
+    const setlists = setlistsRes.ok ? await setlistsRes.json() : [];
+
+    let html = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <button onclick="closePanel('repertoire-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <div style="font-size:16px;font-weight:700;color:var(--text);">Repertoire</div>
+        <div style="width:32px;"></div>
+      </div>
+      <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;">
+        <div class="tb ac" onclick="switchRepertoireTab('songs')">Songs</div>
+        <div class="tb" onclick="switchRepertoireTab('setlists')">Setlists</div>
+      </div>
+      <div id="repertoireContent" style="padding:0 16px;">`;
+
+    // Songs tab
+    html += `<div id="songsTab">
+      <div style="padding:8px 0;">
+        <input type="text" class="fi" placeholder="Search songs..." id="songSearch" oninput="filterSongs()" />
+      </div>
+      <button onclick="openPanel('song-form')" class="pill" style="margin-bottom:12px;">+ Add Song</button>
+      ${songs.map(song => `
+      <div onclick="openSongForm('${song.id}')" style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(song.title)}</div>
+        <div style="font-size:11px;color:var(--text-2);">${escapeHtml(song.artist)} · Key: ${song.key || 'N/A'} · ${song.tempo || '?'} BPM</div>
+      </div>`).join('')}
+    </div>`;
+
+    // Setlists tab
+    html += `<div id="setlistsTab" style="display:none;">
+      <button onclick="openPanel('create-setlist')" class="pill" style="margin-bottom:12px;">+ Create Setlist</button>
+      ${setlists.map(setlist => `
+      <div style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(setlist.name)}</div>
+        <div style="font-size:11px;color:var(--text-2);">${setlist.song_count} songs · ${setlist.duration || '?'} mins · ${setlist.linked_gig ? 'Linked to gig' : 'Not linked'}</div>
+      </div>`).join('')}
+    </div>`;
+
+    html += `</div>`;
+    body.innerHTML = html;
+  } catch (err) {
+    console.error('Repertoire error:', err);
+    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load repertoire</div>';
+  }
+}
+
+async function openSongForm(songId) {
+  const panel = document.getElementById('song-form-panel');
+  if (!panel) return;
+
+  if (songId) {
+    panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading song...</div>';
+    try {
+      const res = await fetch(`/api/songs/${songId}`);
+      if (!res.ok) throw new Error('Failed to fetch song');
+      const song = await res.json();
+
+      panel.innerHTML = `
+        <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+          <button onclick="closePanel('song-form-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+          <div style="font-size:16px;font-weight:700;color:var(--text);">Edit Song</div>
+          <div style="width:32px;"></div>
+        </div>
+        <div style="padding:0 16px 20px;">
+          <div class="form-group">
+            <label class="fl">Title</label>
+            <input type="text" class="fi" id="songTitle" value="${escapeHtml(song.title || '')}" />
+          </div>
+          <div class="form-group">
+            <label class="fl">Artist</label>
+            <input type="text" class="fi" id="songArtist" value="${escapeHtml(song.artist || '')}" />
+          </div>
+          <div class="form-group">
+            <label class="fl">Key</label>
+            <input type="text" class="fi" id="songKey" value="${escapeHtml(song.key || '')}" placeholder="C, Dm, etc." />
+          </div>
+          <div style="display:flex;gap:10px;">
+            <div class="form-group" style="flex:1;">
+              <label class="fl">Tempo (BPM)</label>
+              <input type="number" class="fi" id="songTempo" value="${song.tempo || ''}" />
+            </div>
+            <div class="form-group" style="flex:1;">
+              <label class="fl">Duration (mins)</label>
+              <input type="number" class="fi" id="songDuration" value="${song.duration || ''}" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="fl">Genre</label>
+            <input type="text" class="fi" id="songGenre" value="${escapeHtml(song.genre || '')}" />
+          </div>
+          <div class="form-group">
+            <label class="fl">Tags</label>
+            <input type="text" class="fi" id="songTags" value="${escapeHtml(song.tags || '')}" placeholder="comma separated" />
+          </div>
+          <div class="form-group">
+            <label class="fl">Lyrics</label>
+            <textarea class="fi" id="songLyrics" style="resize:vertical;height:120px;">${escapeHtml(song.lyrics || '')}</textarea>
+          </div>
+          <button onclick="saveSong('${song.id}')" class="pill">Save Song</button>
+        </div>`;
+    } catch (err) {
+      console.error('Song form error:', err);
+      panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load song</div>';
+    }
+  } else {
+    panel.innerHTML = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <button onclick="closePanel('song-form-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <div style="font-size:16px;font-weight:700;color:var(--text);">Add Song</div>
+        <div style="width:32px;"></div>
+      </div>
+      <div style="padding:0 16px 20px;">
+        <div class="form-group">
+          <label class="fl">Title</label>
+          <input type="text" class="fi" id="songTitle" placeholder="Song title" />
+        </div>
+        <div class="form-group">
+          <label class="fl">Artist</label>
+          <input type="text" class="fi" id="songArtist" placeholder="Artist name" />
+        </div>
+        <div class="form-group">
+          <label class="fl">Key</label>
+          <input type="text" class="fi" id="songKey" placeholder="C, Dm, etc." />
+        </div>
+        <div style="display:flex;gap:10px;">
+          <div class="form-group" style="flex:1;">
+            <label class="fl">Tempo (BPM)</label>
+            <input type="number" class="fi" id="songTempo" />
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label class="fl">Duration (mins)</label>
+            <input type="number" class="fi" id="songDuration" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="fl">Genre</label>
+          <input type="text" class="fi" id="songGenre" />
+        </div>
+        <div class="form-group">
+          <label class="fl">Tags</label>
+          <input type="text" class="fi" id="songTags" placeholder="comma separated" />
+        </div>
+        <div class="form-group">
+          <label class="fl">Lyrics</label>
+          <textarea class="fi" id="songLyrics" style="resize:vertical;height:120px;"></textarea>
+        </div>
+        <button onclick="saveSong()" class="pill">Save Song</button>
+      </div>`;
+  }
+
+  openPanel('song-form-panel');
+}
+
+async function openEpkPanel() {
+  const body = document.getElementById('epkBody');
+  if (!body) return;
+
+  body.innerHTML = `
+    <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+      <button onclick="closePanel('epk-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+      <div style="font-size:16px;font-weight:700;color:var(--text);">Professional EPK</div>
+      <div style="width:32px;"></div>
+    </div>
+    <div style="padding:16px 20px;text-align:center;">
+      <div style="font-size:32px;margin-bottom:8px;">⭐</div>
+      <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:4px;">Premium Feature</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:16px;">Create a stunning electronic press kit to share with venues and promoters</div>
+      <button class="pill" style="background:var(--accent);">Upgrade to Premium</button>
+      <div style="margin-top:16px;padding:16px;background:var(--card);border-radius:var(--r);border:1px solid var(--border);">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">What's included</div>
+        <div style="font-size:12px;color:var(--text);line-height:1.6;">
+          · Custom bio section<br/>
+          · Video showcases<br/>
+          · Audio clips<br/>
+          · Testimonials<br/>
+          · Career stats<br/>
+          · Shareable link
+        </div>
+      </div>
+    </div>`;
+}
+
+async function openFinancePanel() {
+  const body = document.getElementById('financeBody');
+  if (!body) return;
+
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading earnings...</div>';
+
+  try {
+    const res = await fetch('/api/earnings');
+    if (!res.ok) throw new Error('Failed to fetch earnings');
+    const earnings = await res.json();
+
+    let html = `
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+        <button onclick="closePanel('finance-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <div style="font-size:16px;font-weight:700;color:var(--text);">Earnings & Tax</div>
+        <div style="width:32px;"></div>
+      </div>
+      <div style="padding:0 16px 16px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;margin-top:12px;">Monthly breakdown</div>
+        <div style="display:flex;align-items:flex-end;gap:2px;height:80px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:8px;">
+          ${(earnings.monthly_breakdown || []).map(m => {
+            const max = Math.max(...(earnings.monthly_breakdown || []).map(x => x.earnings));
+            const height = Math.min(100, (m.earnings / (max || 1)) * 100);
+            return `<div style="flex:1;background:var(--success);border-radius:2px;height:${Math.max(4, height)}%;opacity:${m.status === 'forecast' ? 0.4 : 1};" title="£${m.earnings}"></div>`;
+          }).join('')}
+        </div>
+      </div>
+      <div style="padding:0 16px 16px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Paid</div>
+            <div style="font-size:14px;font-weight:700;color:var(--success);">£${earnings.paid_total || 0}</div>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Unpaid</div>
+            <div style="font-size:14px;font-weight:700;color:var(--warning);">£${earnings.unpaid_total || 0}</div>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Overdue</div>
+            <div style="font-size:14px;font-weight:700;color:var(--danger);">£${earnings.overdue_total || 0}</div>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Expenses</div>
+            <div style="font-size:14px;font-weight:700;color:var(--text);">£${earnings.expenses_total || 0}</div>
+          </div>
+        </div>
+      </div>
+      <div style="padding:0 16px 16px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Tax year overview</div>
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;">
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
+            <span style="color:var(--text-2);">Income</span>
+            <span style="color:var(--text);font-weight:600;">£${earnings.year_income || 0}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
+            <span style="color:var(--text-2);">Expenses</span>
+            <span style="color:var(--text);font-weight:600;">£${earnings.year_expenses || 0}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:12px;font-weight:600;">
+            <span style="color:var(--text);">Taxable profit</span>
+            <span style="color:var(--success);">£${(earnings.year_income || 0) - (earnings.year_expenses || 0)}</span>
+          </div>
+        </div>
+      </div>
+      <div style="padding:0 16px;display:flex;flex-direction:column;gap:6px;">
+        <button class="pill-g">Export CSV</button>
+        <button class="pill-g">Export PDF</button>
+        <button class="pill-g">Receipts ZIP</button>
+      </div>`;
+
+    body.innerHTML = html;
+  } catch (err) {
+    console.error('Finance panel error:', err);
+    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load earnings</div>';
+  }
+}
+
+function saveSong(songId) {
+  // TODO: implement save song
+  alert('Save song coming soon');
+  closePanel('song-form-panel');
+}
+
+function filterContacts() {
+  // TODO: implement contact filtering
+}
+
+function filterContactsByType(type) {
+  document.querySelectorAll('#networkBody .filter-badge').forEach(b => b.classList.remove('ac'));
+  event.target.classList.add('ac');
+}
+
+function toggleFavourite(contactId, e) {
+  e.stopPropagation();
+  // TODO: implement favourite toggle
+}
+
+function sendDepOffer(contactId) {
+  // TODO: implement send dep offer
+  alert('Send dep offer coming soon');
+}
+
+function messageContact(contactId) {
+  // TODO: implement message contact
+  alert('Message coming soon');
+}
+
+function callContact(contactId) {
+  // TODO: implement call contact
+  alert('Call coming soon');
+}
+
+function filterSongs() {
+  // TODO: implement song filtering
+}
+
+function switchRepertoireTab(tab) {
+  document.getElementById('songsTab').style.display = tab === 'songs' ? 'block' : 'none';
+  document.getElementById('setlistsTab').style.display = tab === 'setlists' ? 'block' : 'none';
+  document.querySelectorAll('#repertoireContent .tb').forEach((t, i) => {
+    t.classList.toggle('ac', (i === 0 && tab === 'songs') || (i === 1 && tab === 'setlists'));
+  });
+}
+
+function markInvoiceAsPaid(invoiceId) {
+  // TODO: implement mark as paid
+  alert('Mark as paid coming soon');
+}
+
+function downloadInvoicePDF(invoiceId) {
+  // TODO: implement PDF download
+  alert('PDF download coming soon');
+}
+
+function chaseInvoicePayment(invoiceId) {
+  // TODO: implement chase payment
+  alert('Chase payment coming soon');
+}
+
+function acceptOffer(offerId) {
+  // TODO: implement accept offer
+  alert('Accept coming soon');
+}
+
+function declineOffer(offerId) {
+  // TODO: implement decline offer
+  alert('Decline coming soon');
+}
+
+function snoozeOffer(offerId, hours) {
+  // TODO: implement snooze
+  alert('Snooze coming soon');
 }
 
 // ── Calendar Nudge (Gig Detection) ──────────────────────────────────────────
