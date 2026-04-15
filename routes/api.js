@@ -277,4 +277,35 @@ router.get('/places/detail', async (req, res) => {
   }
 });
 
+// ── Distance Matrix Proxy ────────────────────────────────────────────────────
+// Returns miles & drive time from user's home postcode to a venue address
+
+router.get('/distance', async (req, res) => {
+  const key = process.env.GOOGLE_PLACES_KEY;
+  if (!key) return res.json({ distance: null });
+
+  const origin = req.query.origin;
+  const dest = req.query.destination;
+  if (!origin || !dest) return res.json({ distance: null });
+
+  try {
+    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(dest)}&units=imperial&key=${key}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    const element = data.rows?.[0]?.elements?.[0];
+    if (element?.status === 'OK') {
+      res.json({
+        distance: element.distance?.text || null,
+        duration: element.duration?.text || null,
+        miles: element.distance ? Math.round(element.distance.value / 1609.34) : null,
+      });
+    } else {
+      res.json({ distance: null });
+    }
+  } catch (error) {
+    console.error('Distance matrix error:', error);
+    res.json({ distance: null });
+  }
+});
+
 module.exports = router;

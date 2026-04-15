@@ -688,12 +688,11 @@ function renderWizardStep(step) {
   let stepHTML = '';
 
   if (step === 1) {
-    const recentBands = getRecentBands();
     stepHTML = `
       <div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Step 1 of 5</div>
       <div class="wizard-step-question">Who's the gig with?</div>
       <div class="wizard-step-hint">Band name, client, or your own booking</div>
-      <div class="form-group">
+      <div class="form-group" style="margin-bottom:12px;">
         <input
           type="text"
           class="form-input"
@@ -707,23 +706,18 @@ function renderWizardStep(step) {
         <div id="bandSuggestions" class="suggestions-list" style="display:none;"></div>
         <div class="wizard-error" id="wBandError">Please enter a band or project name</div>
       </div>
-      ${
-        recentBands.length > 0
-          ? `
-        <div style="margin-top: var(--spacing-2);">
-          <div style="font-size: var(--font-size-sm); color: var(--text-2); margin-bottom: var(--spacing-2);">Recent</div>
-          <div class="chip-group">
-            ${recentBands
-              .map(
-                (b) =>
-                  `<button class="chip" onclick="selectBand(this)">${escapeHtml(b)}</button>`
-              )
-              .join('')}
-          </div>
+      <div id="wizAutofill" style="display:none;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:var(--radius-sm, 8px);padding:14px 16px;margin-bottom:14px;display:none;align-items:center;gap:12px;">
+        <div style="font-size:20px;">&#129302;</div>
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:3px;">Auto-fill from past gigs?</div>
+          <div style="font-size:12px;color:var(--text-2);line-height:1.5;" id="wizAutofillDetails"></div>
         </div>
-      `
-          : ''
-      }
+        <button onclick="applyAutofill()" id="wizAutofillBtn" style="background:var(--accent);color:#000;border:none;border-radius:14px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">Apply</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:16px;">
+        <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:16px;padding:4px 10px;font-size:10px;font-weight:600;color:var(--accent);">&#9995; Manual entry</div>
+        <div style="font-size:10px;color:var(--text-3);">or arrives pre-filled from ClientFlow / Musician Tracker</div>
+      </div>
     `;
   } else if (step === 2) {
     stepHTML = `
@@ -748,6 +742,7 @@ function renderWizardStep(step) {
         <div style="font-size:10px;color:var(--success);margin-top:4px;" id="venueAddrMeta"></div>
       </div>
       <input type="hidden" id="wVenueAddress" value="${escapeHtml(gigWizardData.venue_address)}">
+      <div style="font-size:10px;color:var(--text-3);margin-bottom:16px;">&#128269; Google Places \u00B7 Address feeds into mileage calc & sat nav</div>
     `;
   } else if (step === 3) {
     stepHTML = `
@@ -804,19 +799,10 @@ function renderWizardStep(step) {
       </div>
       <div class="form-group">
         <label class="form-label">Status</label>
-        <div class="chip-group">
-          <button
-            class="chip chip-confirmed ${gigWizardData.status === 'confirmed' ? 'selected' : ''}"
-            onclick="selectGigStatus('confirmed')"
-          >Confirmed</button>
-          <button
-            class="chip chip-pencilled ${gigWizardData.status === 'tentative' ? 'selected' : ''}"
-            onclick="selectGigStatus('tentative')"
-          >Pencilled</button>
-          <button
-            class="chip chip-enquiry ${gigWizardData.status === 'enquiry' ? 'selected' : ''}"
-            onclick="selectGigStatus('enquiry')"
-          >Enquiry</button>
+        <div style="display:flex;gap:8px;">
+          <div onclick="selectGigStatus('confirmed')" id="statusChipConfirmed" style="flex:1;${gigWizardData.status === 'confirmed' ? 'background:var(--success-dim);color:var(--success);border:2px solid var(--success);font-weight:700;' : 'background:var(--card);color:var(--text-2);border:2px solid var(--border);'}border-radius:16px;padding:14px;font-size:14px;cursor:pointer;text-align:center;">${gigWizardData.status === 'confirmed' ? '\u2713 ' : ''}Confirmed</div>
+          <div onclick="selectGigStatus('tentative')" id="statusChipTentative" style="flex:1;${gigWizardData.status === 'tentative' ? 'background:var(--warning-dim);color:var(--warning);border:2px solid var(--warning);font-weight:700;' : 'background:var(--card);color:var(--text-2);border:2px solid var(--border);'}border-radius:16px;padding:14px;font-size:14px;cursor:pointer;text-align:center;">Pencilled</div>
+          <div onclick="selectGigStatus('enquiry')" id="statusChipEnquiry" style="flex:1;${gigWizardData.status === 'enquiry' ? 'background:var(--info-dim);color:var(--info);border:2px solid var(--info);font-weight:700;' : 'background:var(--card);color:var(--text-2);border:2px solid var(--border);'}border-radius:16px;padding:14px;font-size:14px;cursor:pointer;text-align:center;">Enquiry</div>
         </div>
       </div>
     `;
@@ -961,15 +947,8 @@ function wizardBack() {
 
 function selectGigStatus(status) {
   gigWizardData.status = status;
-  document
-    .querySelectorAll('.chip-confirmed, .chip-pencilled, .chip-enquiry')
-    .forEach((c) => c.classList.remove('selected'));
-  const map = {
-    confirmed: 'chip-confirmed',
-    tentative: 'chip-pencilled',
-    enquiry: 'chip-enquiry',
-  };
-  document.querySelector(`.${map[status]}`)?.classList.add('selected');
+  // Re-render step 4 to update chip styles
+  renderWizardStep(4);
 }
 
 function toggleGigType(type, btn) {
@@ -992,15 +971,39 @@ function selectBand(btn) {
   if (input) input.value = name;
 }
 
+function getBandStats(bandName) {
+  const gigs = (window._cachedGigs || []).filter(
+    (g) => g.band_name && g.band_name.toLowerCase() === bandName.toLowerCase()
+  );
+  if (gigs.length === 0) return null;
+  const fees = gigs.map((g) => parseFloat(g.fee)).filter((f) => !isNaN(f) && f > 0);
+  const avgFee = fees.length > 0 ? Math.round(fees.reduce((a, b) => a + b, 0) / fees.length) : null;
+  const lastGig = gigs[0];
+  return {
+    count: gigs.length,
+    avgFee,
+    venue: lastGig.venue_name || null,
+    venueAddr: lastGig.venue_address || null,
+    dressCode: lastGig.dress_code || null,
+    startTime: lastGig.start_time || null,
+    endTime: lastGig.end_time || null,
+  };
+}
+
 function filterBandSuggestions(query) {
   const container = document.getElementById('bandSuggestions');
   if (!container) return;
-  const recentBands = getRecentBands();
-  if (!query || recentBands.length === 0) {
+
+  // Hide autofill when typing
+  const af = document.getElementById('wizAutofill');
+  if (af) af.style.display = 'none';
+
+  const allBands = getRecentBands();
+  if (!query || query.length < 2 || allBands.length === 0) {
     container.style.display = 'none';
     return;
   }
-  const filtered = recentBands.filter((b) =>
+  const filtered = allBands.filter((b) =>
     b.toLowerCase().includes(query.toLowerCase())
   );
   if (filtered.length === 0) {
@@ -1008,19 +1011,67 @@ function filterBandSuggestions(query) {
     return;
   }
   container.innerHTML = filtered
-    .map(
-      (b) =>
-        `<div class="suggestion-item" onmousedown="selectBandFromSuggestion('${escapeAttr(b)}')">${escapeHtml(b)}</div>`
-    )
+    .map((b) => {
+      const stats = getBandStats(b);
+      const initial = b.charAt(0).toUpperCase();
+      const meta = stats
+        ? `${stats.count} past gig${stats.count !== 1 ? 's' : ''}${stats.avgFee ? ' \u00B7 Usually \u00A3' + stats.avgFee : ''}`
+        : '';
+      return `<div class="suggestion-item" onmousedown="selectBandFromSuggestion('${escapeAttr(b)}')" style="display:flex;align-items:center;gap:12px;">
+        <div style="width:32px;height:32px;border-radius:16px;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--accent);flex-shrink:0;">${initial}</div>
+        <div style="flex:1;"><div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(b)}</div>${meta ? `<div style="font-size:11px;color:var(--text-3);">${meta}</div>` : ''}</div>
+      </div>`;
+    })
     .join('');
   container.style.display = 'block';
 }
+
+window._autofillData = null;
 
 function selectBandFromSuggestion(name) {
   gigWizardData.band_name = name;
   const input = document.getElementById('wBandName');
   if (input) input.value = name;
   hideSuggestions('bandSuggestions');
+
+  // Show auto-fill card if we have past gig data
+  const stats = getBandStats(name);
+  if (stats && stats.count > 0) {
+    window._autofillData = stats;
+    const details = [];
+    if (stats.avgFee) details.push('Fee: \u00A3' + stats.avgFee);
+    if (stats.dressCode) details.push('Dress: ' + stats.dressCode);
+    if (stats.startTime && stats.endTime) details.push('Usually ' + stats.startTime.substring(0, 5) + '\u2013' + stats.endTime.substring(0, 5));
+    if (stats.venue) details.push('Venue: ' + stats.venue);
+
+    const af = document.getElementById('wizAutofill');
+    const afDetails = document.getElementById('wizAutofillDetails');
+    if (af && afDetails && details.length > 0) {
+      afDetails.innerHTML = details.join(' \u00B7 ');
+      af.style.display = 'flex';
+      // Reset button in case it was previously applied
+      const btn = document.getElementById('wizAutofillBtn');
+      if (btn) { btn.textContent = 'Apply'; btn.style.background = 'var(--accent)'; btn.style.color = '#000'; }
+    }
+  }
+}
+
+function applyAutofill() {
+  const d = window._autofillData;
+  if (!d) return;
+  if (d.avgFee) gigWizardData.fee = String(d.avgFee);
+  if (d.dressCode) gigWizardData.dress_code = d.dressCode;
+  if (d.startTime) gigWizardData.start_time = d.startTime;
+  if (d.endTime) gigWizardData.end_time = d.endTime;
+  if (d.venue) gigWizardData.venue_name = d.venue;
+  if (d.venueAddr) gigWizardData.venue_address = d.venueAddr;
+
+  const btn = document.getElementById('wizAutofillBtn');
+  if (btn) {
+    btn.textContent = '\u2713';
+    btn.style.background = 'var(--success)';
+    btn.style.color = '#fff';
+  }
 }
 
 function hideSuggestions(id) {
@@ -1085,11 +1136,28 @@ async function selectVenue(placeId, name) {
     if (data.result) {
       const addr = data.result.formatted_address || '';
       if (addrInput) addrInput.value = addr;
-      if (addrText) addrText.textContent = addr;
-      if (addrMeta) addrMeta.textContent = 'Full address saved';
-      if (confirm) confirm.style.display = 'block';
+      if (addrText) addrText.textContent = '\uD83D\uDCCD ' + addr;
       gigWizardData.venue_name = name;
       gigWizardData.venue_address = addr;
+
+      // Fetch distance from home postcode
+      const homePostcode = window._currentUser?.home_postcode;
+      if (homePostcode && addr && addrMeta) {
+        addrMeta.textContent = '\u2713 Full address saved';
+        if (confirm) confirm.style.display = 'block';
+        try {
+          const distResp = await fetch(`/api/distance?origin=${encodeURIComponent(homePostcode)}&destination=${encodeURIComponent(addr)}`);
+          const distData = await distResp.json();
+          if (distData.miles) {
+            addrMeta.textContent = `\u2713 Full address saved \u00B7 ${distData.miles} miles from home \u00B7 ~${distData.duration}`;
+          }
+        } catch (e) {
+          console.error('Distance fetch error:', e);
+        }
+      } else {
+        if (addrMeta) addrMeta.textContent = '\u2713 Full address saved';
+        if (confirm) confirm.style.display = 'block';
+      }
     }
   } catch (err) {
     console.error('Venue detail error:', err);
