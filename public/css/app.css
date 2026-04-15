@@ -693,6 +693,57 @@ body {
   border-bottom-color: var(--accent);
 }
 
+/* ═══ CALENDAR GRID ═══ */
+.cg {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.cdh {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  padding: 6px 0;
+  text-transform: uppercase;
+}
+.cd {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text);
+  padding: 8px 2px;
+  border-radius: 8px;
+  cursor: pointer;
+  position: relative;
+  min-height: 38px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.cd:hover { background: var(--surface); }
+.cd.today {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 700;
+}
+.cd.empty { cursor: default; }
+.cd.empty:hover { background: transparent; }
+.cd-dots {
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.cd-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+
 /* Legacy gig card styles (kept for compatibility) */
 .gig-card {
   background-color: var(--card);
