@@ -247,6 +247,19 @@ body {
   display: block;
 }
 
+/* App screen needs to be a flex column so header/content/nav stack correctly */
+#appScreen {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  height: 100vh;
+}
+
+#appScreen.active {
+  display: flex;
+}
+
 .section {
   margin-bottom: var(--spacing-6);
 }
