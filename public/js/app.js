@@ -598,8 +598,8 @@ function renderCalendarMonth(currentDate, gigs, blocked) {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const isToday = isCurrentMonth && day === today.getDate();
 
-    const gigsOnDay = gigs.filter(g => g.date === dateStr);
-    const blockedOnDay = blocked.some(b => b.date === dateStr);
+    const gigsOnDay = gigs.filter(g => (g.date || '').slice(0, 10) === dateStr);
+    const blockedOnDay = blocked.some(b => (b.date || '').slice(0, 10) === dateStr);
 
     html += `<div class="cd ${isToday ? 'today' : ''}" onclick="selectCalendarDate('${dateStr}')" style="position:relative;">
       ${day}
@@ -614,7 +614,7 @@ function renderCalendarMonth(currentDate, gigs, blocked) {
   html += `</div>`;
 
   // List gigs for this month
-  const monthGigs = gigs.filter(g => g.date.startsWith(`${year}-${String(month + 1).padStart(2, '0')}`));
+  const monthGigs = gigs.filter(g => (g.date || '').slice(0, 7) === `${year}-${String(month + 1).padStart(2, '0')}`);
   if (monthGigs.length > 0) {
     html += `<div style="margin-top:16px;">
       <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Gigs this month</div>`;
@@ -1008,7 +1008,8 @@ function switchOffersTab(tab) {
 }
 
 async function renderProfileScreen() {
-  const content = document.getElementById('profileScreen');
+  // Render into the panel overlay body (profile-panel), falling back to the screen
+  const content = document.getElementById('profilePanelBody') || document.getElementById('profileScreen');
   content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading profile...</div>';
 
   try {
@@ -1968,6 +1969,8 @@ function handleQuickAction(action) {
 
 function openPanel(id) {
   document.getElementById(id).classList.add('open');
+  // Trigger render for panels that need dynamic content
+  if (id === 'profile-panel') renderProfileScreen();
 }
 
 function closePanel(id) {
