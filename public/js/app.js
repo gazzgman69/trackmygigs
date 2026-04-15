@@ -1974,7 +1974,8 @@ function closePanel(id) {
   document.getElementById(id).classList.remove('open');
 }
 
-// Make closePanel accessible from inline HTML onclick
+// Make panel helpers accessible from inline HTML onclick
+window.openPanel = openPanel;
 window.closePanel = closePanel;
 
 // ── Gig Detail View ─────────────────────────────────────────────────────────
@@ -2271,19 +2272,7 @@ async function saveEditGig(gigId) {
   }
 }
 
-async function openPanel(panelId) {
-  const panel = document.getElementById(panelId);
-  if (panel) {
-    panel.classList.add('active');
-  }
-}
-
-function closePanel(panelId) {
-  const panel = document.getElementById(panelId);
-  if (panel) {
-    panel.classList.remove('active');
-  }
-}
+// openPanel / closePanel defined earlier (line ~1969) — removed duplicate here
 
 function editProfile() {
   // TODO: implement edit profile
