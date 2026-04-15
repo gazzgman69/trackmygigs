@@ -1264,3 +1264,8 @@ body.light-mode {
   from { opacity: 1; }
   to   { opacity: 0; }
 }
+
+@keyframes wiggle {
+  0%   { transform: rotate(-1.5deg); }
+  100% { transform: rotate(1.5deg); }
+}

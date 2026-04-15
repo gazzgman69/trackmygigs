@@ -1529,8 +1529,126 @@ function escapeAttr(str) {
   return String(str).replace(/'/g, "\\'");
 }
 
+// ── Nav reorder: long-press any nav button to enter wiggle/reorder mode ──────
+(function setupNavReorder() {
+  let longPressTimer = null;
+  let reorderMode = false;
+  let dragItem = null;
+
+  function allNavItems() {
+    return document.querySelectorAll('.nav-main .nav-item, .nav-quick-actions .nav-quick-btn');
+  }
+
+  // Attach long-press listeners
+  allNavItems().forEach(function (item) {
+    item.addEventListener('touchstart', function () {
+      if (reorderMode) return;
+      longPressTimer = setTimeout(function () { enterReorderMode(item); }, 600);
+    }, { passive: true });
+    item.addEventListener('touchend', function () { clearTimeout(longPressTimer); });
+    item.addEventListener('touchmove', function () { clearTimeout(longPressTimer); });
+    item.addEventListener('mousedown', function () {
+      if (reorderMode) return;
+      longPressTimer = setTimeout(function () { enterReorderMode(item); }, 600);
+    });
+    item.addEventListener('mouseup', function () { clearTimeout(longPressTimer); });
+    item.addEventListener('mouseleave', function () { clearTimeout(longPressTimer); });
+  });
+
+  function enterReorderMode(item) {
+    reorderMode = true;
+    allNavItems().forEach(function (ni) {
+      ni.style.animation = 'wiggle .3s ease-in-out infinite alternate';
+      ni.style.opacity = '.85';
+      ni.setAttribute('draggable', 'true');
+      ni.addEventListener('dragstart', onDragStart);
+      ni.addEventListener('dragover', onDragOver);
+      ni.addEventListener('drop', onDrop);
+      ni.addEventListener('dragend', onDragEnd);
+    });
+    item.style.opacity = '1';
+    item.style.transform = 'scale(1.15)';
+    dragItem = item;
+
+    // Show Done button
+    const nav = document.querySelector('.app-nav');
+    const exitBtn = document.createElement('div');
+    exitBtn.id = 'reorder-exit';
+    exitBtn.textContent = '\u2713 Done reordering';
+    exitBtn.style.cssText = 'position:absolute;top:-30px;left:50%;transform:translateX(-50%);background:var(--accent);color:#000;font-size:11px;font-weight:700;padding:5px 16px;border-radius:12px;cursor:pointer;z-index:20;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);';
+    exitBtn.onclick = exitReorderMode;
+    nav.style.position = 'relative';
+    nav.appendChild(exitBtn);
+  }
+
+  function exitReorderMode() {
+    reorderMode = false;
+    allNavItems().forEach(function (ni) {
+      ni.style.animation = '';
+      ni.style.opacity = '';
+      ni.style.transform = '';
+      ni.removeAttribute('draggable');
+      ni.removeEventListener('dragstart', onDragStart);
+      ni.removeEventListener('dragover', onDragOver);
+      ni.removeEventListener('drop', onDrop);
+      ni.removeEventListener('dragend', onDragEnd);
+    });
+    const exit = document.getElementById('reorder-exit');
+    if (exit) exit.remove();
+    dragItem = null;
+  }
+
+  function onDragStart(e) {
+    dragItem = this;
+    this.style.opacity = '.4';
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    this.style.transform = 'scale(1.1)';
+  }
+
+  function onDrop(e) {
+    e.preventDefault();
+    // Swap only within the same row
+    if (dragItem !== this && dragItem.parentElement === this.parentElement) {
+      const parent = this.parentElement;
+      const items = Array.from(parent.children);
+      const fromIdx = items.indexOf(dragItem);
+      const toIdx = items.indexOf(this);
+      if (fromIdx < toIdx) {
+        parent.insertBefore(dragItem, this.nextSibling);
+      } else {
+        parent.insertBefore(dragItem, this);
+      }
+    }
+    this.style.transform = '';
+  }
+
+  function onDragEnd() {
+    allNavItems().forEach(function (ni) {
+      ni.style.opacity = '.85';
+      ni.style.transform = '';
+    });
+    if (dragItem) dragItem.style.opacity = '.85';
+  }
+})();
+
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch((err) => {
-    console.log('ServiceWorker registration failed: ', err);
+  // Force-update: unregister any old service workers, then re-register
+  // This guarantees the new network-first SW replaces any stale cache-first one
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    const reRegister = () => {
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.log('ServiceWorker registration failed:', err);
+      });
+    };
+    if (registrations.length > 0) {
+      Promise.all(registrations.map((r) => r.unregister())).then(reRegister);
+    } else {
+      reRegister();
+    }
   });
 }
