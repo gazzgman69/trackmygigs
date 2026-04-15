@@ -27,16 +27,18 @@ app.use(express.static(path.join(__dirname, 'public'), {
 app.use('/auth', authRoutes);
 app.use('/api', apiRoutes);
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+// Never serve index.html for asset requests - prevents HTML-as-JS cache poisoning
+const ASSET_EXTENSIONS = /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff|woff2|ttf|map)$/i;
 
 app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api') && !req.path.startsWith('/auth')) {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-  } else {
-    res.status(404).json({ error: 'Not found' });
+  if (req.path.startsWith('/api') || req.path.startsWith('/auth') || ASSET_EXTENSIONS.test(req.path)) {
+    res.status(404).send('Not found');
+    return;
   }
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.listen(PORT, () => {
