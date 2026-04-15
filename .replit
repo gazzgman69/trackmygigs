@@ -1,9 +1,8 @@
-run = "node server.js"
+run = "npm install && node server.js"
 entrypoint = "server.js"
 
-[packager]
-language = "nodejs"
+[nix]
+channel = "stable-24_05"
 
-[packager.features]
-packageSearch = true
-guessImports = true
+[deployment]
+run = ["sh", "-c", "node server.js"]
