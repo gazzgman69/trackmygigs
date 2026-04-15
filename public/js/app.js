@@ -98,7 +98,7 @@ function setupScreenHandlers() {
 }
 
 function showScreen(screenName) {
-  const screens = document.querySelectorAll('.screen');
+  const screens = document.querySelectorAll('.app-content .screen');
   screens.forEach((s) => s.classList.remove('active'));
 
   const screen = document.getElementById(`${screenName}Screen`);
