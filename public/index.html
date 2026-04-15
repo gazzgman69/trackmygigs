@@ -180,6 +180,184 @@
     </div>
   </div>
 
+  <!-- ═══ OVERLAY PANELS ═══ -->
+
+  <!-- New Invoice -->
+  <div class="panel-overlay" id="panel-invoice">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-invoice')">‹ Back</button>
+      <div class="panel-title">New Invoice</div>
+      <div class="panel-action" id="saveInvoiceDraft">Save draft</div>
+    </div>
+    <div class="panel-body">
+      <div class="invoice-preview">
+        <div class="invoice-preview-top">
+          <div class="invoice-brand">TrackMyGigs</div>
+          <div style="text-align:right">
+            <div style="font-size:18px;font-weight:700;color:var(--text)">INVOICE</div>
+            <div id="invPreviewNum" style="font-size:12px;color:var(--text-2)">INV-001 · Draft</div>
+          </div>
+        </div>
+        <div class="invoice-preview-row"><span>From</span><span id="invPreviewFrom">—</span></div>
+        <div class="invoice-preview-row"><span>To</span><span id="invPreviewTo">—</span></div>
+        <div class="invoice-preview-row"><span>Gig</span><span id="invPreviewGig">—</span></div>
+        <div class="invoice-divider"></div>
+        <div class="invoice-line-item">
+          <span id="invPreviewDesc">Performance fee</span>
+          <span id="invPreviewAmt" style="font-size:15px;font-weight:700;color:var(--text)">£0.00</span>
+        </div>
+        <div class="invoice-total-row">
+          <span style="font-size:16px;font-weight:700;color:var(--text)">Total due</span>
+          <span id="invPreviewTotal" style="font-size:24px;font-weight:800;color:var(--accent)">£0.00</span>
+        </div>
+      </div>
+      <div class="form-group"><div class="form-label">Bill to</div><input class="form-input" id="invBillTo" placeholder="Band / client name"></div>
+      <div class="form-group"><div class="form-label">Linked gig (optional)</div><input class="form-input" id="invLinkedGig" placeholder="e.g. The Grand, Birmingham · 19 Apr 2026"></div>
+      <div class="form-group"><div class="form-label">Description</div><input class="form-input" id="invDesc" placeholder="Keys / Vocals performance" value="Performance fee"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group"><div class="form-label">Amount (£)</div><input class="form-input" id="invAmount" type="number" placeholder="0.00"></div>
+        <div class="form-group"><div class="form-label">Payment due</div><input class="form-input" id="invDueDate" type="date"></div>
+      </div>
+      <div class="form-group"><div class="form-label">Notes / bank details</div><input class="form-input" id="invNotes" placeholder="Sort code, account number..."></div>
+      <button class="btn-pill" id="sendInvoiceBtn">Send invoice</button>
+      <button class="btn-pill-outline" style="margin-top:10px">Preview as PDF</button>
+    </div>
+  </div>
+
+  <!-- Block Dates -->
+  <div class="panel-overlay" id="panel-block">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-block')">‹ Back</button>
+      <div class="panel-title">Block Dates</div>
+      <div style="width:60px"></div>
+    </div>
+    <div class="panel-body">
+      <div style="display:flex;gap:6px;margin-bottom:16px">
+        <button class="block-mode-btn active" id="bm-single" onclick="setBlockMode('single')">Single day</button>
+        <button class="block-mode-btn" id="bm-range" onclick="setBlockMode('range')">Date range</button>
+        <button class="block-mode-btn" id="bm-recurring" onclick="setBlockMode('recurring')">Recurring</button>
+      </div>
+
+      <div id="block-single">
+        <div class="form-section-label">Pick a date</div>
+        <input type="date" class="form-input" id="blockSingleDate" style="margin-bottom:10px">
+        <input type="text" class="form-input" id="blockSingleReason" placeholder="Reason (optional) e.g. Family event" style="margin-bottom:16px">
+        <button class="btn-pill" onclick="submitBlockDate('single')">Block this date</button>
+      </div>
+
+      <div id="block-range" style="display:none">
+        <div class="form-section-label">Select range</div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <div style="flex:1"><div class="form-label">From</div><input type="date" class="form-input" id="blockRangeFrom"></div>
+          <div style="flex:1"><div class="form-label">To</div><input type="date" class="form-input" id="blockRangeTo"></div>
+        </div>
+        <input type="text" class="form-input" id="blockRangeReason" placeholder="Reason (optional) e.g. Holiday" style="margin-bottom:16px">
+        <button class="btn-pill" onclick="submitBlockDate('range')">Block date range</button>
+      </div>
+
+      <div id="block-recurring" style="display:none">
+        <div class="form-section-label">Recurring block</div>
+        <div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Automatically block dates on a repeating schedule.</div>
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:6px">Block every:</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">
+          <button class="day-btn" onclick="toggleDayBtn(this)">Mon</button>
+          <button class="day-btn" onclick="toggleDayBtn(this)">Tue</button>
+          <button class="day-btn" onclick="toggleDayBtn(this)">Wed</button>
+          <button class="day-btn" onclick="toggleDayBtn(this)">Thu</button>
+          <button class="day-btn" onclick="toggleDayBtn(this)">Fri</button>
+          <button class="day-btn" onclick="toggleDayBtn(this)">Sat</button>
+          <button class="day-btn" onclick="toggleDayBtn(this)">Sun</button>
+        </div>
+        <button class="btn-pill" onclick="submitBlockDate('recurring')">Save recurring block</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Send Dep -->
+  <div class="panel-overlay" id="panel-dep">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-dep')">‹ Back</button>
+      <div class="panel-title">Send Dep Offer</div>
+      <div style="width:60px"></div>
+    </div>
+    <div class="panel-body">
+      <div class="form-section-label">Gig to fill</div>
+      <div id="depGigSelector" style="margin-bottom:16px">
+        <select class="form-input" id="depGigSelect">
+          <option value="">Select a gig...</option>
+        </select>
+      </div>
+      <div class="form-section-label">Instrument / role needed</div>
+      <input type="text" class="form-input" id="depRole" placeholder="e.g. Keys player, Drummer" style="margin-bottom:16px">
+      <div class="form-section-label">Send to</div>
+      <div style="display:flex;gap:6px;margin-bottom:12px">
+        <div id="dep-mode-pick" class="dep-mode-card active" onclick="setDepMode('pick')">
+          <div style="font-size:20px;margin-bottom:4px">👤</div>
+          <div style="font-size:12px;font-weight:600;color:var(--text)">Specific people</div>
+          <div style="font-size:10px;color:var(--text-2);margin-top:2px">Choose who to ask</div>
+        </div>
+        <div id="dep-mode-all" class="dep-mode-card" onclick="setDepMode('all')">
+          <div style="font-size:20px;margin-bottom:4px">📢</div>
+          <div style="font-size:12px;font-weight:600;color:var(--text)">All available</div>
+          <div style="font-size:10px;color:var(--text-2);margin-top:2px">First come, first served</div>
+        </div>
+      </div>
+      <div id="dep-pick-section">
+        <input type="text" class="form-input" id="depMusicianSearch" placeholder="Search your network..." style="margin-bottom:8px">
+        <div id="depMusicianResults" style="margin-bottom:16px"></div>
+      </div>
+      <div class="form-group"><div class="form-label">Message (optional)</div><textarea class="form-input" id="depMessage" rows="3" placeholder="Hi! Are you available for this gig? Let me know ASAP." style="resize:none"></textarea></div>
+      <button class="btn-pill" id="sendDepBtn" style="margin-top:12px">Send dep offer</button>
+    </div>
+  </div>
+
+  <!-- Receipts & Expenses -->
+  <div class="panel-overlay" id="panel-receipt">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-receipt')">‹ Back</button>
+      <div class="panel-title">Receipts &amp; Expenses</div>
+      <div style="width:60px"></div>
+    </div>
+    <div class="panel-body">
+      <div class="receipt-summary-card">
+        <div class="form-section-label" style="margin-bottom:8px">This tax year</div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+          <div><div style="font-size:13px;color:var(--text-2)">Total expenses</div><div id="receiptTotalExpenses" style="font-size:20px;font-weight:700;color:var(--text);margin-top:2px">£0</div></div>
+          <div style="text-align:right"><div style="font-size:13px;color:var(--text-2)">Claimable</div><div id="receiptClaimable" style="font-size:20px;font-weight:700;color:var(--success);margin-top:2px">£0</div></div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:10px;font-size:13px;color:var(--text)" id="receiptCount">0 receipts</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button onclick="showReceiptForm('snap')" class="receipt-add-btn">
+          <div style="font-size:20px">📸</div>
+          <div style="font-size:11px;font-weight:600;color:var(--text);margin-top:4px">Snap receipt</div>
+          <div style="font-size:9px;color:var(--text-3);margin-top:2px">Photo → fill in details</div>
+        </button>
+        <button onclick="showReceiptForm('manual')" class="receipt-add-btn">
+          <div style="font-size:20px">✏️</div>
+          <div style="font-size:11px;font-weight:600;color:var(--text);margin-top:4px">Manual entry</div>
+          <div style="font-size:9px;color:var(--text-3);margin-top:2px">Type it in yourself</div>
+        </button>
+      </div>
+      <div id="receiptManualForm" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px">Add expense</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div><div class="form-label">Amount (£)</div><input type="number" class="form-input" id="receiptAmount" placeholder="0.00"></div>
+          <div><div class="form-label">Date</div><input type="date" class="form-input" id="receiptDate"></div>
+        </div>
+        <div class="form-group"><div class="form-label">Description</div><input type="text" class="form-input" id="receiptDesc" placeholder="e.g. Shell petrol M6"></div>
+        <div class="form-group"><div class="form-label">Category</div>
+          <select class="form-input" id="receiptCategory">
+            <option>Travel</option><option>Equipment</option><option>Accommodation</option>
+            <option>Food &amp; Drink</option><option>Marketing</option><option>Other</option>
+          </select>
+        </div>
+        <button class="btn-pill" onclick="submitReceipt()" style="margin-top:4px">Save expense</button>
+      </div>
+      <div id="receiptList"></div>
+    </div>
+  </div>
+
   <script>window.GOOGLE_CLIENT_ID = "775009954166-8ngl19vdj033jv0mbquoll385c8cd58t.apps.googleusercontent.com";</script>
   <script src="/js/auth.js" defer></script>
   <script src="/js/app.js" defer></script>

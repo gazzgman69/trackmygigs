@@ -48,6 +48,7 @@ const monthlyEarnings = [
 
 function initApp(user) {
   currentUser = user;
+  window._currentUser = user;
   setupThemeToggle();
   setupNavigation();
   setupScreenHandlers();
@@ -1205,15 +1206,272 @@ function handleQuickAction(action) {
   if (action === 'add-gig') {
     openGigWizard();
   } else if (action === 'invoice') {
-    showScreen('invoices');
+    openPanel('panel-invoice');
+    initInvoicePanel();
   } else if (action === 'block-date') {
-    showScreen('calendar');
+    openPanel('panel-block');
   } else if (action === 'send-dep') {
-    showScreen('offers');
+    openPanel('panel-dep');
+    initDepPanel();
   } else if (action === 'receipt') {
-    alert('Receipt upload coming soon!');
+    openPanel('panel-receipt');
+    initReceiptPanel();
   }
 }
+
+// ── Panel open / close ────────────────────────────────────────────────────────
+
+function openPanel(id) {
+  document.getElementById(id).classList.add('open');
+}
+
+function closePanel(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+// Make closePanel accessible from inline HTML onclick
+window.closePanel = closePanel;
+
+// ── Invoice Panel ─────────────────────────────────────────────────────────────
+
+function initInvoicePanel() {
+  // Live preview updates
+  const fields = ['invBillTo', 'invDesc', 'invAmount'];
+  fields.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateInvoicePreview);
+  });
+  updateInvoicePreview();
+
+  document.getElementById('sendInvoiceBtn').onclick = submitInvoice;
+  document.getElementById('saveInvoiceDraft').onclick = () => saveInvoiceDraft();
+}
+
+function updateInvoicePreview() {
+  const to = document.getElementById('invBillTo').value || '—';
+  const desc = document.getElementById('invDesc').value || 'Performance fee';
+  const amt = parseFloat(document.getElementById('invAmount').value) || 0;
+  const fmt = '£' + amt.toFixed(2);
+
+  document.getElementById('invPreviewTo').textContent = to;
+  document.getElementById('invPreviewDesc').textContent = desc;
+  document.getElementById('invPreviewAmt').textContent = fmt;
+  document.getElementById('invPreviewTotal').textContent = fmt;
+
+  const currentUser = window._currentUser;
+  if (currentUser) {
+    document.getElementById('invPreviewFrom').textContent =
+      currentUser.name || currentUser.email;
+  }
+}
+
+async function submitInvoice() {
+  const billTo = document.getElementById('invBillTo').value.trim();
+  const amount = parseFloat(document.getElementById('invAmount').value);
+  if (!billTo) { showToast('Enter a client name'); return; }
+  if (!amount || amount <= 0) { showToast('Enter an amount'); return; }
+
+  try {
+    const res = await fetch('/api/invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: billTo,
+        gig_reference: document.getElementById('invLinkedGig').value,
+        description: document.getElementById('invDesc').value,
+        amount,
+        due_date: document.getElementById('invDueDate').value || null,
+        notes: document.getElementById('invNotes').value,
+        status: 'sent',
+      }),
+    });
+    if (res.ok) {
+      closePanel('panel-invoice');
+      showToast('Invoice sent!');
+    } else {
+      const d = await res.json();
+      showToast(d.error || 'Failed to send invoice');
+    }
+  } catch {
+    showToast('Failed to send invoice');
+  }
+}
+
+function saveInvoiceDraft() {
+  showToast('Draft saved');
+  closePanel('panel-invoice');
+}
+
+// ── Block Dates Panel ─────────────────────────────────────────────────────────
+
+function setBlockMode(mode) {
+  ['single', 'range', 'recurring'].forEach((m) => {
+    document.getElementById('block-' + m).style.display = m === mode ? '' : 'none';
+    document.getElementById('bm-' + m).classList.toggle('active', m === mode);
+  });
+}
+window.setBlockMode = setBlockMode;
+
+function toggleDayBtn(btn) {
+  btn.classList.toggle('active');
+}
+window.toggleDayBtn = toggleDayBtn;
+
+async function submitBlockDate(mode) {
+  let payload = { mode };
+  if (mode === 'single') {
+    const date = document.getElementById('blockSingleDate').value;
+    if (!date) { showToast('Pick a date'); return; }
+    payload.date = date;
+    payload.reason = document.getElementById('blockSingleReason').value;
+  } else if (mode === 'range') {
+    const from = document.getElementById('blockRangeFrom').value;
+    const to = document.getElementById('blockRangeTo').value;
+    if (!from || !to) { showToast('Pick a date range'); return; }
+    payload.from = from;
+    payload.to = to;
+    payload.reason = document.getElementById('blockRangeReason').value;
+  } else if (mode === 'recurring') {
+    const days = Array.from(document.querySelectorAll('.day-btn.active')).map(b => b.textContent);
+    if (!days.length) { showToast('Select at least one day'); return; }
+    payload.days = days;
+  }
+
+  try {
+    const res = await fetch('/api/blocked-dates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      closePanel('panel-block');
+      showToast('Date blocked');
+    } else {
+      showToast('Failed to block date');
+    }
+  } catch {
+    showToast('Failed to block date');
+  }
+}
+window.submitBlockDate = submitBlockDate;
+
+// ── Send Dep Panel ────────────────────────────────────────────────────────────
+
+async function initDepPanel() {
+  // Populate gig selector from cached or fresh gigs
+  const gigs = window._cachedGigs || [];
+  const sel = document.getElementById('depGigSelect');
+  sel.innerHTML = '<option value="">Select a gig...</option>';
+  gigs.forEach((g) => {
+    const opt = document.createElement('option');
+    opt.value = g.id;
+    opt.textContent = `${g.band_name} · ${formatDate(g.date)}`;
+    sel.appendChild(opt);
+  });
+
+  document.getElementById('sendDepBtn').onclick = submitDepOffer;
+}
+
+function setDepMode(mode) {
+  document.getElementById('dep-mode-pick').classList.toggle('active', mode === 'pick');
+  document.getElementById('dep-mode-all').classList.toggle('active', mode === 'all');
+  document.getElementById('dep-pick-section').style.display = mode === 'pick' ? '' : 'none';
+}
+window.setDepMode = setDepMode;
+
+async function submitDepOffer() {
+  const gigId = document.getElementById('depGigSelect').value;
+  const role = document.getElementById('depRole').value.trim();
+  const message = document.getElementById('depMessage').value;
+  const mode = document.getElementById('dep-mode-pick').classList.contains('active') ? 'pick' : 'all';
+
+  if (!gigId) { showToast('Select a gig'); return; }
+  if (!role) { showToast('Enter the role needed'); return; }
+
+  try {
+    const res = await fetch('/api/dep-offers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gig_id: gigId, role, message, mode }),
+    });
+    if (res.ok) {
+      closePanel('panel-dep');
+      showToast('Dep offer sent!');
+    } else {
+      showToast('Failed to send dep offer');
+    }
+  } catch {
+    showToast('Failed to send dep offer');
+  }
+}
+
+// ── Receipts Panel ────────────────────────────────────────────────────────────
+
+async function initReceiptPanel() {
+  document.getElementById('receiptDate').valueAsDate = new Date();
+  await loadReceipts();
+}
+
+function showReceiptForm(type) {
+  document.getElementById('receiptManualForm').style.display = 'block';
+}
+window.showReceiptForm = showReceiptForm;
+
+async function loadReceipts() {
+  try {
+    const res = await fetch('/api/expenses');
+    if (!res.ok) return;
+    const data = await res.json();
+    const expenses = data.expenses || [];
+    const total = expenses.reduce((s, e) => s + parseFloat(e.amount || 0), 0);
+
+    document.getElementById('receiptTotalExpenses').textContent = '£' + total.toFixed(0);
+    document.getElementById('receiptClaimable').textContent = '£' + total.toFixed(0);
+    document.getElementById('receiptCount').textContent = expenses.length + ' receipt' + (expenses.length !== 1 ? 's' : '');
+
+    const list = document.getElementById('receiptList');
+    list.innerHTML = expenses.length ? expenses.map((e) => `
+      <div class="receipt-item">
+        <div>
+          <div style="font-size:14px;font-weight:600;color:var(--text)">${escapeHtml(e.description || 'Expense')}</div>
+          <div style="font-size:12px;color:var(--text-2)">${escapeHtml(e.category || '')} · ${formatDate(e.date)}</div>
+        </div>
+        <div style="font-size:15px;font-weight:700;color:var(--text)">£${parseFloat(e.amount).toFixed(2)}</div>
+      </div>`).join('') : '<div style="text-align:center;color:var(--text-2);padding:20px;font-size:14px">No expenses yet</div>';
+  } catch {
+    // silently ignore
+  }
+}
+
+async function submitReceipt() {
+  const amount = parseFloat(document.getElementById('receiptAmount').value);
+  const desc = document.getElementById('receiptDesc').value.trim();
+  const date = document.getElementById('receiptDate').value;
+  const category = document.getElementById('receiptCategory').value;
+
+  if (!amount || amount <= 0) { showToast('Enter an amount'); return; }
+  if (!desc) { showToast('Enter a description'); return; }
+
+  try {
+    const res = await fetch('/api/expenses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount, description: desc, date, category }),
+    });
+    if (res.ok) {
+      document.getElementById('receiptAmount').value = '';
+      document.getElementById('receiptDesc').value = '';
+      document.getElementById('receiptManualForm').style.display = 'none';
+      await loadReceipts();
+      showToast('Expense saved!');
+    } else {
+      showToast('Failed to save expense');
+    }
+  } catch {
+    showToast('Failed to save expense');
+  }
+}
+window.submitReceipt = submitReceipt;
 
 function updateOfferStatus(offerId, status) {
   console.log(`Updated offer ${offerId} to ${status}`);
