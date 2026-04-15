@@ -64,6 +64,56 @@ router.post('/gigs', async (req, res) => {
   }
 });
 
+router.get('/gigs/:id', async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM gigs WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Get gig error:', error);
+    res.status(500).json({ error: 'Failed to fetch gig' });
+  }
+});
+
+router.patch('/gigs/:id', async (req, res) => {
+  try {
+    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes } = req.body;
+    const result = await db.query(
+      `UPDATE gigs SET
+        band_name = COALESCE($1, band_name), venue_name = COALESCE($2, venue_name),
+        venue_address = COALESCE($3, venue_address), date = COALESCE($4, date),
+        start_time = COALESCE($5, start_time), end_time = COALESCE($6, end_time),
+        load_in_time = COALESCE($7, load_in_time), fee = COALESCE($8, fee),
+        status = COALESCE($9, status), source = COALESCE($10, source),
+        dress_code = COALESCE($11, dress_code), notes = COALESCE($12, notes)
+       WHERE id = $13 AND user_id = $14 RETURNING *`,
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update gig error:', error);
+    res.status(500).json({ error: 'Failed to update gig' });
+  }
+});
+
+router.delete('/gigs/:id', async (req, res) => {
+  try {
+    const result = await db.query(
+      'DELETE FROM gigs WHERE id = $1 AND user_id = $2 RETURNING id',
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete gig error:', error);
+    res.status(500).json({ error: 'Failed to delete gig' });
+  }
+});
+
 router.get('/invoices', async (req, res) => {
   try {
     const result = await db.query(

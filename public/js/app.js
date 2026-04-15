@@ -319,16 +319,17 @@ function renderGigsList(gigs) {
   listContent.innerHTML = gigs
     .map(
       (gig) => `
-    <div class="gig-card ${gig.status === 'confirmed' ? 'upcoming' : gig.status === 'cancelled' ? 'cancelled' : ''}">
-      <div class="gig-date">${formatDate(gig.date)}</div>
+    <div class="gig-card ${gig.status === 'confirmed' ? 'upcoming' : gig.status === 'cancelled' ? 'cancelled' : ''}" onclick="openGigDetail('${gig.id}')" style="cursor:pointer;">
+      <div class="gig-date">${formatDateShort(gig.date)}</div>
       <div class="gig-venue">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
       <div class="gig-meta">
         <div class="gig-meta-item">${escapeHtml(gig.venue_name || 'No venue')}</div>
         ${gig.start_time ? `<div class="gig-meta-item">${formatTime(gig.start_time)}${gig.end_time ? ' - ' + formatTime(gig.end_time) : ''}</div>` : ''}
+        ${gig.load_in_time ? `<div class="gig-meta-item">Load-in ${formatTime(gig.load_in_time)}</div>` : ''}
       </div>
       <div class="gig-bottom">
         <span class="badge badge-${statusBadgeClass(gig.status)}">${statusLabel(gig.status)}</span>
-        ${gig.fee ? `<div class="gig-fee">£${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
+        ${gig.fee ? `<div class="gig-fee">\u00A3${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
       </div>
     </div>
   `
@@ -657,12 +658,12 @@ function renderCreateGigScreen() {
         <div class="wizard-title" style="font-size:16px;font-weight:700;">New Gig</div>
         <div onclick="renderFullGigForm()" style="font-size:12px;color:var(--text-3);cursor:pointer;">Show full form</div>
       </div>
-      <div class="wizard-progress" id="wizardProgress">
-        <div class="wizard-dot active" id="wizardDot1"></div>
-        <div class="wizard-dot" id="wizardDot2"></div>
-        <div class="wizard-dot" id="wizardDot3"></div>
-        <div class="wizard-dot" id="wizardDot4"></div>
-        <div class="wizard-dot" id="wizardDot5"></div>
+      <div style="display:flex;gap:4px;padding:0 20px;margin-bottom:20px;" id="wizardProgress">
+        <div id="wizardDot1" style="flex:1;height:3px;border-radius:2px;background:var(--accent);transition:background .3s;"></div>
+        <div id="wizardDot2" style="flex:1;height:3px;border-radius:2px;background:var(--border);transition:background .3s;"></div>
+        <div id="wizardDot3" style="flex:1;height:3px;border-radius:2px;background:var(--border);transition:background .3s;"></div>
+        <div id="wizardDot4" style="flex:1;height:3px;border-radius:2px;background:var(--border);transition:background .3s;"></div>
+        <div id="wizardDot5" style="flex:1;height:3px;border-radius:2px;background:var(--border);transition:background .3s;"></div>
       </div>
       <div id="wizardBody"></div>
     </div>
@@ -676,13 +677,11 @@ function renderWizardStep(step) {
 
   if (!body) return;
 
-  // Update progress dots
+  // Update progress bars
   for (let i = 1; i <= 5; i++) {
     const dot = document.getElementById(`wizardDot${i}`);
     if (!dot) continue;
-    dot.className = 'wizard-dot';
-    if (i < step) dot.classList.add('done');
-    else if (i === step) dot.classList.add('active');
+    dot.style.background = i <= step ? 'var(--accent)' : 'var(--border)';
   }
 
   let stepHTML = '';
@@ -1382,6 +1381,115 @@ function closePanel(id) {
 // Make closePanel accessible from inline HTML onclick
 window.closePanel = closePanel;
 
+// ── Gig Detail View ─────────────────────────────────────────────────────────
+async function openGigDetail(gigId) {
+  const body = document.getElementById('gigDetailBody');
+  if (!body) return;
+
+  // Try cache first, then fetch
+  let gig = (window._cachedGigs || []).find((g) => g.id === gigId);
+  if (!gig) {
+    try {
+      const resp = await fetch(`/api/gigs/${gigId}`);
+      gig = await resp.json();
+    } catch (e) {
+      body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load gig details.</div>';
+      openPanel('panel-gig-detail');
+      return;
+    }
+  }
+
+  const homePostcode = window._currentUser?.home_postcode;
+  let mileageHTML = '';
+
+  // Build completeness tracker
+  const fields = [
+    { name: 'Venue', ok: !!gig.venue_name },
+    { name: 'Times', ok: !!gig.start_time },
+    { name: 'Fee', ok: !!gig.fee && parseFloat(gig.fee) > 0 },
+    { name: 'Dress code', ok: !!gig.dress_code },
+    { name: 'Notes', ok: !!gig.notes },
+    { name: 'Address', ok: !!gig.venue_address },
+  ];
+  const doneCount = fields.filter((f) => f.ok).length;
+
+  body.innerHTML = `
+    <div style="background:var(--surface);padding:16px 20px 20px;">
+      <div style="font-size:13px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
+      <div style="font-size:22px;font-weight:700;color:var(--text);margin-bottom:16px;">${escapeHtml(gig.venue_name || 'No venue')}</div>
+      <div style="font-size:14px;color:var(--text-2);margin-bottom:6px;">\uD83D\uDCC5 ${formatDateLong(gig.date)}</div>
+      ${gig.start_time ? `<div style="font-size:14px;color:var(--text-2);margin-bottom:6px;">\uD83D\uDD56 ${formatTime(gig.start_time)}${gig.end_time ? '\u2013' + formatTime(gig.end_time) : ''}${gig.load_in_time ? ' \u00B7 Load-in: ' + formatTime(gig.load_in_time) : ''}</div>` : ''}
+      ${gig.venue_address ? `<div style="font-size:14px;color:var(--text-2);margin-bottom:6px;">\uD83D\uDCCD ${escapeHtml(gig.venue_address)}</div>` : ''}
+      <div style="font-size:14px;color:var(--text-2);">\uD83D\uDCB7 ${gig.fee ? '\u00A3' + parseFloat(gig.fee).toFixed(0) : 'No fee set'} <span class="badge badge-${statusBadgeClass(gig.status)}" style="margin-left:6px;">${statusLabel(gig.status)}</span></div>
+      <div id="gigDetailMileage" style="margin-top:8px;"></div>
+      <!-- Completeness tracker -->
+      <div style="margin-top:12px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div style="font-size:12px;font-weight:600;color:var(--text);">Gig details</div>
+          <div style="font-size:11px;color:var(--success);font-weight:600;">${doneCount} of ${fields.length} complete</div>
+        </div>
+        <div style="display:flex;gap:3px;margin-bottom:8px;">
+          ${fields.map((f) => `<div style="flex:1;height:4px;border-radius:2px;background:${f.ok ? 'var(--success)' : 'var(--border)'};"></div>`).join('')}
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${fields.map((f) => f.ok
+            ? `<span style="font-size:10px;color:var(--success);background:var(--success-dim);border-radius:8px;padding:3px 8px;">\u2713 ${f.name}</span>`
+            : `<span style="font-size:10px;color:var(--warning);background:var(--warning-dim);border:1px solid rgba(240,165,0,.3);border-radius:8px;padding:3px 8px;">+ Add ${f.name.toLowerCase()}</span>`
+          ).join('')}
+        </div>
+      </div>
+    </div>
+    <!-- Gig Pack -->
+    <div style="padding:16px 20px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">\uD83C\uDF92 Gig Pack</div>
+      ${gig.dress_code ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Dress code</span><span style="color:var(--text);font-weight:500;">${escapeHtml(gig.dress_code)}</span></div>` : ''}
+      ${gig.load_in_time ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Load-in</span><span style="color:var(--text);font-weight:500;">${formatTime(gig.load_in_time)}</span></div>` : ''}
+      ${gig.start_time ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Set times</span><span style="color:var(--text);font-weight:500;">${formatTime(gig.start_time)}${gig.end_time ? '\u2013' + formatTime(gig.end_time) : ''}</span></div>` : ''}
+      ${gig.notes ? `<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;"><span style="color:var(--text-2);">Notes</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(gig.notes)}</span></div>` : ''}
+      ${!gig.dress_code && !gig.load_in_time && !gig.notes ? '<div style="font-size:13px;color:var(--text-3);padding:10px 0;">No gig pack info yet. Edit the gig to add details.</div>' : ''}
+    </div>
+    <!-- Actions -->
+    <div style="padding:16px 20px;border-top:1px solid var(--border);">
+      <button class="button button-primary button-block" onclick="closePanel('panel-gig-detail');openPanel('panel-invoice')" style="margin-bottom:8px;">Create invoice for this gig</button>
+      <button class="button button-outline button-block" onclick="closePanel('panel-gig-detail');deleteGig('${gig.id}')" style="color:var(--danger);border-color:var(--danger);">Delete gig</button>
+    </div>
+  `;
+
+  openPanel('panel-gig-detail');
+
+  // Fetch mileage in background
+  if (homePostcode && gig.venue_address) {
+    try {
+      const distResp = await fetch(`/api/distance?origin=${encodeURIComponent(homePostcode)}&destination=${encodeURIComponent(gig.venue_address)}`);
+      const distData = await distResp.json();
+      const mileageEl = document.getElementById('gigDetailMileage');
+      if (distData.miles && mileageEl) {
+        const claimable = (distData.miles * 2 * 0.45).toFixed(2);
+        mileageEl.innerHTML = `
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="font-size:14px;color:var(--text-2);">\uD83D\uDE97 ${distData.miles} miles round trip</div>
+            <span style="font-size:11px;color:var(--success);background:var(--success-dim);border-radius:8px;padding:2px 8px;font-weight:600;">\u00A3${claimable} claimable</span>
+          </div>
+        `;
+      }
+    } catch (e) {
+      console.error('Mileage fetch error:', e);
+    }
+  }
+}
+
+async function deleteGig(gigId) {
+  if (!confirm('Are you sure you want to delete this gig?')) return;
+  try {
+    await fetch(`/api/gigs/${gigId}`, { method: 'DELETE' });
+    // Refresh gigs cache and list
+    window._cachedGigs = (window._cachedGigs || []).filter((g) => g.id !== gigId);
+    renderGigsList(window._cachedGigs);
+  } catch (e) {
+    console.error('Delete gig error:', e);
+  }
+}
+
 // ── Invoice Panel ─────────────────────────────────────────────────────────────
 
 function initInvoicePanel() {
@@ -1650,16 +1758,31 @@ function getGreeting() {
 
 function formatDate(dateString) {
   if (!dateString) return 'No date';
-  // Handle both "2026-04-19" and "2026-04-19T00:00:00.000Z" formats
   const raw = String(dateString).substring(0, 10);
   const date = new Date(raw + 'T12:00:00');
   if (isNaN(date.getTime())) return 'Invalid date';
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]}`;
+}
+
+function formatDateShort(dateString) {
+  if (!dateString) return 'No date';
+  const raw = String(dateString).substring(0, 10);
+  const date = new Date(raw + 'T12:00:00');
+  if (isNaN(date.getTime())) return 'Invalid date';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${date.getDate()} ${months[date.getMonth()]}`;
+}
+
+function formatDateLong(dateString) {
+  if (!dateString) return 'No date';
+  const raw = String(dateString).substring(0, 10);
+  const date = new Date(raw + 'T12:00:00');
+  if (isNaN(date.getTime())) return 'Invalid date';
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  return `${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
 }
 
 function formatTime(timeStr) {
