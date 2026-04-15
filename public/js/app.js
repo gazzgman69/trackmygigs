@@ -1519,7 +1519,11 @@ function getGreeting() {
 }
 
 function formatDate(dateString) {
-  const date = new Date(dateString + 'T00:00:00');
+  if (!dateString) return 'No date';
+  // Handle both "2026-04-19" and "2026-04-19T00:00:00.000Z" formats
+  const raw = String(dateString).substring(0, 10);
+  const date = new Date(raw + 'T12:00:00');
+  if (isNaN(date.getTime())) return 'Invalid date';
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
