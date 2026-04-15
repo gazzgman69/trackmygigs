@@ -4,13 +4,18 @@
   --card: #21262D;
   --border: #30363D;
   --accent: #F0A500;
+  --accent-dim: rgba(240, 165, 0, 0.15);
   --text: #E6EDF3;
   --text-2: #8B949E;
   --text-3: #484F58;
   --success: #3FB950;
+  --success-dim: rgba(63, 185, 80, 0.15);
   --danger: #F85149;
+  --danger-dim: rgba(248, 81, 73, 0.15);
   --info: #58A6FF;
+  --info-dim: rgba(88, 166, 255, 0.15);
   --warning: #D29922;
+  --warning-dim: rgba(240, 165, 0, 0.15);
 
   --font-size-sm: 0.875rem;
   --font-size-base: 1rem;
@@ -625,6 +630,70 @@ body {
   color: var(--accent);
 }
 
+/* Mockup-matching gig cards */
+.gi {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.gdb {
+  background: var(--accent-dim);
+  border-radius: 8px;
+  padding: 6px 10px;
+  text-align: center;
+  min-width: 44px;
+  flex-shrink: 0;
+}
+.gdd {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--accent);
+  line-height: 1;
+}
+.gdm {
+  font-size: 10px;
+  color: var(--accent);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.gt {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+.gv {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-bottom: 3px;
+}
+.gf {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--success);
+}
+
+/* Gig list tab bar */
+.gig-tab {
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-2);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.gig-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Legacy gig card styles (kept for compatibility) */
 .gig-card {
   background-color: var(--card);
   border: 1px solid var(--border);
@@ -632,58 +701,15 @@ body {
   padding: var(--spacing-4);
   margin-bottom: var(--spacing-3);
 }
-
-.gig-card.upcoming {
-  border-left: 4px solid var(--success);
-}
-
-.gig-card.depped {
-  border-left: 4px solid var(--info);
-}
-
-.gig-card.cancelled {
-  border-left: 4px solid var(--danger);
-  opacity: 0.6;
-}
-
-.gig-date {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  color: var(--accent);
-  margin-bottom: var(--spacing-2);
-}
-
-.gig-venue {
-  font-size: var(--font-size-base);
-  font-weight: 500;
-  margin-bottom: var(--spacing-2);
-}
-
-.gig-meta {
-  display: flex;
-  gap: var(--spacing-4);
-  font-size: var(--font-size-sm);
-  color: var(--text-2);
-  margin-bottom: var(--spacing-3);
-}
-
-.gig-meta-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-}
-
-.gig-bottom {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.gig-fee {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  color: var(--success);
-}
+.gig-card.upcoming { border-left: 4px solid var(--success); }
+.gig-card.depped { border-left: 4px solid var(--info); }
+.gig-card.cancelled { border-left: 4px solid var(--danger); opacity: 0.6; }
+.gig-date { font-size: var(--font-size-lg); font-weight: 600; color: var(--accent); margin-bottom: var(--spacing-2); }
+.gig-venue { font-size: var(--font-size-base); font-weight: 500; margin-bottom: var(--spacing-2); }
+.gig-meta { display: flex; gap: var(--spacing-4); font-size: var(--font-size-sm); color: var(--text-2); margin-bottom: var(--spacing-3); }
+.gig-meta-item { display: flex; align-items: center; gap: var(--spacing-2); }
+.gig-bottom { display: flex; justify-content: space-between; align-items: center; }
+.gig-fee { font-size: var(--font-size-lg); font-weight: 600; color: var(--success); }
 
 .chart-container {
   display: flex;

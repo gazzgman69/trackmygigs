@@ -253,25 +253,31 @@ function renderHomeScreen() {
   `;
 }
 
+// Current gig view state
+let gigViewMode = 'week';
+
 async function renderGigsScreen() {
   const content = document.getElementById('gigsScreen');
-
-  // If we already have cached gigs, render them instantly (no loading spinner)
   const cached = window._cachedGigs;
 
   content.innerHTML = `
-    <div class="section">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-4);">
-        <div class="section-title" style="margin-bottom: 0;">Your Gigs</div>
-        <button class="button button-primary button-small" onclick="openGigWizard()">+ Add</button>
-      </div>
-      <div id="gigsListContent">
-        ${cached ? '' : '<div style="text-align: center; padding: var(--spacing-8); color: var(--text-2);">Loading...</div>'}
-      </div>
+    <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:24px;font-weight:700;color:var(--text);">My Gigs</div>
+      <button style="background:var(--accent);color:#000;border:none;border-radius:24px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;" onclick="openGigWizard()">+ New</button>
+    </div>
+    <div style="padding:0 16px 8px;">
+      <input type="text" class="form-input" id="gigSearchInput" placeholder="Search gigs - band, venue, date..." oninput="filterGigsList()" style="font-size:14px;padding:10px 14px;">
+    </div>
+    <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;overflow-x:auto;" id="gigTabBar">
+      <div class="gig-tab active" onclick="switchGigTab(this,'week')">Weekly</div>
+      <div class="gig-tab" onclick="switchGigTab(this,'month')">Monthly</div>
+      <div class="gig-tab" onclick="switchGigTab(this,'year')">Yearly</div>
+    </div>
+    <div style="padding:0 16px;" id="gigsListContent">
+      ${cached ? '' : '<div style="text-align:center;padding:40px;color:var(--text-2);">Loading...</div>'}
     </div>
   `;
 
-  // Show cached data immediately while we fetch fresh data in the background
   if (cached) {
     renderGigsList(cached);
   }
@@ -280,20 +286,18 @@ async function renderGigsScreen() {
     const response = await fetch('/api/gigs');
     if (!response.ok) throw new Error('Failed to fetch');
     const gigs = await response.json();
-
     window._cachedGigs = gigs;
     renderGigsList(gigs);
   } catch (err) {
     console.error('Load gigs error:', err);
-    // Only show error if we didn't already render from cache
     if (!cached) {
       const listContent = document.getElementById('gigsListContent');
       if (listContent) {
         listContent.innerHTML = `
-          <div class="empty-state">
-            <div class="empty-state-icon">📋</div>
-            <div class="empty-state-title">Couldn't load gigs</div>
-            <div class="empty-state-text">Check your connection and try again</div>
+          <div style="text-align:center;padding:40px;">
+            <div style="font-size:32px;margin-bottom:8px;">📋</div>
+            <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load gigs</div>
+            <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
           </div>
         `;
       }
@@ -301,39 +305,111 @@ async function renderGigsScreen() {
   }
 }
 
+function switchGigTab(el, mode) {
+  gigViewMode = mode;
+  document.querySelectorAll('.gig-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  if (window._cachedGigs) renderGigsList(window._cachedGigs);
+}
+
+function filterGigsList() {
+  if (window._cachedGigs) renderGigsList(window._cachedGigs);
+}
+
 function renderGigsList(gigs) {
   const listContent = document.getElementById('gigsListContent');
   if (!listContent) return;
 
-  if (gigs.length === 0) {
+  // Apply search filter
+  const searchQuery = (document.getElementById('gigSearchInput')?.value || '').toLowerCase().trim();
+  let filtered = gigs;
+  if (searchQuery) {
+    filtered = gigs.filter(g =>
+      (g.band_name || '').toLowerCase().includes(searchQuery) ||
+      (g.venue_name || '').toLowerCase().includes(searchQuery) ||
+      (g.date || '').includes(searchQuery)
+    );
+  }
+
+  // Apply view mode filter
+  const now = new Date();
+  if (gigViewMode === 'week') {
+    // Show current week and next 7 days + past gigs this week
+    const weekStart = new Date(now);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); // Monday
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
+    // Show all upcoming if within-week is empty
+    const weekGigs = filtered.filter(g => {
+      const d = new Date(g.date + 'T12:00:00');
+      return d >= weekStart && d <= weekEnd;
+    });
+    if (weekGigs.length > 0) {
+      filtered = weekGigs;
+    }
+    // If no gigs this week, show all upcoming
+  } else if (gigViewMode === 'month') {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    const monthGigs = filtered.filter(g => {
+      const d = new Date(g.date + 'T12:00:00');
+      return d >= monthStart && d <= monthEnd;
+    });
+    if (monthGigs.length > 0) filtered = monthGigs;
+  }
+  // 'year' shows all
+
+  if (filtered.length === 0) {
     listContent.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">🎸</div>
-        <div class="empty-state-title">No gigs yet</div>
-        <div class="empty-state-text">Tap + Add to log your first gig</div>
+      <div style="text-align:center;padding:40px;">
+        <div style="font-size:32px;margin-bottom:8px;">🎸</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No gigs ${searchQuery ? 'matching "' + escapeHtml(searchQuery) + '"' : 'yet'}</div>
+        <div style="font-size:13px;color:var(--text-2);">Tap + New to log your first gig</div>
       </div>
     `;
     return;
   }
 
-  listContent.innerHTML = gigs
-    .map(
-      (gig) => `
-    <div class="gig-card ${gig.status === 'confirmed' ? 'upcoming' : gig.status === 'cancelled' ? 'cancelled' : ''}" onclick="openGigDetail('${gig.id}')" style="cursor:pointer;">
-      <div class="gig-date">${formatDateShort(gig.date)}</div>
-      <div class="gig-venue">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
-      <div class="gig-meta">
-        <div class="gig-meta-item">${escapeHtml(gig.venue_name || 'No venue')}</div>
-        ${gig.start_time ? `<div class="gig-meta-item">${formatTime(gig.start_time)}${gig.end_time ? ' - ' + formatTime(gig.end_time) : ''}</div>` : ''}
-        ${gig.load_in_time ? `<div class="gig-meta-item">Load-in ${formatTime(gig.load_in_time)}</div>` : ''}
-      </div>
-      <div class="gig-bottom">
-        <span class="badge badge-${statusBadgeClass(gig.status)}">${statusLabel(gig.status)}</span>
-        ${gig.fee ? `<div class="gig-fee">\u00A3${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
-      </div>
-    </div>
-  `
-    )
+  // Sort by date ascending (upcoming first)
+  filtered.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+  listContent.innerHTML = filtered
+    .map((gig) => {
+      const dateObj = gig.date ? new Date(gig.date.substring(0, 10) + 'T12:00:00') : null;
+      const dayNum = dateObj ? dateObj.getDate() : '?';
+      const monthAbbr = dateObj ? dateObj.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase() : '';
+
+      // Mini badges
+      let badges = '';
+      if (!gig.fee || parseFloat(gig.fee) === 0) {
+        badges += '<span style="font-size:9px;background:var(--info-dim);color:var(--info);border-radius:6px;padding:2px 6px;font-weight:600;">Draft inv</span>';
+      }
+      if (gig.dress_code) {
+        badges += '<span style="font-size:9px;background:var(--success-dim);color:var(--success);border-radius:6px;padding:2px 6px;font-weight:600;">Pack ready</span>';
+      }
+
+      return `
+      <div class="gi" onclick="openGigDetail('${gig.id}')">
+        <div style="display:flex;align-items:flex-start;gap:14px;">
+          <div class="gdb">
+            <div class="gdd">${dayNum}</div>
+            <div class="gdm">${monthAbbr}</div>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div class="gt">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
+            <div class="gv">${escapeHtml(gig.venue_name || 'No venue')}${gig.start_time ? ' \u00B7 ' + formatTime(gig.start_time) + (gig.end_time ? '\u2013' + formatTime(gig.end_time) : '') : ''}</div>
+            ${gig.load_in_time ? `<div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">Load-in ${formatTime(gig.load_in_time)}</div>` : ''}
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+              <span class="badge badge-${statusBadgeClass(gig.status)}" style="font-size:11px;">${statusLabel(gig.status)}</span>
+              ${gig.fee ? `<span class="gf">\u00A3${parseFloat(gig.fee).toFixed(0)}</span>` : ''}
+              ${badges ? `<div style="display:flex;gap:4px;margin-left:auto;">${badges}</div>` : ''}
+            </div>
+          </div>
+        </div>
+      </div>`;
+    })
     .join('');
 }
 
@@ -1239,65 +1315,126 @@ async function submitGigWizard() {
 
 function renderFullGigForm() {
   const content = document.getElementById('createGigScreen');
+  const d = gigWizardData;
+
+  const gigTypes = [
+    { label: '\u{1F492} Wedding', value: 'Wedding' },
+    { label: '\u{1F3E2} Corporate', value: 'Corporate' },
+    { label: '\u{1F37A} Pub / Club', value: 'Pub / Club' },
+    { label: '\u{1F389} Private party', value: 'Private party' },
+    { label: '\u{1F3AA} Festival', value: 'Festival' },
+    { label: '\u{1F3E8} Hotel', value: 'Hotel' },
+    { label: '\u{1F3AD} Theatre', value: 'Theatre' },
+    { label: '\u26EA Church', value: 'Church' },
+    { label: '\u{1F37D}\uFE0F Restaurant', value: 'Restaurant' },
+    { label: '\u{1F4CC} Other', value: 'Other' },
+  ];
+
+  const statusOptions = [
+    { label: 'Confirmed', value: 'confirmed', color: 'success' },
+    { label: 'Pencilled', value: 'tentative', color: 'warning' },
+    { label: 'Enquiry', value: 'enquiry', color: 'info' },
+  ];
+
+  const sourceOptions = [
+    { label: '\u270B Manual entry', value: 'manual' },
+    { label: '\uD83D\uDD04 From calendar', value: 'calendar' },
+    { label: '\uD83D\uDCEC From CRM', value: 'crm' },
+  ];
 
   content.innerHTML = `
-    <div class="section">
-      <div style="display: flex; align-items: center; gap: var(--spacing-3); margin-bottom: var(--spacing-4);">
-        <button style="background:none;border:none;color:var(--text);font-size:var(--font-size-xl);cursor:pointer;" onclick="openGigWizard()">←</button>
-        <div class="section-title" style="margin-bottom:0;">Add a Gig</div>
+    <div style="background:var(--surface);padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+      <button onclick="openGigWizard()" style="color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;background:none;border:none;">&#8249; Wizard</button>
+      <div style="font-size:16px;font-weight:700;color:var(--text);">Full Form</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div style="overflow-y:auto;flex:1;padding:16px;">
+      <!-- Summary bar -->
+      <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:14px;padding:12px 16px;margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:600;color:var(--accent);margin-bottom:4px;">📋 Gig so far</div>
+        <div style="font-size:11px;color:var(--text-2);line-height:1.5;">Tap any field below to edit. Everything from the wizard is preserved.</div>
       </div>
-      <form id="createGigForm" class="card">
+      <!-- Source badges -->
+      <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;">
+        ${sourceOptions.map(s => `
+          <span onclick="selectFullFormSource('${s.value}')" style="padding:5px 12px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;${(d.source || 'manual') === s.value ? 'background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.3);' : 'background:var(--card);color:var(--text-2);border:1px solid var(--border);'}">${s.label}</span>
+        `).join('')}
+      </div>
+      <form id="createGigForm">
         <div class="form-group">
-          <label class="form-label">Band Name *</label>
-          <input type="text" class="form-input" name="band_name" required>
+          <label class="form-label">Band / Client</label>
+          <input type="text" class="form-input" name="band_name" value="${escapeHtml(d.band_name)}" placeholder="e.g. The Silverstone Band">
+        </div>
+        <!-- Gig type chips -->
+        <div class="form-group">
+          <label class="form-label">What type of gig?</label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;" id="fullFormGigTypes">
+            ${gigTypes.map(t => `
+              <span onclick="selectFullFormGigType('${t.value}', this)" style="padding:5px 12px;border-radius:20px;font-size:11px;font-weight:500;cursor:pointer;${d.gig_type === t.value ? 'background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.3);' : 'background:var(--card);color:var(--text-2);border:1px solid var(--border);'}">${t.label}</span>
+            `).join('')}
+          </div>
         </div>
         <div class="form-group">
-          <label class="form-label">Venue Name *</label>
-          <input type="text" class="form-input" name="venue_name" required>
+          <label class="form-label">Venue</label>
+          <input type="text" class="form-input" name="venue_name" value="${escapeHtml(d.venue_name)}" placeholder="Search venues...">
+          ${d.venue_address ? `<div style="font-size:11px;color:var(--success);margin-top:4px;">📍 ${escapeHtml(d.venue_address)}</div>` : ''}
+          <input type="hidden" name="venue_address" value="${escapeHtml(d.venue_address)}">
         </div>
         <div class="form-group">
-          <label class="form-label">Venue Address</label>
-          <input type="text" class="form-input" name="venue_address">
+          <label class="form-label">Date</label>
+          <input type="date" class="form-input" name="date" value="${d.date}" required>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="form-group">
+            <label class="form-label">Start time</label>
+            <input type="time" class="form-input" name="start_time" value="${d.start_time}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">End time</label>
+            <input type="time" class="form-input" name="end_time" value="${d.end_time}">
+          </div>
         </div>
         <div class="form-group">
-          <label class="form-label">Date *</label>
-          <input type="date" class="form-input" name="date" required>
+          <label class="form-label">Load-in / arrival</label>
+          <input type="time" class="form-input" name="load_in_time" value="${d.load_in_time}" style="max-width:50%;">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="form-group">
+            <label class="form-label">Fee (\u00A3)</label>
+            <input type="number" class="form-input" name="fee" value="${d.fee}" placeholder="280" min="0" step="1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <div style="display:flex;gap:6px;" id="fullFormStatusChips">
+              ${statusOptions.map(s => `
+                <span onclick="selectFullFormStatus('${s.value}')" style="flex:1;text-align:center;padding:10px 6px;border-radius:12px;font-size:12px;font-weight:600;cursor:pointer;${(d.status || 'confirmed') === s.value ? `background:var(--${s.color}-dim);color:var(--${s.color});border:2px solid var(--${s.color});` : 'background:var(--card);color:var(--text-2);border:2px solid var(--border);'}">${s.label}</span>
+              `).join('')}
+            </div>
+          </div>
         </div>
         <div class="form-group">
-          <label class="form-label">Start Time</label>
-          <input type="time" class="form-input" name="start_time">
-        </div>
-        <div class="form-group">
-          <label class="form-label">End Time</label>
-          <input type="time" class="form-input" name="end_time">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Load-in Time</label>
-          <input type="time" class="form-input" name="load_in_time">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Fee (£)</label>
-          <input type="number" class="form-input" name="fee" step="1" min="0">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Status</label>
-          <select class="form-input" name="status">
-            <option value="confirmed">Confirmed</option>
-            <option value="tentative">Pencilled</option>
-            <option value="enquiry">Enquiry</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Dress Code</label>
-          <input type="text" class="form-input" name="dress_code" placeholder="e.g. Smart Casual, Black Tie">
+          <label class="form-label">Dress code</label>
+          <input type="text" class="form-input" name="dress_code" value="${escapeHtml(d.dress_code)}" placeholder="e.g. Black tie">
         </div>
         <div class="form-group">
           <label class="form-label">Notes</label>
-          <textarea class="form-textarea" name="notes" placeholder="Any additional details..."></textarea>
+          <textarea class="form-textarea" name="notes" placeholder="Parking info, contacts, anything useful..." rows="3">${escapeHtml(d.notes)}</textarea>
         </div>
-        <div id="fullFormError" class="alert alert-error" style="display:none;margin-bottom:var(--spacing-4);"></div>
-        <button type="submit" class="button button-primary button-block">Add Gig</button>
+        <!-- Lineup section (premium) -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <div style="font-size:14px;font-weight:600;color:var(--text);">Lineup</div>
+            <span style="font-size:9px;font-weight:700;color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:2px 6px;text-transform:uppercase;">Premium</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px;">Manage who's playing this gig. Available with Premium.</div>
+          <div style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--card);border:1px dashed var(--border);border-radius:10px;">
+            <div style="width:28px;height:28px;border-radius:14px;border:1px dashed var(--text-3);display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text-3);">?</div>
+            <div style="flex:1;font-size:12px;color:var(--text-3);">Add lineup members</div>
+            <span style="font-size:11px;color:var(--accent);font-weight:600;cursor:pointer;">Send dep</span>
+          </div>
+        </div>
+        <div id="fullFormError" class="alert alert-error" style="display:none;margin-bottom:12px;"></div>
+        <button type="submit" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:24px;padding:13px 24px;font-size:15px;font-weight:700;cursor:pointer;">Save gig</button>
       </form>
     </div>
   `;
@@ -1313,6 +1450,13 @@ function renderFullGigForm() {
     Object.keys(data).forEach((k) => {
       if (data[k] === '') data[k] = null;
     });
+    data.status = gigWizardData.status || 'confirmed';
+    data.source = gigWizardData.source || 'manual';
+    if (gigWizardData.gig_type) {
+      data.notes = data.notes
+        ? `[${gigWizardData.gig_type}] ${data.notes}`
+        : `[${gigWizardData.gig_type}]`;
+    }
 
     try {
       const response = await fetch('/api/gigs', {
@@ -1332,15 +1476,38 @@ function renderFullGigForm() {
           errEl.textContent = err.error || 'Failed to save gig';
           errEl.style.display = 'block';
         }
-        submitBtn.textContent = 'Add Gig';
+        submitBtn.textContent = 'Save gig';
         submitBtn.disabled = false;
       }
     } catch (error) {
       console.error('Create gig error:', error);
-      submitBtn.textContent = 'Add Gig';
+      submitBtn.textContent = 'Save gig';
       submitBtn.disabled = false;
     }
   });
+}
+
+function selectFullFormSource(value) {
+  gigWizardData.source = value;
+  renderFullGigForm();
+}
+
+function selectFullFormGigType(value, el) {
+  gigWizardData.gig_type = gigWizardData.gig_type === value ? '' : value;
+  // Re-render chips
+  const container = document.getElementById('fullFormGigTypes');
+  if (container) {
+    container.querySelectorAll('span').forEach(s => {
+      const v = s.textContent.trim();
+      const isSelected = gigWizardData.gig_type && s.onclick.toString().includes(gigWizardData.gig_type);
+    });
+  }
+  renderFullGigForm();
+}
+
+function selectFullFormStatus(value) {
+  gigWizardData.status = value;
+  renderFullGigForm();
 }
 
 // ── Screen setup stubs ──────────────────────────────────────────────────────
@@ -1448,10 +1615,66 @@ async function openGigDetail(gigId) {
       ${gig.notes ? `<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;"><span style="color:var(--text-2);">Notes</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(gig.notes)}</span></div>` : ''}
       ${!gig.dress_code && !gig.load_in_time && !gig.notes ? '<div style="font-size:13px;color:var(--text-3);padding:10px 0;">No gig pack info yet. Edit the gig to add details.</div>' : ''}
     </div>
+    <!-- Lineup (Premium) -->
+    <div style="padding:16px 20px;border-top:1px solid var(--border);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Lineup</div>
+        <span style="font-size:9px;font-weight:700;color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:2px 6px;text-transform:uppercase;">Premium</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-3);padding:10px;background:var(--card);border:1px dashed var(--border);border-radius:10px;text-align:center;">Lineup management is coming with Premium</div>
+    </div>
+    <!-- Setlist -->
+    <div style="padding:16px 20px;border-top:1px solid var(--border);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">🎵 Setlist</div>
+        <span style="font-size:11px;color:var(--accent);cursor:pointer;">Change</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-3);padding:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;text-align:center;">No setlist assigned yet</div>
+    </div>
+    <!-- Prep checklist -->
+    <div style="padding:16px 20px;border-top:1px solid var(--border);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">📋 Prep checklist</div>
+        <span style="font-size:11px;color:var(--accent);cursor:pointer;">+ Add</span>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+        <div class="prep-item" onclick="togglePrepItem(this)" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;">
+          <span style="font-size:14px;">○</span>
+          <span style="font-size:13px;color:var(--text);">Check PA requirements</span>
+        </div>
+        <div class="prep-item" onclick="togglePrepItem(this)" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;">
+          <span style="font-size:14px;">○</span>
+          <span style="font-size:13px;color:var(--text);">Confirm set times with band</span>
+        </div>
+        <div class="prep-item" onclick="togglePrepItem(this)" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;">
+          <span style="font-size:14px;">○</span>
+          <span style="font-size:13px;color:var(--text);">Pack gear the night before</span>
+        </div>
+        <div class="prep-item" onclick="togglePrepItem(this)" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;">
+          <span style="font-size:14px;">○</span>
+          <span style="font-size:13px;color:var(--text);">Print/download setlist</span>
+        </div>
+      </div>
+    </div>
     <!-- Actions -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
-      <button class="button button-primary button-block" onclick="closePanel('panel-gig-detail');openPanel('panel-invoice')" style="margin-bottom:8px;">Create invoice for this gig</button>
-      <button class="button button-outline button-block" onclick="closePanel('panel-gig-detail');deleteGig('${gig.id}')" style="color:var(--danger);border-color:var(--danger);">Delete gig</button>
+      <button style="width:100%;background:var(--accent);color:#000;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;" onclick="closePanel('panel-gig-detail')">Create invoice for this gig</button>
+      <!-- Ask for review -->
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          <div style="font-size:24px;">⭐</div>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:var(--text);">Ask for a review</div>
+            <div style="font-size:11px;color:var(--text-2);">Send the client a review link after the gig</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button style="flex:1;background:var(--card);color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:11px;font-weight:600;cursor:pointer;">🔵 Google Review</button>
+          <button style="flex:1;background:var(--card);color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:11px;font-weight:600;cursor:pointer;">📘 Facebook Review</button>
+        </div>
+        <div style="text-align:center;font-size:10px;color:var(--text-3);margin-top:6px;">Set up your review links in Profile > Account settings</div>
+      </div>
+      <button style="width:100%;background:var(--card);color:var(--danger);border:1px solid var(--danger);border-radius:24px;padding:12px;font-size:14px;font-weight:500;cursor:pointer;" onclick="closePanel('panel-gig-detail');deleteGig('${gig.id}')">Delete gig</button>
     </div>
   `;
 
@@ -1475,6 +1698,22 @@ async function openGigDetail(gigId) {
     } catch (e) {
       console.error('Mileage fetch error:', e);
     }
+  }
+}
+
+function togglePrepItem(el) {
+  const icon = el.querySelector('span:first-child');
+  const text = el.querySelector('span:last-child');
+  if (icon.textContent === '○') {
+    icon.textContent = '\u2713';
+    icon.style.color = 'var(--success)';
+    text.style.textDecoration = 'line-through';
+    text.style.opacity = '0.5';
+  } else {
+    icon.textContent = '○';
+    icon.style.color = '';
+    text.style.textDecoration = '';
+    text.style.opacity = '';
   }
 }
 
