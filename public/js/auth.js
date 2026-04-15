@@ -3,6 +3,34 @@ const emailInput = document.getElementById('emailInput');
 const authError = document.getElementById('authError');
 const authSuccess = document.getElementById('authSuccess');
 
+// Google Sign-In callback
+async function handleGoogleSignIn(response) {
+  try {
+    authError.style.display = 'none';
+    authSuccess.style.display = 'none';
+
+    const res = await fetch('/auth/google', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credential: response.credential }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Google sign-in failed');
+    }
+
+    // Reload to enter the app
+    location.reload();
+  } catch (error) {
+    showError(error.message || 'Google sign-in failed. Please try again.');
+  }
+}
+
+// Make it globally accessible for Google callback
+window.handleGoogleSignIn = handleGoogleSignIn;
+
 async function checkAuth() {
   try {
     const response = await fetch('/auth/me');
@@ -18,9 +46,7 @@ async function requestMagicLink(email) {
   try {
     const response = await fetch('/auth/request', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
     });
 
@@ -51,12 +77,22 @@ authForm.addEventListener('submit', async (e) => {
     authError.style.display = 'none';
     authSuccess.style.display = 'none';
 
+    const submitBtn = authForm.querySelector('button[type="submit"]');
+    submitBtn.textContent = 'Sending...';
+    submitBtn.disabled = true;
+
     await requestMagicLink(email);
 
-    authSuccess.textContent = `Magic link sent to ${email}. Check your email to sign in.`;
+    authSuccess.textContent = 'Check your email for the sign-in link.';
     authSuccess.style.display = 'block';
     emailInput.value = '';
+
+    submitBtn.textContent = 'Send Magic Link';
+    submitBtn.disabled = false;
   } catch (error) {
+    const submitBtn = authForm.querySelector('button[type="submit"]');
+    submitBtn.textContent = 'Send Magic Link';
+    submitBtn.disabled = false;
     showError(error.message || 'Failed to send magic link. Please try again.');
   }
 });
@@ -66,6 +102,30 @@ function showError(message) {
   authError.style.display = 'block';
 }
 
+function initGoogleSignIn() {
+  if (typeof google !== 'undefined' && google.accounts) {
+    google.accounts.id.initialize({
+      client_id: window.GOOGLE_CLIENT_ID,
+      callback: handleGoogleSignIn,
+    });
+
+    google.accounts.id.renderButton(
+      document.getElementById('googleSignIn'),
+      {
+        theme: 'filled_black',
+        size: 'large',
+        width: 320,
+        text: 'signin_with',
+        shape: 'rectangular',
+        logo_alignment: 'left',
+      }
+    );
+  } else {
+    // Retry if Google script hasn't loaded yet
+    setTimeout(initGoogleSignIn, 200);
+  }
+}
+
 async function initAuth() {
   const user = await checkAuth();
 
@@ -73,6 +133,7 @@ async function initAuth() {
     showApp(user);
   } else {
     showAuthScreen();
+    initGoogleSignIn();
   }
 }
 
@@ -89,9 +150,7 @@ function showApp(user) {
 
 async function logout() {
   try {
-    await fetch('/auth/logout', {
-      method: 'POST',
-    });
+    await fetch('/auth/logout', { method: 'POST' });
     location.reload();
   } catch (error) {
     console.error('Logout error:', error);

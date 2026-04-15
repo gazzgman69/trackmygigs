@@ -592,6 +592,27 @@ body {
   text-align: center;
 }
 
+.auth-divider {
+  display: flex;
+  align-items: center;
+  margin: var(--spacing-4) 0;
+  gap: var(--spacing-3);
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.auth-divider span {
+  font-size: var(--font-size-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
 .alert {
   padding: var(--spacing-3) var(--spacing-4);
   border-radius: var(--radius);

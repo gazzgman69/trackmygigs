@@ -4,8 +4,9 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Users table
 CREATE TABLE users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name VARCHAR(255) NOT NULL,
+  name VARCHAR(255) DEFAULT '',
   email VARCHAR(255) UNIQUE NOT NULL,
+  google_id VARCHAR(255),
   phone VARCHAR(20),
   instruments TEXT[],
   home_postcode VARCHAR(20),
