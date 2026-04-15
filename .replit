@@ -1,0 +1,9 @@
+run = "node server.js"
+entrypoint = "server.js"
+
+[packager]
+language = "nodejs"
+
+[packager.features]
+packageSearch = true
+guessImports = true
