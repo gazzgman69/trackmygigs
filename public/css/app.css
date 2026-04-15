@@ -152,31 +152,30 @@ body {
   background-color: var(--surface);
   flex-shrink: 0;
   z-index: 20;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .nav-main {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 0;
-  padding: 0;
-  list-style: none;
-  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex: 1;
 }
 
 .nav-item {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--spacing-3) var(--spacing-2);
+  gap: 1px;
+  padding-top: 5px;
+  padding-bottom: 5px;
   position: relative;
-  gap: 4px;
   cursor: pointer;
-  border: none;
-  background: none;
   color: var(--text-2);
-  font-size: var(--font-size-sm);
-  transition: color 0.2s;
+  transition: color 0.15s;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .nav-item:hover {
@@ -187,56 +186,68 @@ body {
   color: var(--accent);
 }
 
-.nav-icon {
-  font-size: var(--font-size-lg);
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.nav-item svg {
+  width: 20px;
+  height: 20px;
+}
+
+.nav-label {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
 }
 
 .nav-badge {
   position: absolute;
-  top: 0;
-  right: 4px;
+  top: 2px;
+  right: 8px;
   background-color: var(--danger);
   color: white;
-  border-radius: 50%;
-  width: 18px;
-  height: 18px;
+  border-radius: 8px;
+  width: 16px;
+  height: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--font-size-sm);
-  font-weight: bold;
+  font-size: 9px;
+  font-weight: 700;
+  z-index: 2;
 }
 
 .nav-quick-actions {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 0;
-  padding: 0;
-  list-style: none;
+  display: flex;
+  flex: 1;
+  border-top: 1px solid var(--border);
 }
 
 .nav-quick-btn {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--spacing-3) var(--spacing-2);
-  gap: 4px;
+  gap: 1px;
+  padding-top: 5px;
+  padding-bottom: 5px;
   cursor: pointer;
   border: none;
   background: none;
   color: var(--text-2);
-  font-size: var(--font-size-sm);
-  transition: color 0.2s;
+  transition: color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nav-quick-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .nav-quick-btn:hover {
   color: var(--text);
+}
+
+.nav-quick-btn.active {
+  color: var(--accent);
 }
 
 .screen {
