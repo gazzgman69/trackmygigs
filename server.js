@@ -92,6 +92,22 @@ app.get('*', (req, res) => {
   res.send(indexHtml);
 });
 
-app.listen(PORT, () => {
-  console.log(`TrackMyGigs server running on port ${PORT} (build ${BUILD_ID})`);
+// Run pending migrations on startup
+const db = require('./db');
+async function runMigrations() {
+  try {
+    // Add Google token columns if they don't exist
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_access_token TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_refresh_token TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_token_expires_at TIMESTAMP`);
+    console.log('Migrations: OK');
+  } catch (err) {
+    console.error('Migration error (non-fatal):', err.message);
+  }
+}
+
+runMigrations().then(() => {
+  app.listen(PORT, () => {
+    console.log(`TrackMyGigs server running on port ${PORT} (build ${BUILD_ID})`);
+  });
 });
