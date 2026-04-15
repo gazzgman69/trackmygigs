@@ -1097,8 +1097,8 @@ body.light-mode {
 .wizard-footer {
   margin-top: var(--spacing-6);
   display: flex;
-  flex-direction: column;
-  gap: var(--spacing-3);
+  flex-direction: row;
+  gap: 8px;
   align-items: center;
 }
 
