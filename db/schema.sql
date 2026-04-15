@@ -15,7 +15,10 @@ CREATE TABLE users (
   subscription_tier VARCHAR(50) DEFAULT 'free',
   premium_trial_ends TIMESTAMP,
   linked_mt_id UUID,
-  linked_cf_id UUID
+  linked_cf_id UUID,
+  google_access_token TEXT,
+  google_refresh_token TEXT,
+  google_token_expires_at TIMESTAMP
 );
 
 CREATE INDEX idx_users_email ON users(email);

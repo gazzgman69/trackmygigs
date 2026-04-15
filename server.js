@@ -7,6 +7,8 @@ const fs = require('fs');
 
 const authRoutes = require('./routes/auth');
 const apiRoutes = require('./routes/api');
+const calendarRoutes = require('./routes/calendar');
+const chatRoutes = require('./routes/chat');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -45,6 +47,8 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 app.use('/auth', authRoutes);
 app.use('/api', apiRoutes);
+app.use('/api/calendar', calendarRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Serve sw.js with BUILD_ID injected so the service worker cache name changes
 // on every server restart — forcing browsers to install the new worker and

@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const { OAuth2Client } = require('google-auth-library');
+const { google } = require('googleapis');
 const db = require('../db');
 
 const router = express.Router();
@@ -17,8 +18,15 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// Google OAuth client
+// Google OAuth client (for ID token verification)
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Google OAuth2 client (for authorization code flow with Calendar scope)
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  (process.env.APP_URL || 'https://trackmygigs.app') + '/auth/google/callback'
+);
 
 // Helper: create session and set cookie
 async function createSession(res, userId) {
@@ -184,6 +192,106 @@ router.post('/google', async (req, res) => {
   }
 });
 
+// ---- GOOGLE CALENDAR OAUTH (Authorization Code Flow) ----
+
+// Redirect user to Google consent screen with Calendar scope
+router.get('/google/calendar', (req, res) => {
+  const authUrl = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: [
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/calendar.readonly',
+    ],
+  });
+  res.redirect(authUrl);
+});
+
+// Handle the OAuth callback
+router.get('/google/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
+    if (!code) return res.redirect('/?error=no_code');
+
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+
+    // Get user info from Google
+    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const userInfo = await oauth2.userinfo.get();
+    const { id: googleId, email, name, picture } = userInfo.data;
+
+    if (!email) return res.redirect('/?error=no_email');
+
+    const user = await findOrCreateUser(email, name, picture, googleId);
+
+    // Store Google tokens on user record
+    await db.query(
+      `UPDATE users SET
+        google_access_token = $1,
+        google_refresh_token = COALESCE($2, google_refresh_token),
+        google_token_expires_at = $3
+       WHERE id = $4`,
+      [
+        tokens.access_token,
+        tokens.refresh_token || null,
+        tokens.expiry_date ? new Date(tokens.expiry_date) : null,
+        user.id,
+      ]
+    );
+
+    await createSession(res, user.id);
+    res.redirect('/?calendar_connected=true');
+  } catch (error) {
+    console.error('Google Calendar OAuth error:', error);
+    res.redirect('/?error=calendar_auth_failed');
+  }
+});
+
+// Helper: get a working Google auth client for a user (refreshes if needed)
+async function getGoogleAuthForUser(userId) {
+  const result = await db.query(
+    'SELECT google_access_token, google_refresh_token, google_token_expires_at FROM users WHERE id = $1',
+    [userId]
+  );
+  const user = result.rows[0];
+  if (!user || !user.google_access_token) return null;
+
+  const client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    (process.env.APP_URL || 'https://trackmygigs.app') + '/auth/google/callback'
+  );
+
+  client.setCredentials({
+    access_token: user.google_access_token,
+    refresh_token: user.google_refresh_token,
+    expiry_date: user.google_token_expires_at ? new Date(user.google_token_expires_at).getTime() : null,
+  });
+
+  // If token is expired, refresh it
+  if (user.google_token_expires_at && new Date(user.google_token_expires_at) < new Date()) {
+    try {
+      const { credentials } = await client.refreshAccessToken();
+      client.setCredentials(credentials);
+      // Update stored tokens
+      await db.query(
+        'UPDATE users SET google_access_token = $1, google_token_expires_at = $2 WHERE id = $3',
+        [credentials.access_token, credentials.expiry_date ? new Date(credentials.expiry_date) : null, userId]
+      );
+    } catch (err) {
+      console.error('Token refresh failed:', err);
+      return null;
+    }
+  }
+
+  return client;
+}
+
+// Export helper for use in API routes
+router.getGoogleAuthForUser = getGoogleAuthForUser;
+
 // ---- SESSION ----
 
 router.get('/me', async (req, res) => {
@@ -205,7 +313,7 @@ router.get('/me', async (req, res) => {
 
     const session = result.rows[0];
     const userResult = await db.query(
-      'SELECT id, name, email, avatar_url FROM users WHERE id = $1',
+      'SELECT id, name, email, avatar_url, home_postcode, instruments, google_access_token FROM users WHERE id = $1',
       [session.user_id]
     );
 
@@ -213,7 +321,18 @@ router.get('/me', async (req, res) => {
       return res.json({ user: null });
     }
 
-    res.json({ user: userResult.rows[0] });
+    const user = userResult.rows[0];
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        avatar_url: user.avatar_url,
+        home_postcode: user.home_postcode,
+        instruments: user.instruments,
+        calendar_connected: !!user.google_access_token,
+      },
+    });
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Internal server error' });

@@ -368,6 +368,46 @@
     <div class="panel-body" id="gigDetailBody"></div>
   </div>
 
+  <!-- Gig Nudge Panel (Calendar imports) -->
+  <div class="panel-overlay" id="panel-gig-nudge">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-gig-nudge')">&#8249; Back</button>
+      <div class="panel-title">Calendar Imports</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div class="panel-body" id="gigNudgeBody"></div>
+  </div>
+
+  <!-- Gig Nudge Detail Panel -->
+  <div class="panel-overlay" id="panel-nudge-detail">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-nudge-detail')">&#8249; Back</button>
+      <div class="panel-title">Is this a gig?</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div class="panel-body" id="nudgeDetailBody"></div>
+  </div>
+
+  <!-- Chat Inbox Panel -->
+  <div class="panel-overlay" id="panel-chat-inbox">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-chat-inbox')">&#8249; Back</button>
+      <div class="panel-title">Gig Messages</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div class="panel-body" id="chatInboxBody"></div>
+  </div>
+
+  <!-- Chat Thread Panel -->
+  <div class="panel-overlay" id="panel-chat-thread">
+    <div class="panel-header" id="chatThreadHeader">
+      <button class="panel-back" onclick="closePanel('panel-chat-thread')">&#8249; Back</button>
+      <div class="panel-title">Messages</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div class="panel-body" id="chatThreadBody" style="display:flex;flex-direction:column;"></div>
+  </div>
+
   <script>window.GOOGLE_CLIENT_ID = "775009954166-8ngl19vdj033jv0mbquoll385c8cd58t.apps.googleusercontent.com";</script>
   <script src="/js/auth.js" defer></script>
   <script src="/js/app.js" defer></script>

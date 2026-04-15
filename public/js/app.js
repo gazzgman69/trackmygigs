@@ -273,6 +273,7 @@ async function renderGigsScreen() {
       <div class="gig-tab" onclick="switchGigTab(this,'month')">Monthly</div>
       <div class="gig-tab" onclick="switchGigTab(this,'year')">Yearly</div>
     </div>
+    <div id="calendarNudgeBar" style="display:none;"></div>
     <div style="padding:0 16px;" id="gigsListContent">
       ${cached ? '' : '<div style="text-align:center;padding:40px;color:var(--text-2);">Loading...</div>'}
     </div>
@@ -281,6 +282,9 @@ async function renderGigsScreen() {
   if (cached) {
     renderGigsList(cached);
   }
+
+  // Check for calendar imports to review (non-blocking)
+  checkCalendarNudges();
 
   try {
     const response = await fetch('/api/gigs');
@@ -302,6 +306,38 @@ async function renderGigsScreen() {
         `;
       }
     }
+  }
+}
+
+async function checkCalendarNudges() {
+  const bar = document.getElementById('calendarNudgeBar');
+  if (!bar) return;
+  try {
+    const resp = await fetch('/api/calendar/events');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (!data.connected) return;
+    const toReview = (data.events || []).filter(e => !e.already_imported);
+    if (toReview.length === 0) {
+      bar.style.display = 'none';
+      return;
+    }
+    window._calendarNudges = toReview;
+    bar.style.display = 'block';
+    bar.innerHTML = `
+      <div onclick="openGigNudge()" style="margin:8px 16px;padding:12px 16px;background:var(--accent-dim);border:1px solid rgba(0,207,130,.3);border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">📅</span>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:var(--text);">${toReview.length} import${toReview.length === 1 ? '' : 's'} to review</div>
+            <div style="font-size:11px;color:var(--text-2);">Found possible gigs in your calendar</div>
+          </div>
+        </div>
+        <span style="font-size:18px;color:var(--accent);">&#8250;</span>
+      </div>
+    `;
+  } catch (e) {
+    // Silent fail - calendar nudges are optional
   }
 }
 
@@ -1658,6 +1694,7 @@ async function openGigDetail(gigId) {
     </div>
     <!-- Actions -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
+      <button style="width:100%;background:var(--card);color:var(--accent);border:1px solid var(--accent);border-radius:24px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:8px;" onclick="openGigChat('${gig.id}')">💬 Message band</button>
       <button style="width:100%;background:var(--accent);color:#000;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;" onclick="closePanel('panel-gig-detail')">Create invoice for this gig</button>
       <!-- Ask for review -->
       <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:8px;">
@@ -1726,6 +1763,491 @@ async function deleteGig(gigId) {
     renderGigsList(window._cachedGigs);
   } catch (e) {
     console.error('Delete gig error:', e);
+  }
+}
+
+// ── Calendar Nudge (Gig Detection) ──────────────────────────────────────────
+
+let _nudgeEvents = [];
+
+async function openGigNudge() {
+  const body = document.getElementById('gigNudgeBody');
+  if (!body) return;
+
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Scanning your calendar...</div>';
+  openPanel('panel-gig-nudge');
+
+  try {
+    const resp = await fetch('/api/calendar/events');
+    const data = await resp.json();
+
+    if (!data.connected) {
+      body.innerHTML = `
+        <div style="padding:20px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+            <div style="width:40px;height:40px;border-radius:10px;background:var(--warning-dim);display:flex;align-items:center;justify-content:center;font-size:20px;">🎵</div>
+            <div>
+              <div style="font-size:17px;font-weight:700;color:var(--text);">Connect Google Calendar</div>
+              <div style="font-size:12px;color:var(--text-2);">We'll detect which events look like gigs</div>
+            </div>
+          </div>
+          <a href="/auth/google/calendar" style="display:block;width:100%;background:var(--accent);color:#000;border:none;border-radius:12px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;text-align:center;text-decoration:none;">Connect Google Calendar</a>
+          <div style="text-align:center;font-size:10px;color:var(--text-3);margin-top:8px;">Read-only access. We never modify your calendar.</div>
+        </div>
+      `;
+      return;
+    }
+
+    _nudgeEvents = data.events.filter(e => !e.already_imported);
+
+    if (_nudgeEvents.length === 0) {
+      body.innerHTML = `
+        <div style="padding:40px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:8px;">✓</div>
+          <div style="font-weight:600;color:var(--text);margin-bottom:4px;">All caught up</div>
+          <div style="font-size:13px;color:var(--text-2);">No new events that look like gigs</div>
+        </div>
+      `;
+      return;
+    }
+
+    renderNudgeList();
+  } catch (err) {
+    console.error('Nudge fetch error:', err);
+    body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not check calendar. Try again later.</div>';
+  }
+}
+
+function renderNudgeList() {
+  const body = document.getElementById('gigNudgeBody');
+  if (!body) return;
+
+  body.innerHTML = `
+    <div style="padding:16px 20px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <div style="width:40px;height:40px;border-radius:10px;background:var(--warning-dim);display:flex;align-items:center;justify-content:center;font-size:20px;">🎵</div>
+        <div>
+          <div style="font-size:17px;font-weight:700;color:var(--text);">${_nudgeEvents.length} event${_nudgeEvents.length !== 1 ? 's' : ''} detected</div>
+          <div style="font-size:12px;color:var(--text-2);">These look like gigs from your Google Calendar</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
+        <span style="font-size:9px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">Import to unlock: \uD83D\uDCB7 Fees</span>
+        <span style="font-size:9px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">\uD83D\uDE97 Travel</span>
+        <span style="font-size:9px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">\uD83D\uDCE6 Pack-down</span>
+        <span style="font-size:9px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">\uD83C\uDFB5 Set lists</span>
+        <span style="font-size:9px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">\uD83D\uDCCA Reports</span>
+      </div>
+      ${_nudgeEvents.map((e, i) => `
+        <div id="nudge-card-${i}" style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:8px;cursor:pointer;border-left:4px solid var(--info);${e.score < 40 ? 'opacity:.75;' : ''}" onclick="openNudgeDetail(${i})">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
+            <div style="flex:1;">
+              <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(e.title)}</div>
+              <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${e.date_formatted || ''} \u00B7 ${e.start_time || ''}${e.end_time ? '\u2013' + e.end_time : ''}</div>
+              ${e.location ? `<div style="font-size:11px;color:var(--text-3);">\uD83D\uDCCD ${escapeHtml(e.location.split(',')[0])}</div>` : ''}
+            </div>
+            <div style="font-size:11px;color:var(--accent);font-weight:600;">Review \u2192</div>
+          </div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;">
+            ${e.reasons.map(r => `<span style="font-size:8px;color:var(--warning);background:rgba(240,165,0,.1);border-radius:4px;padding:2px 5px;">${escapeHtml(r)}</span>`).join('')}
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <button onclick="event.stopPropagation();quickImportNudge(${i})" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:7px;font-size:11px;font-weight:600;cursor:pointer;">Quick import</button>
+            <button onclick="event.stopPropagation();dismissNudge(${i})" style="background:var(--surface);color:var(--text-3);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;cursor:pointer;">Not a gig</button>
+          </div>
+        </div>
+      `).join('')}
+      ${_nudgeEvents.length > 1 ? `
+        <button onclick="importAllNudges()" style="width:100%;background:var(--surface);color:var(--accent);border:1px solid var(--accent);border-radius:12px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;margin-top:8px;">Import all ${_nudgeEvents.length} as gigs</button>
+      ` : ''}
+      <div style="text-align:center;font-size:10px;color:var(--text-3);margin-top:8px;">Events stay linked to Google Calendar</div>
+    </div>
+  `;
+}
+
+function openNudgeDetail(index) {
+  const e = _nudgeEvents[index];
+  if (!e) return;
+
+  const body = document.getElementById('nudgeDetailBody');
+  if (!body) return;
+
+  body.innerHTML = `
+    <div style="padding:16px 20px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <div style="width:40px;height:40px;border-radius:10px;background:var(--warning-dim);display:flex;align-items:center;justify-content:center;font-size:20px;">🎵</div>
+        <div>
+          <div style="font-size:17px;font-weight:700;color:var(--text);">Is this a gig?</div>
+          <div style="font-size:12px;color:var(--text-2);">From Google Calendar</div>
+        </div>
+      </div>
+      <!-- Event details -->
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:16px;border-left:4px solid var(--info);">
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;">${escapeHtml(e.title)}</div>
+        <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">\uD83D\uDCC5 ${e.date_formatted || 'No date'} \u00B7 ${e.start_time || ''}${e.end_time ? ' \u2013 ' + e.end_time : ''}</div>
+        ${e.location ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">\uD83D\uDCCD ${escapeHtml(e.location)}</div>` : ''}
+        ${e.calendar_email ? `<div style="font-size:10px;color:var(--text-3);margin-top:6px;font-style:italic;">From: ${escapeHtml(e.calendar_email)} \u00B7 Google Calendar</div>` : ''}
+      </div>
+      <!-- Why detected -->
+      <div style="background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.2);border-radius:14px;padding:12px;margin-bottom:16px;">
+        <div style="font-size:11px;font-weight:600;color:var(--warning);margin-bottom:6px;">Why this looks like a gig</div>
+        <div style="font-size:11px;color:var(--text-2);line-height:1.5;">${e.reasons.join(' \u00B7 ')}</div>
+      </div>
+      <!-- Quick import form -->
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px;">Quick details (optional - add more later)</div>
+        <div style="margin-bottom:8px;">
+          <label style="font-size:10px;color:var(--text-3);font-weight:600;display:block;margin-bottom:3px;">Fee</label>
+          <input type="text" id="nudgeFee" placeholder="e.g. 350" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
+        </div>
+        <div style="margin-bottom:8px;">
+          <label style="font-size:10px;color:var(--text-3);font-weight:600;display:block;margin-bottom:3px;">Band / act name</label>
+          <input type="text" id="nudgeBandName" placeholder="e.g. The Silverstone Band" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
+        </div>
+        <div>
+          <label style="font-size:10px;color:var(--text-3);font-weight:600;display:block;margin-bottom:3px;">Dress code</label>
+          <input type="text" id="nudgeDressCode" placeholder="e.g. Black tie" style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">
+        </div>
+      </div>
+      <button onclick="importNudgeFromDetail(${index})" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:12px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">Import as gig \u2192</button>
+      <button onclick="dismissNudge(${index});closePanel('panel-nudge-detail')" style="width:100%;background:var(--card);color:var(--text-2);border:1px solid var(--border);border-radius:12px;padding:12px;font-size:13px;font-weight:500;cursor:pointer;margin-bottom:8px;">Not a gig - keep as personal</button>
+      <div style="text-align:center;font-size:10px;color:var(--text-3);margin-top:4px;">Changes sync back to Google Calendar</div>
+    </div>
+  `;
+
+  openPanel('panel-nudge-detail');
+}
+
+async function quickImportNudge(index) {
+  const e = _nudgeEvents[index];
+  if (!e) return;
+
+  try {
+    await fetch('/api/calendar/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_id: e.id,
+        title: e.title,
+        location: e.location,
+        start: e.start,
+        end: e.end,
+      }),
+    });
+
+    const card = document.getElementById(`nudge-card-${index}`);
+    if (card) {
+      card.style.borderColor = 'var(--success)';
+      card.style.background = 'var(--success-dim)';
+      card.querySelector('div:last-child').innerHTML = '<span style="font-size:12px;color:var(--success);font-weight:600;">\u2713 Imported - add details in Gigs</span>';
+    }
+
+    window._cachedGigs = null;
+    _nudgeEvents[index].already_imported = true;
+  } catch (err) {
+    console.error('Quick import error:', err);
+  }
+}
+
+async function importNudgeFromDetail(index) {
+  const e = _nudgeEvents[index];
+  if (!e) return;
+
+  const fee = document.getElementById('nudgeFee')?.value;
+  const bandName = document.getElementById('nudgeBandName')?.value;
+  const dressCode = document.getElementById('nudgeDressCode')?.value;
+
+  try {
+    await fetch('/api/calendar/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_id: e.id,
+        title: e.title,
+        location: e.location,
+        start: e.start,
+        end: e.end,
+        fee: fee || null,
+        band_name: bandName || null,
+        dress_code: dressCode || null,
+      }),
+    });
+
+    window._cachedGigs = null;
+    _nudgeEvents[index].already_imported = true;
+    closePanel('panel-nudge-detail');
+    showToast('Gig imported!');
+    renderNudgeList();
+  } catch (err) {
+    console.error('Import from detail error:', err);
+  }
+}
+
+async function dismissNudge(index) {
+  const e = _nudgeEvents[index];
+  if (!e) return;
+
+  try {
+    await fetch('/api/calendar/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_id: e.id }),
+    });
+
+    const card = document.getElementById(`nudge-card-${index}`);
+    if (card) {
+      card.style.opacity = '.4';
+      card.style.pointerEvents = 'none';
+      card.querySelector('div:last-child').innerHTML = '<span style="font-size:12px;color:var(--text-3);">Dismissed</span>';
+    }
+  } catch (err) {
+    console.error('Dismiss error:', err);
+  }
+}
+
+async function importAllNudges() {
+  for (let i = 0; i < _nudgeEvents.length; i++) {
+    if (!_nudgeEvents[i].already_imported) {
+      await quickImportNudge(i);
+    }
+  }
+}
+
+// ── Chat / Messaging ────────────────────────────────────────────────────────
+
+let _currentThreadId = null;
+
+async function openChatInbox() {
+  const body = document.getElementById('chatInboxBody');
+  if (!body) return;
+
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading messages...</div>';
+  openPanel('panel-chat-inbox');
+
+  try {
+    const resp = await fetch('/api/chat/threads');
+    const data = await resp.json();
+    const threads = data.threads || [];
+
+    if (threads.length === 0) {
+      body.innerHTML = `
+        <div style="padding:40px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:8px;">💬</div>
+          <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No messages yet</div>
+          <div style="font-size:13px;color:var(--text-2);">Messages will appear here when you message a band or dep</div>
+        </div>
+      `;
+      return;
+    }
+
+    // Split into gig threads and dep threads
+    const gigThreads = threads.filter(t => t.thread_type === 'gig');
+    const depThreads = threads.filter(t => t.thread_type === 'dep');
+
+    let html = '<div>';
+
+    if (gigThreads.length > 0) {
+      html += '<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;padding:12px 20px 6px;">Upcoming gigs</div>';
+      html += gigThreads.map(t => renderThreadItem(t, 'gig')).join('');
+    }
+
+    if (depThreads.length > 0) {
+      html += '<div style="font-size:11px;font-weight:600;color:#A78BFA;text-transform:uppercase;letter-spacing:1px;padding:12px 20px 6px;">Dep conversations</div>';
+      html += depThreads.map(t => renderThreadItem(t, 'dep')).join('');
+    }
+
+    html += '</div>';
+    body.innerHTML = html;
+  } catch (err) {
+    console.error('Chat inbox error:', err);
+    body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load messages.</div>';
+  }
+}
+
+function renderThreadItem(thread, type) {
+  const isUnread = parseInt(thread.unread_count) > 0;
+  const otherParticipants = (thread.participants || []).filter(p => p.id !== currentUser?.id);
+  const displayName = thread.band_name || otherParticipants.map(p => p.name || p.email).join(', ') || 'Unknown';
+  const initial = displayName.charAt(0).toUpperCase();
+  const subtitle = thread.venue_name ? `${thread.venue_name}` : '';
+  const preview = thread.last_message ? (thread.last_message.length > 40 ? thread.last_message.substring(0, 40) + '...' : thread.last_message) : 'No messages yet';
+  const timeAgo = thread.last_message_at ? formatTimeAgo(new Date(thread.last_message_at)) : '';
+
+  const bgTint = isUnread
+    ? (type === 'dep' ? 'rgba(167,139,250,.04)' : 'rgba(240,165,0,.04)')
+    : 'transparent';
+
+  const avatarBg = type === 'dep' ? 'rgba(167,139,250,.15)' : 'var(--info-dim)';
+
+  return `
+    <div onclick="openChatThread('${thread.id}')" style="padding:14px 20px;display:flex;align-items:center;gap:12px;cursor:pointer;border-bottom:1px solid var(--border);background:${bgTint};">
+      <div style="position:relative;flex-shrink:0;">
+        <div style="width:42px;height:42px;border-radius:21px;background:${avatarBg};display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:var(--text);">${initial}</div>
+        ${isUnread ? '<div style="position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:5px;background:var(--accent);border:2px solid var(--bg);"></div>' : ''}
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;">
+          <div style="font-size:14px;font-weight:${isUnread ? '700' : '500'};color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(displayName)}</div>
+          <div style="font-size:10px;color:var(--text-3);flex-shrink:0;margin-left:8px;">${timeAgo}</div>
+        </div>
+        ${subtitle ? `<div style="font-size:11px;color:var(--text-3);">${escapeHtml(subtitle)}</div>` : ''}
+        <div style="font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(preview)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function formatTimeAgo(date) {
+  const diff = Date.now() - date.getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return mins + 'm';
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + 'h';
+  const days = Math.floor(hours / 24);
+  if (days < 7) return days + 'd';
+  const weeks = Math.floor(days / 7);
+  return weeks + 'w';
+}
+
+async function openChatThread(threadId) {
+  _currentThreadId = threadId;
+  const body = document.getElementById('chatThreadBody');
+  if (!body) return;
+
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>';
+  openPanel('panel-chat-thread');
+
+  try {
+    const resp = await fetch(`/api/chat/threads/${threadId}/messages`);
+    const data = await resp.json();
+
+    renderChatThread(data.thread, data.messages);
+  } catch (err) {
+    console.error('Chat thread error:', err);
+    body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load messages.</div>';
+  }
+}
+
+async function openGigChat(gigId) {
+  const body = document.getElementById('chatThreadBody');
+  if (!body) return;
+
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>';
+  openPanel('panel-chat-thread');
+
+  try {
+    const resp = await fetch(`/api/chat/gig/${gigId}`);
+    const data = await resp.json();
+
+    _currentThreadId = data.thread.id;
+    renderChatThread(data.thread, data.messages, data.participants);
+  } catch (err) {
+    console.error('Gig chat error:', err);
+    body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load messages.</div>';
+  }
+}
+
+function renderChatThread(thread, messages, participants) {
+  const body = document.getElementById('chatThreadBody');
+  if (!body) return;
+
+  const userInitial = (currentUser?.name || currentUser?.email || 'G')[0].toUpperCase();
+  const participantCount = (thread.participant_ids || []).length;
+
+  // Update header
+  const header = document.getElementById('chatThreadHeader');
+  if (header) {
+    header.innerHTML = `
+      <button class="panel-back" onclick="closePanel('panel-chat-thread')">&#8249; Back</button>
+      <div style="text-align:center;flex:1;">
+        <div class="panel-title" style="font-size:15px;">${escapeHtml(thread.band_name || 'Messages')}</div>
+        <div style="font-size:10px;color:var(--text-3);">${participantCount} ${participantCount === 1 ? 'person' : 'people'}</div>
+      </div>
+      <div style="font-size:11px;color:var(--accent);cursor:pointer;width:50px;text-align:right;">Gig info</div>
+    `;
+  }
+
+  // Messages area
+  let messagesHTML = '<div style="flex:1;overflow-y:auto;padding:16px 20px;" id="chatMessagesArea">';
+
+  if (messages.length === 0) {
+    messagesHTML += `
+      <div style="text-align:center;padding:20px;">
+        <div style="font-size:11px;color:var(--text-3);background:var(--card);border-radius:12px;padding:6px 12px;display:inline-block;">Start the conversation</div>
+      </div>
+    `;
+  }
+
+  for (const msg of messages) {
+    const isMe = msg.sender_id === currentUser?.id;
+    const senderInitial = (msg.sender_name || '?')[0].toUpperCase();
+    const time = new Date(msg.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const allRead = (msg.read_by || []).length >= participantCount;
+
+    if (isMe) {
+      messagesHTML += `
+        <div style="display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;">
+          <div style="width:30px;height:30px;border-radius:15px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">${userInitial}</div>
+          <div style="max-width:85%;">
+            <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:14px 0 14px 14px;padding:10px 14px;">
+              <div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>
+            </div>
+            <div style="font-size:10px;color:var(--text-3);margin-top:2px;text-align:right;">${allRead ? '<span style="color:var(--success);">\u2713\u2713</span> ' : '\u2713 '}${time}</div>
+          </div>
+        </div>
+      `;
+    } else {
+      messagesHTML += `
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <div style="width:30px;height:30px;border-radius:15px;background:var(--info-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--info);flex-shrink:0;">${senderInitial}</div>
+          <div style="max-width:85%;">
+            <div style="font-size:11px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(msg.sender_name || 'Unknown')} \u00B7 ${time}</div>
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:0 14px 14px 14px;padding:10px 14px;">
+              <div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  messagesHTML += '</div>';
+
+  // Input bar
+  const inputHTML = `
+    <div style="padding:12px 20px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:center;">
+      <input type="text" id="chatMessageInput" placeholder="Message..." style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:24px;padding:10px 16px;color:var(--text);font-size:14px;outline:none;" onkeydown="if(event.key==='Enter')sendChatMessage()">
+      <button onclick="sendChatMessage()" style="width:36px;height:36px;border-radius:18px;background:var(--accent);border:none;color:#000;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;">&#x2191;</button>
+    </div>
+  `;
+
+  body.innerHTML = messagesHTML + inputHTML;
+
+  // Scroll to bottom
+  const area = document.getElementById('chatMessagesArea');
+  if (area) area.scrollTop = area.scrollHeight;
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chatMessageInput');
+  if (!input || !input.value.trim() || !_currentThreadId) return;
+
+  const content = input.value.trim();
+  input.value = '';
+
+  try {
+    await fetch(`/api/chat/threads/${_currentThreadId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+
+    // Refresh thread
+    openChatThread(_currentThreadId);
+  } catch (err) {
+    console.error('Send message error:', err);
+    input.value = content; // Restore on error
   }
 }
 
