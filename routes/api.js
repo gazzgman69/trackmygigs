@@ -238,4 +238,43 @@ router.post('/dep-offers', async (req, res) => {
   }
 });
 
+// ── Google Places Proxy ─────────────────────────────────────────────────────
+// Keeps the API key server-side. Frontend calls /api/places?q=...
+
+router.get('/places', async (req, res) => {
+  const key = process.env.GOOGLE_PLACES_KEY;
+  if (!key) return res.json({ predictions: [] });
+
+  const q = (req.query.q || '').trim();
+  if (q.length < 3) return res.json({ predictions: [] });
+
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(q)}&types=establishment&components=country:gb&key=${key}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    res.json({ predictions: (data.predictions || []).slice(0, 5) });
+  } catch (error) {
+    console.error('Places autocomplete error:', error);
+    res.json({ predictions: [] });
+  }
+});
+
+router.get('/places/detail', async (req, res) => {
+  const key = process.env.GOOGLE_PLACES_KEY;
+  if (!key) return res.json({ result: null });
+
+  const placeId = req.query.place_id;
+  if (!placeId) return res.json({ result: null });
+
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}&fields=name,formatted_address,geometry&key=${key}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    res.json({ result: data.result || null });
+  } catch (error) {
+    console.error('Places detail error:', error);
+    res.json({ result: null });
+  }
+});
+
 module.exports = router;

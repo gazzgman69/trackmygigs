@@ -734,7 +734,7 @@ function renderWizardStep(step) {
       <div style="font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Step 2 of 5</div>
       <div class="wizard-step-question">Where's the gig?</div>
       <div class="wizard-step-hint">Search for the venue - we'll grab the full address for directions & mileage</div>
-      <div class="form-group">
+      <div class="form-group" style="position:relative;">
         <input
           type="text"
           class="form-input"
@@ -742,18 +742,16 @@ function renderWizardStep(step) {
           placeholder="Search venues..."
           value="${escapeHtml(gigWizardData.venue_name)}"
           autocomplete="off"
+          oninput="searchVenues(this.value)"
         >
+        <div id="venueSuggestions" class="suggestions-list" style="display:none;"></div>
         <div class="wizard-error" id="wVenueError">Please enter the venue name</div>
       </div>
-      <div class="form-group" style="display:none;">
-        <input
-          type="text"
-          class="form-input"
-          id="wVenueAddress"
-          placeholder=""
-          value="${escapeHtml(gigWizardData.venue_address)}"
-        >
+      <div id="venueConfirm" style="display:${gigWizardData.venue_address ? 'block' : 'none'};background:var(--success-dim);border:1px solid rgba(63,185,80,.2);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:12px;">
+        <div style="font-size:12px;color:var(--text-2);" id="venueAddrText">${gigWizardData.venue_address ? escapeHtml(gigWizardData.venue_address) : ''}</div>
+        <div style="font-size:10px;color:var(--success);margin-top:4px;" id="venueAddrMeta"></div>
       </div>
+      <input type="hidden" id="wVenueAddress" value="${escapeHtml(gigWizardData.venue_address)}">
     `;
   } else if (step === 3) {
     stepHTML = `
@@ -1032,6 +1030,74 @@ function selectBandFromSuggestion(name) {
 function hideSuggestions(id) {
   const el = document.getElementById(id);
   if (el) el.style.display = 'none';
+}
+
+// ── Venue search (Google Places via server proxy) ───────────────────────────
+let _venueSearchTimer = null;
+
+function searchVenues(query) {
+  const list = document.getElementById('venueSuggestions');
+  if (!list) return;
+
+  clearTimeout(_venueSearchTimer);
+
+  if (query.length < 3) {
+    list.style.display = 'none';
+    return;
+  }
+
+  _venueSearchTimer = setTimeout(async () => {
+    try {
+      const resp = await fetch(`/api/places?q=${encodeURIComponent(query)}`);
+      const data = await resp.json();
+      if (!data.predictions || data.predictions.length === 0) {
+        list.style.display = 'none';
+        return;
+      }
+      list.innerHTML = data.predictions
+        .map(
+          (p) => `
+        <div class="suggestion-item" onclick="selectVenue('${escapeHtml(p.place_id)}', '${escapeHtml(p.structured_formatting?.main_text || p.description)}')">
+          <div style="font-size:14px;font-weight:500;color:var(--text);">${escapeHtml(p.structured_formatting?.main_text || p.description)}</div>
+          <div style="font-size:11px;color:var(--text-3);">${escapeHtml(p.structured_formatting?.secondary_text || '')}</div>
+        </div>
+      `
+        )
+        .join('');
+      list.style.display = 'block';
+    } catch (err) {
+      console.error('Venue search error:', err);
+      list.style.display = 'none';
+    }
+  }, 300);
+}
+
+async function selectVenue(placeId, name) {
+  const nameInput = document.getElementById('wVenueName');
+  const addrInput = document.getElementById('wVenueAddress');
+  const list = document.getElementById('venueSuggestions');
+  const confirm = document.getElementById('venueConfirm');
+  const addrText = document.getElementById('venueAddrText');
+  const addrMeta = document.getElementById('venueAddrMeta');
+
+  if (nameInput) nameInput.value = name;
+  if (list) list.style.display = 'none';
+
+  try {
+    const resp = await fetch(`/api/places/detail?place_id=${encodeURIComponent(placeId)}`);
+    const data = await resp.json();
+    if (data.result) {
+      const addr = data.result.formatted_address || '';
+      if (addrInput) addrInput.value = addr;
+      if (addrText) addrText.textContent = addr;
+      if (addrMeta) addrMeta.textContent = 'Full address saved';
+      if (confirm) confirm.style.display = 'block';
+      gigWizardData.venue_name = name;
+      gigWizardData.venue_address = addr;
+    }
+  } catch (err) {
+    console.error('Venue detail error:', err);
+  }
 }
 
 function getRecentBands() {
