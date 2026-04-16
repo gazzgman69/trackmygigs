@@ -62,15 +62,15 @@
       <!-- Header -->
       <div class="app-header">
         <div class="header-left">
-          <div class="avatar" id="userAvatar">G</div>
+          <div class="avatar" id="userAvatar" onclick="openPanel('profile-panel')">G</div>
           <div>
-            <div class="greeting" id="greeting">Good evening, Gareth</div>
+            <div class="greeting" id="greeting">Loading...</div>
           </div>
         </div>
         <div class="header-right">
-          <button class="notification-bell" id="notificationBell">
+          <button class="notification-bell" id="notificationBell" onclick="showScreen('notifications')">
             🔔
-            <span class="notification-dot"></span>
+            <span class="notification-dot" id="notificationDot"></span>
           </button>
           <button class="theme-toggle" id="themeToggle">🌙</button>
         </div>

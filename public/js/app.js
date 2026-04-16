@@ -14,11 +14,30 @@ function initApp(user) {
   setupThemeToggle();
   setupNavigation();
   setupScreenHandlers();
+
+  // Update the fixed header with user info
+  updateAppHeader();
+
   renderHomeScreen();
   showScreen('home');
 
   // Pre-fetch gigs in background so they're instant when the user taps the tab
   prefetchGigs();
+}
+
+function updateAppHeader() {
+  const name = window._currentUser?.name || 'Guest';
+  const initial = (name || 'G')[0].toUpperCase();
+  const hour = new Date().getHours();
+  let greeting = 'Good morning';
+  if (hour >= 12 && hour < 18) greeting = 'Good afternoon';
+  if (hour >= 18) greeting = 'Good evening';
+
+  const avatarEl = document.getElementById('userAvatar');
+  if (avatarEl) avatarEl.textContent = initial;
+
+  const greetingEl = document.getElementById('greeting');
+  if (greetingEl) greetingEl.textContent = `${greeting}, ${name}`;
 }
 
 async function prefetchGigs() {
@@ -127,26 +146,12 @@ async function renderHomeScreen() {
     if (!res.ok) throw new Error('Failed to fetch stats');
     const stats = await res.json();
 
-    const userInitial = (window._currentUser?.name || window._currentUser?.email || 'G')[0].toUpperCase();
+    // Update notification dot in the fixed header
+    const notifDot = document.getElementById('notificationDot');
+    if (notifDot) notifDot.style.display = stats.unread_notifications > 0 ? 'block' : 'none';
 
-    // Determine greeting
-    const hour = new Date().getHours();
-    let greeting = 'Good morning';
-    if (hour >= 12 && hour < 18) greeting = 'Good afternoon';
-    if (hour >= 18) greeting = 'Good evening';
-
-    // Build HTML
-    let html = `
-      <div style="display:flex;align-items:center;padding:10px 20px 2px;gap:12px;">
-        <div onclick="openPanel('profile-panel')" style="width:38px;height:38px;border-radius:19px;background:var(--accent-dim);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--accent);cursor:pointer;flex-shrink:0;">${userInitial}</div>
-        <div style="flex:1;">
-          <div style="font-size:13px;color:var(--text-2);">${greeting}</div>
-          <div style="font-size:20px;font-weight:700;color:var(--text);">${escapeHtml(window._currentUser?.name || 'Guest')}</div>
-        </div>
-        <div onclick="openPanel('notifications-panel')" style="width:36px;height:36px;border-radius:18px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;position:relative;flex-shrink:0;">🔔
-          ${stats.unread_notifications > 0 ? `<div style="position:absolute;top:3px;right:3px;width:8px;height:8px;background:var(--danger);border-radius:4px;border:2px solid var(--bg);"></div>` : ''}
-        </div>
-      </div>`;
+    // Build HTML (header is handled by the fixed app-header, no duplicate here)
+    let html = '';
 
     // Offer alert banner
     if (stats.offer_count > 0) {
