@@ -128,6 +128,8 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invoice_format VARCHAR(20) DEFAULT 'plain'`);
     // Colour theme preference (amber, blue, green, purple, red)
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS colour_theme VARCHAR(20) DEFAULT 'amber'`);
+    // display_name: user's real name (separate from "name" which is often used for act/band)
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(255)`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);

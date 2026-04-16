@@ -219,7 +219,7 @@ router.get('/user/profile', async (req, res) => {
 
 router.patch('/user/profile', async (req, res) => {
   try {
-    const { name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url,
+    const { name, display_name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url,
             bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme } = req.body;
 
     // instruments comes as a comma-separated string from the client but the
@@ -231,7 +231,9 @@ router.patch('/user/profile', async (req, res) => {
     }
 
     const result = await db.query(
-      `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), instruments = COALESCE($3::text[], instruments),
+      `UPDATE users SET name = COALESCE($1, name),
+       display_name = COALESCE($14, display_name),
+       phone = COALESCE($2, phone), instruments = COALESCE($3::text[], instruments),
        home_postcode = COALESCE($4, home_postcode), avatar_url = COALESCE($5, avatar_url),
        google_review_url = COALESCE($6, google_review_url), facebook_review_url = COALESCE($7, facebook_review_url),
        bank_details = COALESCE($9, bank_details), invoice_prefix = COALESCE($10, invoice_prefix),
@@ -239,7 +241,7 @@ router.patch('/user/profile', async (req, res) => {
        colour_theme = COALESCE($13, colour_theme)
        WHERE id = $8 RETURNING *`,
       [name, phone, instrumentsArr, home_postcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
-       bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme]
+       bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name]
     );
 
     res.json(result.rows[0]);

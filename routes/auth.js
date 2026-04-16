@@ -53,20 +53,35 @@ async function findOrCreateUser(email, name, avatarUrl, googleId) {
   let userResult = await db.query('SELECT * FROM users WHERE email = $1', [email]);
 
   if (userResult.rows.length === 0) {
+    // On creation, seed display_name with the provided name (typically the user's real name from Google)
+    // name stays in sync for back-compat, but users can later edit name to be an act/band name
     const createResult = await db.query(
-      'INSERT INTO users (email, name, avatar_url, google_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [email, name || '', avatarUrl || null, googleId || null]
+      'INSERT INTO users (email, name, display_name, avatar_url, google_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [email, name || '', name || null, avatarUrl || null, googleId || null]
     );
     return createResult.rows[0];
   }
 
   const user = userResult.rows[0];
 
-  // Update Google ID and avatar if signing in with Google for the first time
+  // Update Google ID and avatar if signing in with Google for the first time.
+  // Always populate display_name from Google if missing (their real name).
+  // Only overwrite "name" if it's still empty (preserves user-chosen act/band names).
   if (googleId && !user.google_id) {
     await db.query(
-      'UPDATE users SET google_id = $1, avatar_url = COALESCE($2, avatar_url), name = CASE WHEN name = \'\' THEN $3 ELSE name END WHERE id = $4',
+      `UPDATE users SET
+        google_id = $1,
+        avatar_url = COALESCE($2, avatar_url),
+        name = CASE WHEN name = '' THEN $3 ELSE name END,
+        display_name = COALESCE(display_name, $3)
+       WHERE id = $4`,
       [googleId, avatarUrl, name, user.id]
+    );
+  } else if (name && !user.display_name) {
+    // Backfill display_name for existing users signing in with Google
+    await db.query(
+      'UPDATE users SET display_name = $1 WHERE id = $2 AND display_name IS NULL',
+      [name, user.id]
     );
   }
 
@@ -327,7 +342,7 @@ router.get('/me', async (req, res) => {
 
     const session = result.rows[0];
     const userResult = await db.query(
-      'SELECT id, name, email, avatar_url, home_postcode, instruments, google_access_token FROM users WHERE id = $1',
+      'SELECT id, name, display_name, email, avatar_url, home_postcode, instruments, google_access_token FROM users WHERE id = $1',
       [session.user_id]
     );
 
@@ -340,6 +355,7 @@ router.get('/me', async (req, res) => {
       user: {
         id: user.id,
         name: user.name,
+        display_name: user.display_name,
         email: user.email,
         avatar_url: user.avatar_url,
         home_postcode: user.home_postcode,

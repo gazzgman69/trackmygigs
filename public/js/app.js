@@ -133,7 +133,8 @@ function updateOffersBadge(count) {
 }
 
 function updateAppHeader() {
-  const name = window._currentUser?.name || 'Guest';
+  // Prefer display_name (the user's real name) over name (which may be an act/band name)
+  const name = window._currentUser?.display_name || window._currentUser?.name || 'Guest';
   const initial = (name || 'G')[0].toUpperCase();
   const hour = new Date().getHours();
   let greeting = 'Good morning';
@@ -1556,7 +1557,9 @@ async function renderProfileScreen() {
 }
 
 function buildProfileHTML(content, profile) {
-    const userInitial = (profile.name || profile.email || 'G')[0].toUpperCase();
+    // Prefer display_name (real name) over name (which may be an act/band name)
+    const displayName = profile.display_name || profile.name || '';
+    const userInitial = (displayName || profile.email || 'G')[0].toUpperCase();
 
     let html = `
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
@@ -1567,7 +1570,8 @@ function buildProfileHTML(content, profile) {
       <div style="padding:0 16px 12px;">
         <div style="text-align:center;">
           <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:32px;background:var(--accent-dim);border:3px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:var(--accent);">${userInitial}</div>
-          <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(profile.name || 'Guest')}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(displayName || 'Guest')}</div>
+          ${profile.name && profile.name !== displayName ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:4px;">Act: ${escapeHtml(profile.name)}</div>` : ''}
           <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(Array.isArray(profile.instruments) ? profile.instruments.join(', ') : (profile.instruments || 'No instruments listed'))}</div>
           <div style="font-size:12px;color:var(--text-2);">📍 ${escapeHtml(profile.location || profile.home_postcode || 'Location not set')}</div>
           ${profile.home_postcode ? `<div style="font-size:10px;color:var(--text-3);margin-top:2px;">Home: ${escapeHtml(profile.home_postcode)}</div>` : '<div style="font-size:10px;color:var(--warning);margin-top:2px;">Add home postcode for mileage tracking</div>'}
@@ -3125,8 +3129,14 @@ function editProfile() {
     </div>
     <div style="padding:0 16px;">
       <div style="margin-bottom:14px;">
-        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Name</label>
-        <input id="editName" type="text" value="${escapeHtml(profile.name || '')}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Your name</label>
+        <input id="editDisplayName" type="text" value="${escapeHtml(profile.display_name || '')}" placeholder="e.g. Gareth Gwyn" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Shown in the app header and on your profile</div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Act / band name</label>
+        <input id="editName" type="text" value="${escapeHtml(profile.name || '')}" placeholder="e.g. The Vents" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Used on invoices and public pages. Leave blank if you only perform under your own name.</div>
       </div>
       <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Phone</label>
@@ -3186,6 +3196,7 @@ function editProfile() {
 
 async function saveProfile() {
   const name = document.getElementById('editName')?.value?.trim();
+  const displayName = document.getElementById('editDisplayName')?.value?.trim();
   const phone = document.getElementById('editPhone')?.value?.trim();
   const instrumentsRaw = document.getElementById('editInstruments')?.value?.trim();
   const homePostcode = document.getElementById('editHomePostcode')?.value?.trim().toUpperCase();
@@ -3203,7 +3214,8 @@ async function saveProfile() {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: name || null,
+        name: name !== undefined ? name : null,
+        display_name: displayName || null,
         phone: phone || null,
         instruments: instruments || null,
         home_postcode: homePostcode || null,
