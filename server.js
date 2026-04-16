@@ -11,7 +11,7 @@ const calendarRoutes = require('./routes/calendar');
 const chatRoutes = require('./routes/chat');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 // Unique ID per server start — busts browser/proxy cache for JS and CSS
 const BUILD_ID = Date.now();
