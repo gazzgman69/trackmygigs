@@ -9,12 +9,17 @@ window._cachedStats = null;
 window._cachedStatsTime = 0;
 window._cachedProfile = null;
 window._cachedProfileTime = 0;
+window._cachedInvoices = null;
+window._cachedInvoicesTime = 0;
+window._cachedOffers = null;
+window._cachedOffersTime = 0;
 window._calViewMode = 'month';
 window._calDate = new Date();
 
-// Cache TTL in ms (30 seconds for stats, 60 seconds for profile)
+// Cache TTL in ms
 const STATS_CACHE_TTL = 30000;
 const PROFILE_CACHE_TTL = 60000;
+const DATA_CACHE_TTL = 30000;
 
 function initApp(user) {
   currentUser = user;
@@ -26,11 +31,53 @@ function initApp(user) {
   // Update the fixed header with user info
   updateAppHeader();
 
-  // showScreen('home') already calls renderHomeScreen - no need to call it twice
+  // Show home immediately (uses skeleton while data loads)
   showScreen('home');
 
-  // Pre-fetch gigs in background so they're instant when the user taps the tab
-  prefetchGigs();
+  // Prefetch ALL screen data in parallel so every tab opens instantly
+  prefetchAllData();
+}
+
+async function prefetchAllData() {
+  // Fire all fetches at once - don't await sequentially
+  const [statsRes, gigsRes, invoicesRes, offersRes, profileRes] = await Promise.allSettled([
+    fetch('/api/stats'),
+    fetch('/api/gigs'),
+    fetch('/api/invoices'),
+    fetch('/api/offers'),
+    fetch('/api/user/profile'),
+  ]);
+
+  const now = Date.now();
+
+  if (statsRes.status === 'fulfilled' && statsRes.value.ok) {
+    window._cachedStats = await statsRes.value.json();
+    window._cachedStatsTime = now;
+    // Re-render home if it's showing, now with real data
+    if (currentScreen === 'home') {
+      const content = document.getElementById('homeScreen');
+      buildHomeHTML(content, window._cachedStats);
+    }
+  }
+
+  if (gigsRes.status === 'fulfilled' && gigsRes.value.ok) {
+    window._cachedGigs = await gigsRes.value.json();
+  }
+
+  if (invoicesRes.status === 'fulfilled' && invoicesRes.value.ok) {
+    window._cachedInvoices = await invoicesRes.value.json();
+    window._cachedInvoicesTime = now;
+  }
+
+  if (offersRes.status === 'fulfilled' && offersRes.value.ok) {
+    window._cachedOffers = await offersRes.value.json();
+    window._cachedOffersTime = now;
+  }
+
+  if (profileRes.status === 'fulfilled' && profileRes.value.ok) {
+    window._cachedProfile = await profileRes.value.json();
+    window._cachedProfileTime = now;
+  }
 }
 
 function updateAppHeader() {
@@ -48,15 +95,21 @@ function updateAppHeader() {
   if (greetingEl) greetingEl.textContent = `${greeting}, ${name}`;
 }
 
-async function prefetchGigs() {
-  try {
-    const res = await fetch('/api/gigs');
-    if (res.ok) {
-      window._cachedGigs = await res.json();
-    }
-  } catch {
-    // silently ignore - will fetch when tab is tapped
-  }
+// prefetchGigs replaced by prefetchAllData above
+
+function buildSkeletonHTML() {
+  const pulse = 'background:var(--card);border-radius:var(--rs);animation:pulse 1.5s ease-in-out infinite;';
+  return `
+    <style>@keyframes pulse{0%,100%{opacity:.4}50%{opacity:.8}}</style>
+    <div style="margin:8px 16px;${pulse}height:90px;border-radius:var(--r);"></div>
+    <div style="display:flex;gap:6px;margin:8px 16px;">
+      <div style="flex:1;${pulse}height:64px;"></div>
+      <div style="flex:1;${pulse}height:64px;"></div>
+    </div>
+    <div style="display:flex;gap:6px;margin:8px 16px;">
+      <div style="flex:1;${pulse}height:60px;"></div>
+      <div style="flex:1;${pulse}height:60px;"></div>
+    </div>`;
 }
 
 function setupThemeToggle() {
@@ -165,8 +218,8 @@ async function renderHomeScreen() {
     return;
   }
 
-  // Show loading state only on first load
-  content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading home screen...</div>';
+  // Show skeleton loading state - looks like real content, feels fast
+  content.innerHTML = buildSkeletonHTML();
 
   try {
     const stats = await fetchStatsWithCache(false);
@@ -835,14 +888,35 @@ function goCalendarToday() {
 
 async function renderInvoicesScreen() {
   const content = document.getElementById('invoicesScreen');
+
+  // Use cached invoices for instant render
+  const now = Date.now();
+  if (window._cachedInvoices && (now - window._cachedInvoicesTime) < DATA_CACHE_TTL) {
+    buildInvoicesHTML(content, window._cachedInvoices);
+    return;
+  }
+
   content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading invoices...</div>';
 
   try {
     const res = await fetch('/api/invoices');
     if (!res.ok) throw new Error('Failed to fetch invoices');
     const invoices = await res.json();
+    window._cachedInvoices = invoices;
+    window._cachedInvoicesTime = Date.now();
+    buildInvoicesHTML(content, invoices);
+  } catch (err) {
+    console.error('Invoices screen error:', err);
+    content.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:8px;">&#9888;&#65039;</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load invoices</div>
+        <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
+      </div>`;
+  }
+}
 
-    // Calculate totals
+function buildInvoicesHTML(content, invoices) {
     const paid = invoices.filter(i => i.status === 'paid').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
     const overdue = invoices.filter(i => i.status === 'overdue').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
     const draft = invoices.filter(i => i.status === 'draft').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
@@ -852,7 +926,7 @@ async function renderInvoicesScreen() {
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
         <div>
           <div style="font-size:24px;font-weight:700;color:var(--text);">Invoices</div>
-          <div style="font-size:13px;color:var(--text-2);margin-top:2px;">${invoices.length} total · £${(paid + overdue + draft + sent).toFixed(0)} invoiced</div>
+          <div style="font-size:13px;color:var(--text-2);margin-top:2px;">${invoices.length} total &middot; &pound;${(paid + overdue + draft + sent).toFixed(0)} invoiced</div>
         </div>
         <button onclick="openPanel('create-invoice')" style="background:var(--accent);color:#000;border:none;border-radius:24px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;">+ New</button>
       </div>
@@ -875,10 +949,10 @@ async function renderInvoicesScreen() {
         <div class="inv-dot" style="background:${dotColor};"></div>
         <div style="flex:1;min-width:0;">
           <div class="inv-t">${escapeHtml(inv.band_name || 'Unnamed')}</div>
-          <div class="inv-m">INV-${String(inv.id).padStart(3, '0')} · ${formatDateShort(inv.created_at || inv.date)}</div>
+          <div class="inv-m">INV-${String(inv.id).padStart(3, '0')} &middot; ${formatDateShort(inv.created_at || inv.date)}</div>
         </div>
         <div style="text-align:right;flex-shrink:0;">
-          <div class="inv-a" style="color:var(--success);">£${parseFloat(inv.amount).toFixed(0)}</div>
+          <div class="inv-a" style="color:var(--success);">&pound;${parseFloat(inv.amount).toFixed(0)}</div>
           <div style="font-size:10px;color:var(--text-2);margin-top:2px;text-transform:capitalize;">${inv.status}</div>
         </div>
       </div>`;
@@ -890,15 +964,6 @@ async function renderInvoicesScreen() {
       </div>`;
 
     content.innerHTML = html;
-  } catch (err) {
-    console.error('Invoices screen error:', err);
-    content.innerHTML = `
-      <div style="padding:40px 20px;text-align:center;">
-        <div style="font-size:32px;margin-bottom:8px;">⚠️</div>
-        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load invoices</div>
-        <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
-      </div>`;
-  }
 }
 
 function filterInvoicesByStatus(status) {
@@ -980,61 +1045,23 @@ async function openInvoiceDetail(invoiceId) {
 
 async function renderOffersScreen() {
   const content = document.getElementById('offersScreen');
-  content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading offers...</div>';
+  const now = Date.now();
+
+  // Cache-first: render instantly if cached data is fresh
+  if (window._cachedOffers && (now - window._cachedOffersTime) < DATA_CACHE_TTL) {
+    buildOffersHTML(content, window._cachedOffers);
+    return;
+  }
+
+  content.innerHTML = buildSkeletonHTML();
 
   try {
     const res = await fetch('/api/offers');
     if (!res.ok) throw new Error('Failed to fetch offers');
     const offers = await res.json();
-
-    const accepted = offers.filter(o => o.status === 'accepted').length;
-
-    let html = `
-      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <button onclick="showScreen('home')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
-          <div>
-            <div style="font-size:24px;font-weight:700;color:var(--text);">Offers</div>
-          </div>
-        </div>
-        <span style="background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:24px;height:24px;border-radius:12px;display:flex;align-items:center;justify-content:center;padding:0 6px;">${accepted}</span>
-      </div>
-      <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;">
-        <div class="tb ac" onclick="switchOffersTab('incoming')">Incoming</div>
-        <div class="tb" onclick="switchOffersTab('my-deps')">My deps</div>
-      </div>
-      <div id="offersListContent" style="padding:0 16px;">`;
-
-    offers.forEach(offer => {
-      const deadline = new Date(offer.deadline);
-      const now = new Date();
-      const hoursLeft = Math.ceil((deadline - now) / (1000 * 60 * 60));
-      const daysLeft = Math.ceil(hoursLeft / 24);
-
-      html += `
-      <div class="oc">
-        <div class="o-act">${offer.source || 'OFFER'}</div>
-        <div class="o-title">${escapeHtml(offer.band_name)}</div>
-        <div class="o-det">📍 ${escapeHtml(offer.venue_name)}</div>
-        <div class="o-det">📅 ${formatDateLong(offer.gig_date)}</div>
-        <div class="o-det">💷 £${parseFloat(offer.fee).toFixed(0)}</div>
-        <div class="o-timer">
-          ⏳ Expires in ${daysLeft > 0 ? daysLeft + 'd' : hoursLeft + 'h'}
-        </div>
-        <div style="display:flex;gap:8px;margin-bottom:10px;">
-          <button onclick="acceptOffer('${offer.id}')" class="o-acc">Accept</button>
-          <button onclick="declineOffer('${offer.id}')" class="o-dec">Decline</button>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 1)">1h</button>
-          <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 24)">1d</button>
-          <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 168)">1w</button>
-        </div>
-      </div>`;
-    });
-
-    html += `</div>`;
-    content.innerHTML = html;
+    window._cachedOffers = offers;
+    window._cachedOffersTime = Date.now();
+    buildOffersHTML(content, offers);
   } catch (err) {
     console.error('Offers screen error:', err);
     content.innerHTML = `
@@ -1044,6 +1071,57 @@ async function renderOffersScreen() {
         <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
       </div>`;
   }
+}
+
+function buildOffersHTML(content, offers) {
+  const accepted = offers.filter(o => o.status === 'accepted').length;
+
+  let html = `
+    <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button onclick="showScreen('home')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <div>
+          <div style="font-size:24px;font-weight:700;color:var(--text);">Offers</div>
+        </div>
+      </div>
+      <span style="background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:24px;height:24px;border-radius:12px;display:flex;align-items:center;justify-content:center;padding:0 6px;">${accepted}</span>
+    </div>
+    <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;">
+      <div class="tb ac" onclick="switchOffersTab('incoming')">Incoming</div>
+      <div class="tb" onclick="switchOffersTab('my-deps')">My deps</div>
+    </div>
+    <div id="offersListContent" style="padding:0 16px;">`;
+
+  offers.forEach(offer => {
+    const deadline = new Date(offer.deadline);
+    const now = new Date();
+    const hoursLeft = Math.ceil((deadline - now) / (1000 * 60 * 60));
+    const daysLeft = Math.ceil(hoursLeft / 24);
+
+    html += `
+    <div class="oc">
+      <div class="o-act">${offer.source || 'OFFER'}</div>
+      <div class="o-title">${escapeHtml(offer.band_name)}</div>
+      <div class="o-det">📍 ${escapeHtml(offer.venue_name)}</div>
+      <div class="o-det">📅 ${formatDateLong(offer.gig_date)}</div>
+      <div class="o-det">💷 £${parseFloat(offer.fee).toFixed(0)}</div>
+      <div class="o-timer">
+        ⏳ Expires in ${daysLeft > 0 ? daysLeft + 'd' : hoursLeft + 'h'}
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <button onclick="acceptOffer('${offer.id}')" class="o-acc">Accept</button>
+        <button onclick="declineOffer('${offer.id}')" class="o-dec">Decline</button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 1)">1h</button>
+        <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 24)">1d</button>
+        <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 168)">1w</button>
+      </div>
+    </div>`;
+  });
+
+  html += `</div>`;
+  content.innerHTML = html;
 }
 
 function switchOffersTab(tab) {
