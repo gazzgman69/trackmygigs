@@ -2276,12 +2276,11 @@ async function openGigDetail(gigId) {
   const doneCount = fields.filter((f) => f.ok).length;
   const allDone = doneCount === fields.length;
 
+  // Wire up the Edit button in the panel header
+  const editBtn = document.getElementById('gigDetailEditBtn');
+  if (editBtn) editBtn.onclick = () => openEditGig(gig.id);
+
   body.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--border);">
-      <button onclick="closePanel('panel-gig-detail')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
-      <div style="font-size:14px;font-weight:700;color:var(--text);">Gig Details</div>
-      <button onclick="openEditGig('${gig.id}')" style="background:none;border:none;color:var(--accent);font-size:14px;cursor:pointer;font-weight:600;">Edit</button>
-    </div>
     <div style="background:var(--surface);padding:16px 20px 20px;">
       <div style="font-size:13px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
       <div style="font-size:22px;font-weight:700;color:var(--text);margin-bottom:16px;">${escapeHtml(gig.venue_name || 'No venue')}</div>

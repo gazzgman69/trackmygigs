@@ -228,7 +228,7 @@ router.patch('/user/profile', async (req, res) => {
     }
 
     const result = await db.query(
-      `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), instruments = COALESCE($3, instruments),
+      `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), instruments = COALESCE($3::text[], instruments),
        home_postcode = COALESCE($4, home_postcode), avatar_url = COALESCE($5, avatar_url),
        google_review_url = COALESCE($6, google_review_url), facebook_review_url = COALESCE($7, facebook_review_url),
        bank_details = COALESCE($9, bank_details), invoice_prefix = COALESCE($10, invoice_prefix),
