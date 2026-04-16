@@ -1290,7 +1290,7 @@ function buildProfileHTML(content, profile) {
         <div style="text-align:center;">
           <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:32px;background:var(--accent-dim);border:3px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:var(--accent);">${userInitial}</div>
           <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(profile.name || 'Guest')}</div>
-          <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(profile.instruments || 'No instruments listed')}</div>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(Array.isArray(profile.instruments) ? profile.instruments.join(', ') : (profile.instruments || 'No instruments listed'))}</div>
           <div style="font-size:12px;color:var(--text-2);">📍 ${escapeHtml(profile.location || profile.home_postcode || 'Location not set')}</div>
           ${profile.home_postcode ? `<div style="font-size:10px;color:var(--text-3);margin-top:2px;">Home: ${escapeHtml(profile.home_postcode)}</div>` : '<div style="font-size:10px;color:var(--warning);margin-top:2px;">Add home postcode for mileage tracking</div>'}
           ${profile.available_to_dep ? `<span style="display:inline-block;background:var(--success-dim);color:var(--success);padding:4px 10px;border-radius:12px;font-size:10px;font-weight:600;margin-top:6px;">Available to dep</span>` : ''}
@@ -4041,7 +4041,7 @@ function onGigSelected() {
 
   // Auto-generate description: "Performing [instrument] at [venue], [date]"
   const profile = window._cachedProfile || window._currentUser || {};
-  const instrumentsStr = profile.instruments || '';
+  const instrumentsStr = Array.isArray(profile.instruments) ? profile.instruments.join(', ') : (profile.instruments || '');
   const firstInstrument = instrumentsStr.split(',')[0]?.trim() || 'guitar';
   const d = new Date(gig.date);
   const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });

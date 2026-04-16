@@ -219,6 +219,14 @@ router.patch('/user/profile', async (req, res) => {
     const { name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url,
             bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme } = req.body;
 
+    // instruments comes as a comma-separated string from the client but the
+    // column is TEXT[].  Convert it to a proper PG array (or null to keep
+    // the existing value via COALESCE).
+    let instrumentsArr = null;
+    if (instruments) {
+      instrumentsArr = instruments.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
     const result = await db.query(
       `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), instruments = COALESCE($3, instruments),
        home_postcode = COALESCE($4, home_postcode), avatar_url = COALESCE($5, avatar_url),
@@ -227,7 +235,7 @@ router.patch('/user/profile', async (req, res) => {
        invoice_next_number = COALESCE($11, invoice_next_number), invoice_format = COALESCE($12, invoice_format),
        colour_theme = COALESCE($13, colour_theme)
        WHERE id = $8 RETURNING *`,
-      [name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
+      [name, phone, instrumentsArr, home_postcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
        bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme]
     );
 
