@@ -2493,65 +2493,77 @@ async function openEditGig(gigId) {
     let html = `
       <div style="padding:0 16px 20px;">
         <div class="form-group">
-          <label class="fl">Band name</label>
-          <input type="text" class="fi" id="editBandName" value="${escapeHtml(gig.band_name || '')}" />
+          <div class="form-label">Band / client name</div>
+          <input type="text" class="form-input" id="editBandName" value="${escapeHtml(gig.band_name || '')}" placeholder="e.g. The Vents" />
         </div>
         <div class="form-group">
-          <label class="fl">Venue</label>
-          <input type="text" class="fi" id="editVenue" value="${escapeHtml(gig.venue_name || '')}" />
+          <div class="form-label">Venue</div>
+          <input type="text" class="form-input" id="editVenue" value="${escapeHtml(gig.venue_name || '')}" placeholder="e.g. The Grand Hotel" />
         </div>
         <div class="form-group">
-          <label class="fl">Date</label>
-          <input type="date" class="fi" id="editDate" value="${gig.date || ''}" />
+          <div class="form-label">Venue address</div>
+          <input type="text" class="form-input" id="editVenueAddress" value="${escapeHtml(gig.venue_address || '')}" placeholder="Full address" />
         </div>
-        <div style="display:flex;gap:10px;">
-          <div class="form-group" style="flex:1;">
-            <label class="fl">Start time</label>
-            <input type="time" class="fi" id="editStartTime" value="${gig.start_time || ''}" />
+        <div class="form-group">
+          <div class="form-label">Date</div>
+          <input type="date" class="form-input" id="editDate" value="${gig.date || ''}" />
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="form-group">
+            <div class="form-label">Start time</div>
+            <input type="time" class="form-input" id="editStartTime" value="${gig.start_time || ''}" />
           </div>
-          <div class="form-group" style="flex:1;">
-            <label class="fl">End time</label>
-            <input type="time" class="fi" id="editEndTime" value="${gig.end_time || ''}" />
+          <div class="form-group">
+            <div class="form-label">End time</div>
+            <input type="time" class="form-input" id="editEndTime" value="${gig.end_time || ''}" />
           </div>
         </div>
         <div class="form-group">
-          <label class="fl">Fee (£)</label>
-          <input type="number" class="fi" id="editFee" value="${gig.fee || ''}" />
+          <div class="form-label">Load-in time</div>
+          <input type="time" class="form-input" id="editLoadInTime" value="${gig.load_in_time || ''}" />
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="form-group">
+            <div class="form-label">Fee (\u00a3)</div>
+            <input type="number" class="form-input" id="editFee" value="${gig.fee || ''}" placeholder="0.00" step="0.01" />
+          </div>
+          <div class="form-group">
+            <div class="form-label">Status</div>
+            <select class="form-input" id="editStatus">
+              <option value="confirmed" ${gig.status === 'confirmed' ? 'selected' : ''}>Confirmed</option>
+              <option value="tentative" ${gig.status === 'tentative' ? 'selected' : ''}>Pencilled</option>
+              <option value="enquiry" ${gig.status === 'enquiry' ? 'selected' : ''}>Enquiry</option>
+              <option value="cancelled" ${gig.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="form-group">
+            <div class="form-label">Gig type</div>
+            <select class="form-input" id="editGigType">
+              <option value="" ${!getGigType(gig) ? 'selected' : ''}>None</option>
+              <option value="Wedding" ${getGigType(gig) === 'Wedding' ? 'selected' : ''}>Wedding</option>
+              <option value="Corporate" ${getGigType(gig) === 'Corporate' ? 'selected' : ''}>Corporate</option>
+              <option value="Pub / Club" ${getGigType(gig) === 'Pub / Club' ? 'selected' : ''}>Pub / Club</option>
+              <option value="Private party" ${getGigType(gig) === 'Private party' ? 'selected' : ''}>Private party</option>
+              <option value="Festival" ${getGigType(gig) === 'Festival' ? 'selected' : ''}>Festival</option>
+              <option value="Hotel" ${getGigType(gig) === 'Hotel' ? 'selected' : ''}>Hotel</option>
+              <option value="Theatre" ${getGigType(gig) === 'Theatre' ? 'selected' : ''}>Theatre</option>
+              <option value="Church" ${getGigType(gig) === 'Church' ? 'selected' : ''}>Church</option>
+              <option value="Restaurant" ${getGigType(gig) === 'Restaurant' ? 'selected' : ''}>Restaurant</option>
+              <option value="Other" ${getGigType(gig) === 'Other' ? 'selected' : ''}>Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <div class="form-label">Dress code</div>
+            <input type="text" class="form-input" id="editDressCode" value="${escapeHtml(gig.dress_code || '')}" placeholder="e.g. Smart casual" />
+          </div>
         </div>
         <div class="form-group">
-          <label class="fl">Status</label>
-          <select class="fi" id="editStatus">
-            <option value="confirmed" ${gig.status === 'confirmed' ? 'selected' : ''}>Confirmed</option>
-            <option value="tentative" ${gig.status === 'tentative' ? 'selected' : ''}>Pencilled</option>
-            <option value="enquiry" ${gig.status === 'enquiry' ? 'selected' : ''}>Enquiry</option>
-            <option value="cancelled" ${gig.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
-          </select>
+          <div class="form-label">Notes</div>
+          <textarea class="form-input" id="editNotes" style="resize:vertical;min-height:80px;">${escapeHtml(getGigNotes(gig))}</textarea>
         </div>
-        <div class="form-group">
-          <label class="fl">Gig type</label>
-          <select class="fi" id="editGigType">
-            <option value="" ${!getGigType(gig) ? 'selected' : ''}>None</option>
-            <option value="Wedding" ${getGigType(gig) === 'Wedding' ? 'selected' : ''}>Wedding</option>
-            <option value="Corporate" ${getGigType(gig) === 'Corporate' ? 'selected' : ''}>Corporate</option>
-            <option value="Pub / Club" ${getGigType(gig) === 'Pub / Club' ? 'selected' : ''}>Pub / Club</option>
-            <option value="Private party" ${getGigType(gig) === 'Private party' ? 'selected' : ''}>Private party</option>
-            <option value="Festival" ${getGigType(gig) === 'Festival' ? 'selected' : ''}>Festival</option>
-            <option value="Hotel" ${getGigType(gig) === 'Hotel' ? 'selected' : ''}>Hotel</option>
-            <option value="Theatre" ${getGigType(gig) === 'Theatre' ? 'selected' : ''}>Theatre</option>
-            <option value="Church" ${getGigType(gig) === 'Church' ? 'selected' : ''}>Church</option>
-            <option value="Restaurant" ${getGigType(gig) === 'Restaurant' ? 'selected' : ''}>Restaurant</option>
-            <option value="Other" ${getGigType(gig) === 'Other' ? 'selected' : ''}>Other</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="fl">Dress code</label>
-          <input type="text" class="fi" id="editDressCode" value="${escapeHtml(gig.dress_code || '')}" />
-        </div>
-        <div class="form-group">
-          <label class="fl">Notes</label>
-          <textarea class="fi" id="editNotes" style="resize:vertical;height:80px;">${escapeHtml(getGigNotes(gig))}</textarea>
-        </div>
-        <button onclick="saveEditGig('${gig.id}')" class="pill">Save Changes</button>
+        <button onclick="saveEditGig('${gig.id}')" class="btn-pill" style="width:100%;margin-top:8px;">Save Changes</button>
       </div>`;
 
     body.innerHTML = html;
@@ -2563,17 +2575,21 @@ async function openEditGig(gigId) {
 
 async function saveEditGig(gigId) {
   try {
+    const dateVal = document.getElementById('editDate').value;
+    const feeVal = document.getElementById('editFee').value;
     const data = {
-      band_name: document.getElementById('editBandName').value,
-      venue_name: document.getElementById('editVenue').value,
-      date: document.getElementById('editDate').value,
-      start_time: document.getElementById('editStartTime').value,
-      end_time: document.getElementById('editEndTime').value,
-      fee: parseFloat(document.getElementById('editFee').value) || 0,
+      band_name: document.getElementById('editBandName').value || null,
+      venue_name: document.getElementById('editVenue').value || null,
+      venue_address: document.getElementById('editVenueAddress').value || null,
+      date: dateVal || null,
+      start_time: document.getElementById('editStartTime').value || null,
+      end_time: document.getElementById('editEndTime').value || null,
+      load_in_time: document.getElementById('editLoadInTime').value || null,
+      fee: feeVal ? parseFloat(feeVal) : null,
       status: document.getElementById('editStatus').value,
       gig_type: document.getElementById('editGigType').value || null,
-      dress_code: document.getElementById('editDressCode').value,
-      notes: document.getElementById('editNotes').value,
+      dress_code: document.getElementById('editDressCode').value || null,
+      notes: document.getElementById('editNotes').value || null,
     };
 
     const res = await fetch(`/api/gigs/${gigId}`, {
