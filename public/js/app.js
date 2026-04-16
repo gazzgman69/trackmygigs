@@ -2490,13 +2490,22 @@ async function markGigDetailsComplete(gigId) {
 async function deleteGig(gigId) {
   if (!confirm('Are you sure you want to delete this gig?')) return;
   try {
-    await fetch(`/api/gigs/${gigId}`, { method: 'DELETE' });
-    // Refresh gigs cache and list
+    const res = await fetch(`/api/gigs/${gigId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error('Delete gig failed:', res.status, err);
+      showToast('Failed to delete gig');
+      return;
+    }
+    // Clear caches so every screen re-fetches fresh data
     window._cachedGigs = (window._cachedGigs || []).filter((g) => g.id !== gigId);
     window._cachedStats = null;
-    renderGigsList(window._cachedGigs);
+    // Re-render the active screen so homepage/gigs/calendar all update
+    showScreen(currentScreen || 'gigs');
+    showToast('Gig deleted');
   } catch (e) {
     console.error('Delete gig error:', e);
+    showToast('Failed to delete gig');
   }
 }
 
