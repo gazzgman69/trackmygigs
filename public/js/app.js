@@ -1169,7 +1169,8 @@ function buildProfileHTML(content, profile) {
           <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:32px;background:var(--accent-dim);border:3px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:var(--accent);">${userInitial}</div>
           <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(profile.name || 'Guest')}</div>
           <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(profile.instruments || 'No instruments listed')}</div>
-          <div style="font-size:12px;color:var(--text-2);">📍 ${escapeHtml(profile.location || 'Location not set')}</div>
+          <div style="font-size:12px;color:var(--text-2);">📍 ${escapeHtml(profile.location || profile.home_postcode || 'Location not set')}</div>
+          ${profile.home_postcode ? `<div style="font-size:10px;color:var(--text-3);margin-top:2px;">Home: ${escapeHtml(profile.home_postcode)}</div>` : '<div style="font-size:10px;color:var(--warning);margin-top:2px;">Add home postcode for mileage tracking</div>'}
           ${profile.available_to_dep ? `<span style="display:inline-block;background:var(--success-dim);color:var(--success);padding:4px 10px;border-radius:12px;font-size:10px;font-weight:600;margin-top:6px;">Available to dep</span>` : ''}
         </div>
       </div>
@@ -2413,8 +2414,81 @@ async function saveEditGig(gigId) {
 // openPanel / closePanel defined earlier (line ~1969) — removed duplicate here
 
 function editProfile() {
-  // TODO: implement edit profile
-  alert('Edit profile coming soon');
+  const profile = window._cachedProfile || window._currentUser || {};
+  const body = document.getElementById('editProfileBody');
+  if (!body) return;
+
+  const instrumentsStr = Array.isArray(profile.instruments) ? profile.instruments.join(', ') : (profile.instruments || '');
+
+  body.innerHTML = `
+    <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+      <button onclick="closePanel('panel-edit-profile')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">&#8249;</button>
+      <div style="font-size:16px;font-weight:700;color:var(--text);">Edit Profile</div>
+      <button onclick="saveProfile()" style="background:none;border:none;color:var(--accent);font-size:14px;cursor:pointer;font-weight:600;">Save</button>
+    </div>
+    <div style="padding:0 16px;">
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Name</label>
+        <input id="editName" type="text" value="${escapeHtml(profile.name || '')}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Phone</label>
+        <input id="editPhone" type="tel" value="${escapeHtml(profile.phone || '')}" placeholder="07xxx xxxxxx" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Instruments</label>
+        <input id="editInstruments" type="text" value="${escapeHtml(instrumentsStr)}" placeholder="Guitar, Vocals, Keys" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Comma separated</div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Home Postcode</label>
+        <input id="editHomePostcode" type="text" value="${escapeHtml(profile.home_postcode || '')}" placeholder="e.g. CF10 1AA" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;" />
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Used to calculate mileage to gig venues</div>
+      </div>
+    </div>`;
+
+  openPanel('panel-edit-profile');
+}
+
+async function saveProfile() {
+  const name = document.getElementById('editName')?.value?.trim();
+  const phone = document.getElementById('editPhone')?.value?.trim();
+  const instrumentsRaw = document.getElementById('editInstruments')?.value?.trim();
+  const homePostcode = document.getElementById('editHomePostcode')?.value?.trim().toUpperCase();
+
+  const instruments = instrumentsRaw ? instrumentsRaw.split(',').map(s => s.trim()).filter(Boolean).join(', ') : '';
+
+  try {
+    const res = await fetch('/api/user/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name || null,
+        phone: phone || null,
+        instruments: instruments || null,
+        home_postcode: homePostcode || null
+      })
+    });
+
+    if (!res.ok) throw new Error('Save failed');
+
+    const updated = await res.json();
+    window._cachedProfile = updated;
+    window._cachedProfileTime = Date.now();
+    window._currentUser = { ...window._currentUser, ...updated };
+
+    // Refresh profile panel behind the edit panel
+    const profileBody = document.getElementById('profilePanelBody');
+    if (profileBody) buildProfileHTML(profileBody, updated);
+
+    // Update header avatar/name if changed
+    updateAppHeader();
+
+    closePanel('panel-edit-profile');
+  } catch (err) {
+    console.error('Save profile error:', err);
+    alert('Failed to save profile. Please try again.');
+  }
 }
 
 function shareProfile() {
