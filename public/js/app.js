@@ -2540,7 +2540,7 @@ async function openEditGig(gigId) {
         </div>
         <div class="form-group">
           <div class="form-label">Date</div>
-          <input type="date" class="form-input" id="editDate" value="${gig.date || ''}" />
+          <input type="date" class="form-input" id="editDate" value="${(gig.date || '').substring(0, 10)}" />
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
           <div class="form-group">
