@@ -83,7 +83,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-4);
+  padding: var(--spacing-3);
   background-color: var(--surface);
   border-bottom: 1px solid var(--border);
   z-index: 10;
@@ -152,7 +152,7 @@ body {
 .app-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-4);
+  padding: var(--spacing-3) var(--spacing-2);
   -webkit-overflow-scrolling: touch;
 }
 
