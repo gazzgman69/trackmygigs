@@ -421,6 +421,9 @@ function buildHomeHTML(content, stats) {
 
 // Current gig view state
 let gigViewMode = 'week';
+let gigWeekOffset = 0;  // 0 = current week, +1 = next week, -1 = prev week
+let gigMonthOffset = 0; // 0 = current month
+let gigYearOffset = 0;  // 0 = current tax year
 
 async function renderGigsScreen() {
   const content = document.getElementById('gigsScreen');
@@ -509,8 +512,18 @@ async function checkCalendarNudges() {
 
 function switchGigTab(el, mode) {
   gigViewMode = mode;
+  gigWeekOffset = 0;
+  gigMonthOffset = 0;
+  gigYearOffset = 0;
   document.querySelectorAll('.gig-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
+  if (window._cachedGigs) renderGigsList(window._cachedGigs);
+}
+
+function navigateGigView(direction) {
+  if (gigViewMode === 'week') gigWeekOffset += direction;
+  else if (gigViewMode === 'month') gigMonthOffset += direction;
+  else if (gigViewMode === 'year') gigYearOffset += direction;
   if (window._cachedGigs) renderGigsList(window._cachedGigs);
 }
 
@@ -533,87 +546,325 @@ function renderGigsList(gigs) {
     );
   }
 
-  // Apply view mode filter
   const now = new Date();
+  let headerHtml = '';
+  let viewFiltered = filtered;
+
   if (gigViewMode === 'week') {
-    // Show current week and next 7 days + past gigs this week
+    // Calculate week range with offset
     const weekStart = new Date(now);
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); // Monday
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1 + (gigWeekOffset * 7));
     weekStart.setHours(0, 0, 0, 0);
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekEnd.getDate() + 6);
     weekEnd.setHours(23, 59, 59, 999);
-    // Show all upcoming if within-week is empty
+
     const weekGigs = filtered.filter(g => {
       const d = new Date(g.date + 'T12:00:00');
       return d >= weekStart && d <= weekEnd;
     });
-    if (weekGigs.length > 0) {
-      filtered = weekGigs;
+    viewFiltered = weekGigs;
+
+    // Week summary stats
+    const weekTotal = weekGigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
+    const startDay = weekStart.getDate();
+    const endDay = weekEnd.getDate();
+    const monthLabel = weekStart.toLocaleDateString('en-GB', { month: 'long' });
+    const endMonthLabel = weekEnd.toLocaleDateString('en-GB', { month: 'long' });
+    const rangeLabel = monthLabel === endMonthLabel
+      ? `${startDay} - ${endDay} ${monthLabel}`
+      : `${startDay} ${monthLabel} - ${endDay} ${endMonthLabel}`;
+
+    const isThisWeek = gigWeekOffset === 0;
+    const weekLabel = isThisWeek ? 'This week' : (gigWeekOffset === 1 ? 'Next week' : (gigWeekOffset === -1 ? 'Last week' : `${Math.abs(gigWeekOffset)} weeks ${gigWeekOffset > 0 ? 'ahead' : 'ago'}`));
+
+    // Build day strip
+    const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    let dayStripHtml = '';
+    for (let i = 0; i < 7; i++) {
+      const dayDate = new Date(weekStart);
+      dayDate.setDate(dayDate.getDate() + i);
+      const dayNum = dayDate.getDate();
+      const isToday = dayDate.toDateString() === now.toDateString();
+      const hasGig = weekGigs.some(g => {
+        const d = new Date(g.date + 'T12:00:00');
+        return d.toDateString() === dayDate.toDateString();
+      });
+
+      if (isToday) {
+        dayStripHtml += `<div style="flex:1;text-align:center;padding:6px 0;border-radius:8px;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);">
+          <div style="font-size:10px;color:var(--accent);">${dayNames[i]}</div>
+          <div style="font-size:14px;font-weight:700;color:var(--accent);">${dayNum}</div>
+          ${hasGig ? '<div style="width:4px;height:4px;border-radius:2px;background:var(--accent);margin:3px auto 0;"></div>' : ''}
+        </div>`;
+      } else if (hasGig) {
+        dayStripHtml += `<div style="flex:1;text-align:center;padding:6px 0;border-radius:8px;">
+          <div style="font-size:10px;color:var(--text-3);">${dayNames[i]}</div>
+          <div style="font-size:14px;font-weight:600;color:var(--success);">${dayNum}</div>
+          <div style="width:4px;height:4px;border-radius:2px;background:var(--success);margin:3px auto 0;"></div>
+        </div>`;
+      } else {
+        dayStripHtml += `<div style="flex:1;text-align:center;padding:6px 0;border-radius:8px;">
+          <div style="font-size:10px;color:var(--text-3);">${dayNames[i]}</div>
+          <div style="font-size:14px;color:var(--text-2);">${dayNum}</div>
+        </div>`;
+      }
     }
-    // If no gigs this week, show all upcoming
+
+    headerHtml = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-top:8px;">
+        <button onclick="navigateGigView(-1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&lsaquo;</button>
+        <div style="text-align:center;">
+          <div style="font-size:15px;font-weight:700;color:var(--text);">${rangeLabel}</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${weekLabel} &middot; ${weekGigs.length} gig${weekGigs.length !== 1 ? 's' : ''}${weekTotal > 0 ? ' &middot; &pound;' + weekTotal.toFixed(0) : ''}</div>
+        </div>
+        <button onclick="navigateGigView(1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&rsaquo;</button>
+      </div>
+      <div style="display:flex;gap:2px;margin-bottom:12px;">${dayStripHtml}</div>
+    `;
+
   } else if (gigViewMode === 'month') {
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    const targetDate = new Date(now.getFullYear(), now.getMonth() + gigMonthOffset, 1);
+    const monthStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+    const monthEnd = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
+    const monthName = targetDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+
     const monthGigs = filtered.filter(g => {
       const d = new Date(g.date + 'T12:00:00');
       return d >= monthStart && d <= monthEnd;
     });
-    if (monthGigs.length > 0) filtered = monthGigs;
-  }
-  // 'year' shows all
+    viewFiltered = monthGigs;
 
-  if (filtered.length === 0) {
-    listContent.innerHTML = `
-      <div style="text-align:center;padding:40px;">
-        <div style="font-size:32px;margin-bottom:8px;">🎸</div>
-        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No gigs ${searchQuery ? 'matching "' + escapeHtml(searchQuery) + '"' : 'yet'}</div>
-        <div style="font-size:13px;color:var(--text-2);">Tap + New to log your first gig</div>
+    const monthTotal = monthGigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
+    const unpaidTotal = monthGigs.filter(g => g.status !== 'paid' && g.invoice_status !== 'paid').reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
+
+    // Build mini calendar grid
+    const firstDayOfMonth = monthStart.getDay() || 7; // 1=Mon ... 7=Sun
+    const daysInMonth = monthEnd.getDate();
+    const gigDateSet = {};
+    monthGigs.forEach(g => {
+      const d = new Date(g.date + 'T12:00:00');
+      const day = d.getDate();
+      if (!gigDateSet[day]) gigDateSet[day] = [];
+      gigDateSet[day].push(g);
+    });
+
+    let calGridHtml = '<div style="display:grid;grid-template-columns:repeat(7,1fr);text-align:center;gap:2px;">';
+    // Day headers
+    ['Mo','Tu','We','Th','Fr','Sa','Su'].forEach(d => {
+      calGridHtml += `<div style="font-size:9px;color:var(--text-3);padding:4px;">${d}</div>`;
+    });
+    // Empty cells before first day
+    for (let i = 1; i < firstDayOfMonth; i++) {
+      calGridHtml += '<div style="padding:4px;"></div>';
+    }
+    // Day cells
+    for (let day = 1; day <= daysInMonth; day++) {
+      const isToday = day === now.getDate() && targetDate.getMonth() === now.getMonth() && targetDate.getFullYear() === now.getFullYear();
+      const dayGigs = gigDateSet[day];
+      if (dayGigs) {
+        // Determine color based on payment status
+        const allPaid = dayGigs.every(g => g.status === 'paid' || g.invoice_status === 'paid');
+        const isUpcoming = dayGigs.some(g => new Date(g.date + 'T12:00:00') >= now);
+        let bgColor, textColor;
+        if (allPaid) {
+          bgColor = 'var(--success-dim)'; textColor = 'var(--success)';
+        } else if (isUpcoming) {
+          bgColor = 'var(--accent-dim)'; textColor = 'var(--accent)';
+        } else {
+          bgColor = 'var(--warning-dim)'; textColor = 'var(--warning)';
+        }
+        calGridHtml += `<div style="padding:4px;font-size:11px;border-radius:6px;background:${bgColor};color:${textColor};font-weight:700;cursor:pointer;">${day}</div>`;
+      } else if (isToday) {
+        calGridHtml += `<div style="padding:4px;font-size:11px;border-radius:6px;border:1px solid var(--accent);color:var(--accent);font-weight:600;">${day}</div>`;
+      } else {
+        calGridHtml += `<div style="padding:4px;font-size:11px;color:var(--text-2);">${day}</div>`;
+      }
+    }
+    calGridHtml += '</div>';
+    // Legend
+    calGridHtml += `<div style="display:flex;gap:10px;justify-content:center;margin-top:8px;padding-top:6px;border-top:1px solid var(--border);">
+      <div style="display:flex;align-items:center;gap:4px;"><div style="width:6px;height:6px;border-radius:3px;background:var(--success);"></div><span style="font-size:9px;color:var(--text-3);">Paid</span></div>
+      <div style="display:flex;align-items:center;gap:4px;"><div style="width:6px;height:6px;border-radius:3px;background:var(--warning);"></div><span style="font-size:9px;color:var(--text-3);">Unpaid</span></div>
+      <div style="display:flex;align-items:center;gap:4px;"><div style="width:6px;height:6px;border-radius:3px;background:var(--accent);"></div><span style="font-size:9px;color:var(--text-3);">Upcoming</span></div>
+    </div>`;
+
+    headerHtml = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-top:8px;">
+        <button onclick="navigateGigView(-1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&lsaquo;</button>
+        <div style="text-align:center;">
+          <div style="font-size:15px;font-weight:700;color:var(--text);">${monthName}</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${monthGigs.length} gig${monthGigs.length !== 1 ? 's' : ''} &middot; <span style="color:var(--accent);font-weight:600;">&pound;${monthTotal.toFixed(0)}</span>${unpaidTotal > 0 ? ' &middot; <span style="color:var(--warning);">&pound;' + unpaidTotal.toFixed(0) + ' unpaid</span>' : ''}</div>
+        </div>
+        <button onclick="navigateGigView(1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&rsaquo;</button>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px;margin-bottom:12px;">
+        ${calGridHtml}
+      </div>
+    `;
+
+  } else if (gigViewMode === 'year') {
+    // Tax year runs April to March
+    const currentTaxYearStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const taxYearStart = currentTaxYearStart + gigYearOffset;
+    const taxYearEnd = taxYearStart + 1;
+    const startDate = new Date(taxYearStart, 3, 1); // 1 April
+    const endDate = new Date(taxYearEnd, 2, 31, 23, 59, 59); // 31 March
+
+    const yearGigs = filtered.filter(g => {
+      const d = new Date(g.date + 'T12:00:00');
+      return d >= startDate && d <= endDate;
+    });
+    viewFiltered = yearGigs;
+
+    const yearTotal = yearGigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
+    const paidTotal = yearGigs.filter(g => g.status === 'paid' || g.invoice_status === 'paid').reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
+    const dueTotal = yearTotal - paidTotal;
+
+    // Monthly bar chart data (Apr-Mar)
+    const monthNames = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar'];
+    const monthTotals = new Array(12).fill(0);
+    yearGigs.forEach(g => {
+      const d = new Date(g.date + 'T12:00:00');
+      const m = d.getMonth(); // 0-11
+      // Map to tax year index: Apr(3)=0, May(4)=1, ... Mar(2)=11
+      const idx = m >= 3 ? m - 3 : m + 9;
+      monthTotals[idx] += (parseFloat(g.fee) || 0);
+    });
+    const maxMonthTotal = Math.max(...monthTotals, 1);
+
+    let barChartHtml = '<div style="display:flex;align-items:flex-end;gap:4px;height:60px;margin-bottom:6px;">';
+    monthTotals.forEach((total, i) => {
+      const height = Math.max(4, Math.round((total / maxMonthTotal) * 60));
+      const isFuture = (() => {
+        const barMonth = i < 9 ? i + 3 : i - 9;
+        const barYear = i < 9 ? taxYearStart : taxYearEnd;
+        return new Date(barYear, barMonth, 1) > now;
+      })();
+      const color = isFuture ? 'var(--accent);opacity:.3' : 'var(--accent)';
+      barChartHtml += `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;">
+        <div style="width:100%;background:${color};border-radius:3px 3px 0 0;height:${height}px;"></div>
+      </div>`;
+    });
+    barChartHtml += '</div>';
+    barChartHtml += '<div style="display:flex;gap:4px;">';
+    monthNames.forEach(m => {
+      barChartHtml += `<div style="flex:1;text-align:center;font-size:8px;color:var(--text-3);">${m}</div>`;
+    });
+    barChartHtml += '</div>';
+
+    // Paid/due progress bar
+    const paidPct = yearTotal > 0 ? Math.round((paidTotal / yearTotal) * 100) : 0;
+    const paidBarHtml = yearTotal > 0 ? `
+      <div style="display:flex;gap:1px;border-radius:8px;overflow:hidden;margin-bottom:12px;">
+        <div style="background:var(--success-dim);color:var(--success);flex:${paidPct || 1};padding:6px;font-size:11px;font-weight:600;text-align:center;">&pound;${paidTotal.toFixed(0)} paid</div>
+        ${dueTotal > 0 ? `<div style="background:var(--warning-dim);color:var(--warning);flex:${100 - paidPct || 1};padding:6px;font-size:11px;font-weight:600;text-align:center;">&pound;${dueTotal.toFixed(0)} due</div>` : ''}
+      </div>` : '';
+
+    headerHtml = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-top:8px;">
+        <button onclick="navigateGigView(-1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&lsaquo;</button>
+        <div style="text-align:center;">
+          <div style="font-size:15px;font-weight:700;color:var(--text);">Tax Year ${taxYearStart}-${String(taxYearEnd).slice(2)}</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${yearGigs.length} gig${yearGigs.length !== 1 ? 's' : ''} &middot; <span style="color:var(--accent);font-weight:600;">&pound;${yearTotal.toFixed(0)}</span></div>
+        </div>
+        <button onclick="navigateGigView(1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&rsaquo;</button>
+      </div>
+      ${paidBarHtml}
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px;">
+        ${barChartHtml}
+      </div>
+      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">All gigs &middot; most recent first</div>
+    `;
+  }
+
+  // Sort filtered gigs
+  if (gigViewMode === 'year') {
+    viewFiltered.sort((a, b) => (b.date || '').localeCompare(a.date || '')); // newest first for yearly
+  } else {
+    viewFiltered.sort((a, b) => (a.date || '').localeCompare(b.date || '')); // oldest first for week/month
+  }
+
+  // Render empty state
+  if (viewFiltered.length === 0 && !searchQuery) {
+    const emptyMsg = gigViewMode === 'week' ? 'No gigs this week' : (gigViewMode === 'month' ? 'No gigs this month' : 'No gigs this tax year');
+    listContent.innerHTML = headerHtml + `
+      <div style="text-align:center;padding:30px;">
+        <div style="font-size:28px;margin-bottom:8px;">🎸</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">${emptyMsg}</div>
+        <div style="font-size:13px;color:var(--text-2);">Tap + New to add a gig</div>
       </div>
     `;
     return;
   }
 
-  // Sort by date ascending (upcoming first)
-  filtered.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  if (viewFiltered.length === 0 && searchQuery) {
+    listContent.innerHTML = headerHtml + `
+      <div style="text-align:center;padding:30px;">
+        <div style="font-size:28px;margin-bottom:8px;">🔍</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No gigs matching "${escapeHtml(searchQuery)}"</div>
+      </div>
+    `;
+    return;
+  }
 
-  listContent.innerHTML = filtered
-    .map((gig) => {
-      const dateObj = gig.date ? new Date(gig.date.substring(0, 10) + 'T12:00:00') : null;
-      const dayNum = dateObj ? dateObj.getDate() : '?';
-      const monthAbbr = dateObj ? dateObj.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase() : '';
+  // Separate regular gigs from depped-out gigs
+  const regularGigs = viewFiltered.filter(g => g.status !== 'depped_out');
+  const deppedGigs = viewFiltered.filter(g => g.status === 'depped_out');
 
-      // Mini badges
-      let badges = '';
-      if (!gig.fee || parseFloat(gig.fee) === 0) {
-        badges += '<span style="font-size:9px;background:var(--info-dim);color:var(--info);border-radius:6px;padding:2px 6px;font-weight:600;">Draft inv</span>';
-      }
-      if (gig.dress_code) {
-        badges += '<span style="font-size:9px;background:var(--success-dim);color:var(--success);border-radius:6px;padding:2px 6px;font-weight:600;">Pack ready</span>';
-      }
+  const gigCardsHtml = regularGigs.map(gig => renderGigCard(gig)).join('');
+  const deppedHtml = deppedGigs.length > 0
+    ? `<div style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;margin:12px 0 6px;">Depped out</div>` + deppedGigs.map(gig => `<div style="opacity:.55;">${renderGigCard(gig)}</div>`).join('')
+    : '';
 
-      return `
-      <div class="gi" onclick="openGigDetail('${gig.id}')">
-        <div style="display:flex;align-items:flex-start;gap:14px;">
-          <div class="gdb">
-            <div class="gdd">${dayNum}</div>
-            <div class="gdm">${monthAbbr}</div>
-          </div>
-          <div style="flex:1;min-width:0;">
-            <div class="gt">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
-            <div class="gv">${escapeHtml(gig.venue_name || 'No venue')}${gig.start_time ? ' \u00B7 ' + formatTime(gig.start_time) + (gig.end_time ? '\u2013' + formatTime(gig.end_time) : '') : ''}</div>
-            ${gig.load_in_time ? `<div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">Load-in ${formatTime(gig.load_in_time)}</div>` : ''}
-            ${gig.mileage_miles ? `<div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">\uD83D\uDE97 ${Math.round(parseFloat(gig.mileage_miles))} miles from home</div>` : ''}
-            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
-              <span class="badge badge-${statusBadgeClass(gig.status)}" style="font-size:11px;">${statusLabel(gig.status)}</span>
-              ${gig.fee ? `<span class="gf">\u00A3${parseFloat(gig.fee).toFixed(0)}</span>` : ''}
-              ${badges ? `<div style="display:flex;gap:4px;margin-left:auto;">${badges}</div>` : ''}
-            </div>
-          </div>
+  listContent.innerHTML = headerHtml + gigCardsHtml + deppedHtml;
+}
+
+function renderGigCard(gig) {
+  const dateObj = gig.date ? new Date(gig.date.substring(0, 10) + 'T12:00:00') : null;
+  const dayNum = dateObj ? dateObj.getDate() : '?';
+  const monthAbbr = dateObj ? dateObj.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase() : '';
+
+  // Mini badges
+  let badges = '';
+  if (!gig.fee || parseFloat(gig.fee) === 0) {
+    badges += '<span style="font-size:9px;background:var(--info-dim);color:var(--info);border-radius:6px;padding:2px 6px;font-weight:600;">Draft inv</span>';
+  }
+  if (gig.dress_code) {
+    badges += '<span style="font-size:9px;background:var(--success-dim);color:var(--success);border-radius:6px;padding:2px 6px;font-weight:600;">Pack ready</span>';
+  }
+
+  // Payment badge for monthly/yearly views
+  let payBadge = '';
+  if (gigViewMode !== 'week') {
+    if (gig.status === 'paid' || gig.invoice_status === 'paid') {
+      payBadge = '<span class="badge badge-success" style="font-size:9px;">Paid</span>';
+    } else if (gig.invoice_status === 'sent' || gig.invoice_status === 'overdue') {
+      payBadge = '<span class="badge badge-warning" style="font-size:9px;">Unpaid</span>';
+    }
+  }
+
+  return `
+  <div class="gi" onclick="openGigDetail('${gig.id}')">
+    <div style="display:flex;align-items:flex-start;gap:14px;">
+      <div class="gdb">
+        <div class="gdd">${dayNum}</div>
+        <div class="gdm">${monthAbbr}</div>
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div class="gt">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
+        <div class="gv">${escapeHtml(gig.venue_name || 'No venue')}${gig.start_time ? ' \u00B7 ' + formatTime(gig.start_time) + (gig.end_time ? '\u2013' + formatTime(gig.end_time) : '') : ''}</div>
+        ${gig.load_in_time ? `<div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">Load-in ${formatTime(gig.load_in_time)}</div>` : ''}
+        ${gig.mileage_miles ? `<div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">\uD83D\uDE97 ${Math.round(parseFloat(gig.mileage_miles))} miles from home</div>` : ''}
+        <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+          <span class="badge badge-${statusBadgeClass(gig.status)}" style="font-size:11px;">${statusLabel(gig.status)}</span>
+          ${gig.fee ? `<span class="gf">\u00A3${parseFloat(gig.fee).toFixed(0)}</span>` : ''}
+          ${payBadge}
+          ${badges ? `<div style="display:flex;gap:4px;margin-left:auto;">${badges}</div>` : ''}
         </div>
-      </div>`;
-    })
-    .join('');
+      </div>
+    </div>
+  </div>`;
 }
 
 function statusBadgeClass(status) {
