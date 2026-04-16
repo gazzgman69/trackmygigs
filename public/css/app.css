@@ -66,12 +66,17 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* Use JS-calculated height that accounts for Safari toolbar.
+     Fallback chain: JS var -> dvh -> vh */
+  height: var(--app-height, 100dvh);
+  height: var(--app-height, 100vh);
   display: flex;
   flex-direction: column;
   max-width: 390px;
   margin: 0 auto;
   background-color: var(--bg);
+  /* Account for notch / status bar when viewport-fit=cover */
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 .app-header {

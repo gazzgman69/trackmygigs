@@ -1,6 +1,19 @@
 let currentUser = null;
 let currentScreen = 'home';
 
+// Fix iOS Safari viewport height: Safari's toolbar overlaps position:fixed elements
+// when viewport-fit=cover. Use visualViewport API to get actual visible height.
+function setAppHeight() {
+  var vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  document.documentElement.style.setProperty('--app-height', vh + 'px');
+}
+setAppHeight();
+window.addEventListener('resize', setAppHeight);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', setAppHeight);
+  window.visualViewport.addEventListener('scroll', setAppHeight);
+}
+
 // Run text scaling immediately so all screens (including auth) scale correctly
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => { if (typeof setupTextScaling === 'function') setupTextScaling(); });
@@ -134,17 +147,17 @@ function buildSkeletonHTML() {
 
 function setupTextScaling() {
   // Detect the user's preferred text size (iOS Dynamic Type / Android font scale).
-  // Create a hidden element with font: -apple-system-body which respects Dynamic Type,
-  // measure its computed font-size, and derive a scale factor from the default 16px.
+  // Uses -apple-system-body font which respects Dynamic Type on iOS Safari.
   try {
-    const probe = document.createElement('div');
-    probe.style.cssText = 'font:-apple-system-body;position:absolute;visibility:hidden;pointer-events:none;';
+    var probe = document.createElement('p');
+    probe.textContent = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+    probe.setAttribute('style', 'font: -apple-system-body !important; position: absolute !important; left: -9999px !important; top: -9999px !important; visibility: hidden !important; pointer-events: none !important;');
     document.body.appendChild(probe);
-    const preferredSize = parseFloat(getComputedStyle(probe).fontSize);
+    var preferredSize = parseFloat(window.getComputedStyle(probe).fontSize);
     document.body.removeChild(probe);
-    if (preferredSize && preferredSize !== 16) {
+    if (preferredSize && preferredSize > 0 && Math.abs(preferredSize - 16) > 0.5) {
       // Clamp between 0.8x and 1.4x to prevent layout breakage
-      const scale = Math.min(1.4, Math.max(0.8, preferredSize / 16));
+      var scale = Math.min(1.4, Math.max(0.8, preferredSize / 16));
       document.documentElement.style.setProperty('--text-scale', scale.toFixed(3));
     }
   } catch (e) { /* silent - will use default 1x */ }
