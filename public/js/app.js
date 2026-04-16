@@ -2385,17 +2385,52 @@ async function toggleChecklistItem(gigId, index) {
   await saveChecklist(gigId, items);
 }
 
-async function addChecklistItem(gigId) {
-  const text = prompt('Add checklist item:');
-  if (!text || !text.trim()) return;
-  const gig = (window._cachedGigs || []).find(g => g.id === gigId);
-  if (!gig) return;
-  const items = getGigChecklist(gig);
-  items.push({ text: text.trim(), done: false });
-  gig.checklist = items;
-  const container = document.getElementById('checklistItems');
-  if (container) container.innerHTML = buildChecklistHTML(gig);
-  await saveChecklist(gigId, items);
+function addChecklistItem(gigId) {
+  // Remove any existing modal
+  const existing = document.getElementById('checklistModal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'checklistModal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);padding:20px;';
+  modal.innerHTML = `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;width:100%;max-width:360px;padding:20px;">
+      <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:14px;">Add checklist item</div>
+      <input id="checklistModalInput" type="text" placeholder="e.g. Bring spare strings"
+        style="width:100%;box-sizing:border-box;padding:12px 14px;font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);outline:none;" />
+      <div style="display:flex;gap:10px;margin-top:16px;">
+        <button id="checklistModalCancel" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text-2);font-size:14px;font-weight:600;cursor:pointer;">Cancel</button>
+        <button id="checklistModalAdd" style="flex:1;padding:12px;border-radius:10px;border:none;background:var(--accent);color:#000;font-size:14px;font-weight:600;cursor:pointer;">Add</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  const input = document.getElementById('checklistModalInput');
+  input.focus();
+
+  function closeModal() { modal.remove(); }
+
+  async function submitItem() {
+    const text = input.value.trim();
+    if (!text) { closeModal(); return; }
+    const gig = (window._cachedGigs || []).find(g => g.id === gigId);
+    if (!gig) { closeModal(); return; }
+    const items = getGigChecklist(gig);
+    items.push({ text, done: false });
+    gig.checklist = items;
+    const container = document.getElementById('checklistItems');
+    if (container) container.innerHTML = buildChecklistHTML(gig);
+    closeModal();
+    await saveChecklist(gigId, items);
+  }
+
+  document.getElementById('checklistModalCancel').onclick = closeModal;
+  document.getElementById('checklistModalAdd').onclick = submitItem;
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitItem();
+    if (e.key === 'Escape') closeModal();
+  });
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 }
 
 async function removeChecklistItem(gigId, index) {
