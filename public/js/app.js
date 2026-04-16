@@ -78,6 +78,11 @@ async function prefetchAllData() {
   if (profileRes.status === 'fulfilled' && profileRes.value.ok) {
     window._cachedProfile = await profileRes.value.json();
     window._cachedProfileTime = now;
+    // Sync colour theme from profile (server wins over localStorage)
+    if (window._cachedProfile.colour_theme) {
+      localStorage.setItem('colourTheme', window._cachedProfile.colour_theme);
+      applyColourTheme(window._cachedProfile.colour_theme);
+    }
   }
 
   if (blockedRes.status === 'fulfilled' && blockedRes.value.ok) {
@@ -129,6 +134,10 @@ function setupThemeToggle() {
     document.body.classList.remove('light-mode');
     themeToggle.textContent = '🌙';
   }
+
+  // Apply saved colour theme
+  const savedColour = localStorage.getItem('colourTheme') || 'amber';
+  applyColourTheme(savedColour);
 
   themeToggle.addEventListener('click', () => {
     document.body.classList.toggle('light-mode');
@@ -1315,9 +1324,16 @@ function buildProfileHTML(content, profile) {
           <span style="color:var(--text);font-size:14px;">Google Calendar</span>
           <input type="checkbox" style="cursor:pointer;" onchange="toggleCalendarSync()">
         </div>
-        <div style="padding:12px 14px;background:var(--card);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
-          <span style="color:var(--text);font-size:14px;">Theme</span>
-          <button onclick="toggleTheme()" style="background:none;border:none;cursor:pointer;font-size:16px;">🌙</button>
+        <div style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);">
+          <div style="font-size:14px;color:var(--text);margin-bottom:10px;">Colour theme</div>
+          <div style="display:flex;gap:12px;justify-content:center;">
+            <button onclick="setColourTheme('amber')" class="colour-swatch" data-theme="amber" style="width:36px;height:36px;border-radius:50%;border:3px solid transparent;cursor:pointer;background:#F0A500;" title="Amber"></button>
+            <button onclick="setColourTheme('blue')" class="colour-swatch" data-theme="blue" style="width:36px;height:36px;border-radius:50%;border:3px solid transparent;cursor:pointer;background:#58A6FF;" title="Blue"></button>
+            <button onclick="setColourTheme('green')" class="colour-swatch" data-theme="green" style="width:36px;height:36px;border-radius:50%;border:3px solid transparent;cursor:pointer;background:#3FB950;" title="Green"></button>
+            <button onclick="setColourTheme('purple')" class="colour-swatch" data-theme="purple" style="width:36px;height:36px;border-radius:50%;border:3px solid transparent;cursor:pointer;background:#BC8CFF;" title="Purple"></button>
+            <button onclick="setColourTheme('red')" class="colour-swatch" data-theme="red" style="width:36px;height:36px;border-radius:50%;border:3px solid transparent;cursor:pointer;background:#F85149;" title="Red"></button>
+            <button onclick="setColourTheme('teal')" class="colour-swatch" data-theme="teal" style="width:36px;height:36px;border-radius:50%;border:3px solid transparent;cursor:pointer;background:#39D2C0;" title="Teal"></button>
+          </div>
         </div>
       </div>
       <div style="padding:0 16px;margin-top:12px;">
@@ -1325,6 +1341,9 @@ function buildProfileHTML(content, profile) {
       </div>`;
 
     content.innerHTML = html;
+    // Highlight the active colour swatch
+    const activeColour = localStorage.getItem('colourTheme') || 'amber';
+    applyColourTheme(activeColour);
 }
 
 function toggleDocs() {
@@ -2907,6 +2926,36 @@ function toggleTheme() {
   document.body.classList.toggle('light-mode');
   const newTheme = document.body.classList.contains('light-mode') ? 'light' : 'dark';
   localStorage.setItem('theme', newTheme);
+}
+
+function applyColourTheme(colour) {
+  // Remove any existing theme-* class
+  document.body.classList.forEach(c => {
+    if (c.startsWith('theme-')) document.body.classList.remove(c);
+  });
+  // amber is the default (no class needed), others get theme-{colour}
+  if (colour && colour !== 'amber') {
+    document.body.classList.add('theme-' + colour);
+  }
+  // Highlight the active swatch
+  document.querySelectorAll('.colour-swatch').forEach(btn => {
+    const t = btn.getAttribute('data-theme');
+    btn.style.border = t === colour ? '3px solid var(--text)' : '3px solid transparent';
+  });
+}
+
+async function setColourTheme(colour) {
+  applyColourTheme(colour);
+  localStorage.setItem('colourTheme', colour);
+  // Persist to profile
+  try {
+    await fetch('/api/user/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ colour_theme: colour })
+    });
+    if (window._cachedProfile) window._cachedProfile.colour_theme = colour;
+  } catch (e) { /* silent */ }
 }
 
 function toggleCalendarSync() {

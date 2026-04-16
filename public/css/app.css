@@ -1089,6 +1089,51 @@ body.light-mode {
   --text-3: #B0B8C1;
 }
 
+/* ── Colour themes ─────────────────────────────────────── */
+/* Default is amber (#F0A500) set in :root */
+
+body.theme-blue {
+  --accent: #58A6FF;
+  --accent-dim: rgba(88, 166, 255, 0.15);
+  --warning: #58A6FF;
+  --warning-dim: rgba(88, 166, 255, 0.15);
+}
+
+body.theme-green {
+  --accent: #3FB950;
+  --accent-dim: rgba(63, 185, 80, 0.15);
+  --warning: #3FB950;
+  --warning-dim: rgba(63, 185, 80, 0.15);
+}
+
+body.theme-purple {
+  --accent: #BC8CFF;
+  --accent-dim: rgba(188, 140, 255, 0.15);
+  --warning: #BC8CFF;
+  --warning-dim: rgba(188, 140, 255, 0.15);
+}
+
+body.theme-red {
+  --accent: #F85149;
+  --accent-dim: rgba(248, 81, 73, 0.15);
+  --warning: #F85149;
+  --warning-dim: rgba(248, 81, 73, 0.15);
+}
+
+body.theme-teal {
+  --accent: #39D2C0;
+  --accent-dim: rgba(57, 210, 192, 0.15);
+  --warning: #39D2C0;
+  --warning-dim: rgba(57, 210, 192, 0.15);
+}
+
+.colour-swatch {
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.colour-swatch:active {
+  transform: scale(0.9);
+}
+
 /* Responsive */
 @media (min-width: 390px) {
   .app-container {

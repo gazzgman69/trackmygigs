@@ -217,17 +217,18 @@ router.get('/user/profile', async (req, res) => {
 router.patch('/user/profile', async (req, res) => {
   try {
     const { name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url,
-            bank_details, invoice_prefix, invoice_next_number, invoice_format } = req.body;
+            bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme } = req.body;
 
     const result = await db.query(
       `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), instruments = COALESCE($3, instruments),
        home_postcode = COALESCE($4, home_postcode), avatar_url = COALESCE($5, avatar_url),
        google_review_url = COALESCE($6, google_review_url), facebook_review_url = COALESCE($7, facebook_review_url),
        bank_details = COALESCE($9, bank_details), invoice_prefix = COALESCE($10, invoice_prefix),
-       invoice_next_number = COALESCE($11, invoice_next_number), invoice_format = COALESCE($12, invoice_format)
+       invoice_next_number = COALESCE($11, invoice_next_number), invoice_format = COALESCE($12, invoice_format),
+       colour_theme = COALESCE($13, colour_theme)
        WHERE id = $8 RETURNING *`,
       [name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
-       bank_details, invoice_prefix, invoice_next_number, invoice_format]
+       bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme]
     );
 
     res.json(result.rows[0]);
