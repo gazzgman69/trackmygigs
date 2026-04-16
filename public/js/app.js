@@ -78,6 +78,8 @@ async function prefetchAllData() {
   if (statsRes.status === 'fulfilled' && statsRes.value.ok) {
     window._cachedStats = await statsRes.value.json();
     window._cachedStatsTime = now;
+    // Update the offers badge from stats.offer_count
+    updateOffersBadge(window._cachedStats.offer_count);
     // Re-render home if it's showing, now with real data
     if (currentScreen === 'home') {
       const content = document.getElementById('homeScreen');
@@ -113,6 +115,21 @@ async function prefetchAllData() {
     window._cachedBlocked = await blockedRes.value.json();
     window._cachedBlockedTime = now;
   }
+}
+
+// Update the bottom nav Offers tab badge based on pending offer count.
+// Hides the badge entirely when there are zero pending offers, shows "9+" when above 9.
+function updateOffersBadge(count) {
+  const badge = document.getElementById('offersBadge');
+  if (!badge) return;
+  const n = parseInt(count || 0, 10);
+  if (!n || isNaN(n) || n <= 0) {
+    badge.style.display = 'none';
+    badge.textContent = '';
+    return;
+  }
+  badge.style.display = '';
+  badge.textContent = n > 9 ? '9+' : String(n);
 }
 
 function updateAppHeader() {
@@ -3797,19 +3814,70 @@ function chaseInvoicePayment(invoiceId) {
   alert('Chase payment coming soon');
 }
 
-function acceptOffer(offerId) {
-  // TODO: implement accept offer
-  alert('Accept coming soon');
+async function acceptOffer(offerId) {
+  try {
+    const res = await fetch(`/api/offers/${offerId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'accepted' }),
+    });
+    if (!res.ok) throw new Error('Failed to accept');
+    await refreshOffersAndBadge();
+  } catch (err) {
+    console.error('Accept offer error:', err);
+    alert('Could not accept that offer, please try again');
+  }
 }
 
-function declineOffer(offerId) {
-  // TODO: implement decline offer
-  alert('Decline coming soon');
+async function declineOffer(offerId) {
+  if (!confirm('Decline this offer?')) return;
+  try {
+    const res = await fetch(`/api/offers/${offerId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'declined' }),
+    });
+    if (!res.ok) throw new Error('Failed to decline');
+    await refreshOffersAndBadge();
+  } catch (err) {
+    console.error('Decline offer error:', err);
+    alert('Could not decline that offer, please try again');
+  }
 }
 
-function snoozeOffer(offerId, hours) {
-  // TODO: implement snooze
-  alert('Snooze coming soon');
+async function snoozeOffer(offerId, hours) {
+  // Snooze is a local-only UI defer; we stash a snooze_until in localStorage
+  // and hide the offer from the list until that time passes. Server is untouched.
+  const until = Date.now() + (hours * 3600 * 1000);
+  const key = 'snoozedOffers';
+  const store = JSON.parse(localStorage.getItem(key) || '{}');
+  store[offerId] = until;
+  localStorage.setItem(key, JSON.stringify(store));
+  await refreshOffersAndBadge();
+}
+
+// Refresh offers, stats, and re-render offers screen if it's open.
+async function refreshOffersAndBadge() {
+  try {
+    const [offersRes, statsRes] = await Promise.all([
+      fetch('/api/offers'),
+      fetch('/api/stats'),
+    ]);
+    if (offersRes.ok) {
+      window._cachedOffers = await offersRes.json();
+      window._cachedOffersTime = Date.now();
+    }
+    if (statsRes.ok) {
+      window._cachedStats = await statsRes.json();
+      window._cachedStatsTime = Date.now();
+      updateOffersBadge(window._cachedStats.offer_count);
+    }
+    if (currentScreen === 'offers') {
+      renderOffersScreen();
+    }
+  } catch (err) {
+    console.error('refreshOffersAndBadge error:', err);
+  }
 }
 
 // ── Calendar Nudge (Gig Detection) ──────────────────────────────────────────
