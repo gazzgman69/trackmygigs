@@ -40,12 +40,13 @@ function initApp(user) {
 
 async function prefetchAllData() {
   // Fire all fetches at once - don't await sequentially
-  const [statsRes, gigsRes, invoicesRes, offersRes, profileRes] = await Promise.allSettled([
+  const [statsRes, gigsRes, invoicesRes, offersRes, profileRes, blockedRes] = await Promise.allSettled([
     fetch('/api/stats'),
     fetch('/api/gigs'),
     fetch('/api/invoices'),
     fetch('/api/offers'),
     fetch('/api/user/profile'),
+    fetch('/api/blocked-dates'),
   ]);
 
   const now = Date.now();
@@ -77,6 +78,11 @@ async function prefetchAllData() {
   if (profileRes.status === 'fulfilled' && profileRes.value.ok) {
     window._cachedProfile = await profileRes.value.json();
     window._cachedProfileTime = now;
+  }
+
+  if (blockedRes.status === 'fulfilled' && blockedRes.value.ok) {
+    window._cachedBlocked = await blockedRes.value.json();
+    window._cachedBlockedTime = now;
   }
 }
 
@@ -582,57 +588,46 @@ function statusLabel(status) {
 
 async function renderCalendarScreen() {
   const content = document.getElementById('calendarScreen');
+  const now = Date.now();
 
-  // Use cached gigs if available for instant render
-  const cachedGigs = window._cachedGigs;
-  if (!cachedGigs) {
+  // Cache-first: render instantly if both caches are fresh
+  if (window._cachedGigs && window._cachedBlocked && (now - (window._cachedBlockedTime || 0)) < DATA_CACHE_TTL) {
+    buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+    return;
+  }
+
+  // Show skeleton only if we have no cached data at all
+  if (!window._cachedGigs && !window._cachedBlocked) {
     content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading calendar...</div>';
   }
 
   try {
-    // Use cached gigs or fetch fresh ones
-    let gigsData;
-    if (cachedGigs) {
-      gigsData = cachedGigs;
-    } else {
-      const gigsRes = await fetch('/api/gigs');
-      gigsData = gigsRes.ok ? await gigsRes.json() : [];
-      window._cachedGigs = gigsData;
+    // Fetch both in parallel, using cache where available
+    const fetches = [];
+    const needGigs = !window._cachedGigs;
+    const needBlocked = !window._cachedBlocked || (now - (window._cachedBlockedTime || 0)) >= DATA_CACHE_TTL;
+
+    if (needGigs) fetches.push(fetch('/api/gigs'));
+    if (needBlocked) fetches.push(fetch('/api/blocked-dates'));
+
+    const results = await Promise.allSettled(fetches);
+    let idx = 0;
+
+    if (needGigs) {
+      const gigsRes = results[idx++];
+      if (gigsRes.status === 'fulfilled' && gigsRes.value.ok) {
+        window._cachedGigs = await gigsRes.value.json();
+      }
+    }
+    if (needBlocked) {
+      const blockedRes = results[idx++];
+      if (blockedRes.status === 'fulfilled' && blockedRes.value.ok) {
+        window._cachedBlocked = await blockedRes.value.json();
+        window._cachedBlockedTime = Date.now();
+      }
     }
 
-    const blockedRes = await fetch('/api/blocked-dates');
-    const blockedData = blockedRes.ok ? await blockedRes.json() : [];
-
-    const view = window._calViewMode || 'month';
-    const currentDate = window._calDate || new Date();
-
-    let html = `
-      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <div style="font-size:24px;font-weight:700;color:var(--text);">Calendar</div>
-        <div style="display:flex;gap:8px;">
-          <div onclick="toggleCalendarMenu()" style="width:32px;height:32px;border-radius:16px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;">⋯</div>
-        </div>
-      </div>
-      <div id="calendarMenu" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px;z-index:10;">
-        <div onclick="handleCalendarAction('add-gig')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;">Add gig</div>
-        <div onclick="handleCalendarAction('add-event')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Add event</div>
-        <div onclick="handleCalendarAction('block-dates')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Block dates</div>
-      </div>
-      <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;gap:8px;">
-        <div class="tb ${view === 'day' ? 'ac' : ''}" onclick="switchCalendarView('day')">Day</div>
-        <div class="tb ${view === 'week' ? 'ac' : ''}" onclick="switchCalendarView('week')">Week</div>
-        <div class="tb ${view === 'month' ? 'ac' : ''}" onclick="switchCalendarView('month')">Month</div>
-      </div>`;
-
-    if (view === 'month') {
-      html += renderCalendarMonth(currentDate, gigsData, blockedData);
-    } else if (view === 'week') {
-      html += renderCalendarWeek(currentDate, gigsData, blockedData);
-    } else if (view === 'day') {
-      html += renderCalendarDay(currentDate, gigsData, blockedData);
-    }
-
-    content.innerHTML = html;
+    buildCalendarView(content, window._cachedGigs || [], window._cachedBlocked || []);
   } catch (err) {
     console.error('Calendar error:', err);
     content.innerHTML = `
@@ -642,6 +637,39 @@ async function renderCalendarScreen() {
         <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
       </div>`;
   }
+}
+
+function buildCalendarView(content, gigsData, blockedData) {
+  const view = window._calViewMode || 'month';
+  const currentDate = window._calDate || new Date();
+
+  let html = `
+    <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:24px;font-weight:700;color:var(--text);">Calendar</div>
+      <div style="display:flex;gap:8px;">
+        <div onclick="toggleCalendarMenu()" style="width:32px;height:32px;border-radius:16px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;">&#8943;</div>
+      </div>
+    </div>
+    <div id="calendarMenu" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px;z-index:10;">
+      <div onclick="handleCalendarAction('add-gig')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;">Add gig</div>
+      <div onclick="handleCalendarAction('add-event')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Add event</div>
+      <div onclick="handleCalendarAction('block-dates')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Block dates</div>
+    </div>
+    <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;gap:8px;">
+      <div class="tb ${view === 'day' ? 'ac' : ''}" onclick="switchCalendarView('day')">Day</div>
+      <div class="tb ${view === 'week' ? 'ac' : ''}" onclick="switchCalendarView('week')">Week</div>
+      <div class="tb ${view === 'month' ? 'ac' : ''}" onclick="switchCalendarView('month')">Month</div>
+    </div>`;
+
+  if (view === 'month') {
+    html += renderCalendarMonth(currentDate, gigsData, blockedData);
+  } else if (view === 'week') {
+    html += renderCalendarWeek(currentDate, gigsData, blockedData);
+  } else if (view === 'day') {
+    html += renderCalendarDay(currentDate, gigsData, blockedData);
+  }
+
+  content.innerHTML = html;
 }
 
 function toggleCalendarMenu() {
