@@ -208,25 +208,27 @@
         <div class="invoice-preview-row"><span>From</span><span id="invPreviewFrom">--</span></div>
         <div class="invoice-preview-row"><span>To</span><span id="invPreviewTo">--</span></div>
         <div class="invoice-preview-row"><span>Gig</span><span id="invPreviewGig">--</span></div>
-        <div class="invoice-preview-row" id="invPreviewVenueRow" style="display:none"><span>Venue</span><span id="invPreviewVenue">--</span></div>
+        <div class="invoice-preview-row" id="invPreviewVenueRow" style="display:none"><span>Venue</span><span id="invPreviewVenue" style="text-align:right;max-width:65%;word-wrap:break-word;">--</span></div>
         <div class="invoice-divider"></div>
         <div class="invoice-line-item">
-          <span id="invPreviewDesc">Performance fee</span>
-          <span id="invPreviewAmt" style="font-size:15px;font-weight:700;color:var(--text)">£0.00</span>
+          <span id="invPreviewDesc" style="flex:1;min-width:0;word-wrap:break-word;">Performance fee</span>
+          <span id="invPreviewAmt" style="font-size:15px;font-weight:700;color:var(--text);white-space:nowrap;">£0.00</span>
         </div>
         <div class="invoice-total-row">
           <span style="font-size:16px;font-weight:700;color:var(--text)">Total due</span>
           <span id="invPreviewTotal" style="font-size:24px;font-weight:800;color:var(--accent)">£0.00</span>
         </div>
+        <div class="invoice-preview-row" id="invPreviewBankRow" style="display:none;border-top:1px solid var(--border);margin-top:8px;padding-top:8px;"><span style="color:var(--text-2);font-size:11px;">Payment</span><span id="invPreviewBank" style="text-align:right;max-width:65%;font-size:11px;color:var(--text-2);white-space:pre-line;">--</span></div>
       </div>
+      <div class="form-group"><div class="form-label">Invoice number</div><input class="form-input" id="invInvoiceNumber" placeholder="INV-001"></div>
       <div class="form-group"><div class="form-label">Bill to</div><input class="form-input" id="invBillTo" placeholder="Band / client name"></div>
       <div class="form-group"><div class="form-label">Linked gig (optional)</div><select class="form-input" id="invLinkedGig"><option value="">Select a gig...</option></select></div>
-      <div class="form-group"><div class="form-label">Description</div><input class="form-input" id="invDesc" placeholder="Keys / Vocals performance" value="Performance fee"></div>
+      <div class="form-group"><div class="form-label">Description</div><input class="form-input" id="invDesc" placeholder="Performing guitar at The Grand, 15 Apr 2026" value=""></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div class="form-group"><div class="form-label">Amount (£)</div><input class="form-input" id="invAmount" type="number" placeholder="0.00"></div>
         <div class="form-group"><div class="form-label">Payment due</div><input class="form-input" id="invDueDate" type="date"></div>
       </div>
-      <div class="form-group"><div class="form-label">Notes / bank details</div><input class="form-input" id="invNotes" placeholder="Sort code, account number..."></div>
+      <div class="form-group"><div class="form-label">Bank / payment details</div><textarea class="form-input" id="invNotes" rows="3" placeholder="Sort code, account number..." style="resize:vertical;min-height:60px;"></textarea><div style="font-size:10px;color:var(--text-3);margin-top:3px;">Auto-filled from profile. Edit here for this invoice only.</div></div>
       <button class="btn-pill" id="sendInvoiceBtn">Send invoice</button>
       <button class="btn-pill-outline" style="margin-top:10px">Preview as PDF</button>
     </div>

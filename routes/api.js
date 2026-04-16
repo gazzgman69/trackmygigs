@@ -35,11 +35,13 @@ router.post('/gigs', async (req, res) => {
       dress_code,
       notes,
       gig_type,
+      parking_info,
+      day_of_contact,
     } = req.body;
 
     const result = await db.query(
-      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, day_of_contact)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         req.user.id,
@@ -56,6 +58,8 @@ router.post('/gigs', async (req, res) => {
         dress_code,
         notes,
         gig_type || null,
+        parking_info || null,
+        day_of_contact || null,
       ]
     );
 
@@ -82,7 +86,7 @@ router.get('/gigs/:id', async (req, res) => {
 
 router.patch('/gigs/:id', async (req, res) => {
   try {
-    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times } = req.body;
+    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, day_of_contact } = req.body;
     const result = await db.query(
       `UPDATE gigs SET
         band_name = COALESCE($1, band_name), venue_name = COALESCE($2, venue_name),
@@ -93,9 +97,11 @@ router.patch('/gigs/:id', async (req, res) => {
         dress_code = COALESCE($11, dress_code), notes = COALESCE($12, notes),
         checklist = COALESCE($15, checklist), gig_type = COALESCE($16, gig_type),
         details_complete = COALESCE($17, details_complete),
-        set_times = COALESCE($18, set_times)
+        set_times = COALESCE($18, set_times),
+        parking_info = COALESCE($19, parking_info),
+        day_of_contact = COALESCE($20, day_of_contact)
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, day_of_contact || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     res.json(result.rows[0]);
@@ -210,14 +216,18 @@ router.get('/user/profile', async (req, res) => {
 
 router.patch('/user/profile', async (req, res) => {
   try {
-    const { name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url } = req.body;
+    const { name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url,
+            bank_details, invoice_prefix, invoice_next_number } = req.body;
 
     const result = await db.query(
       `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), instruments = COALESCE($3, instruments),
        home_postcode = COALESCE($4, home_postcode), avatar_url = COALESCE($5, avatar_url),
-       google_review_url = COALESCE($6, google_review_url), facebook_review_url = COALESCE($7, facebook_review_url)
+       google_review_url = COALESCE($6, google_review_url), facebook_review_url = COALESCE($7, facebook_review_url),
+       bank_details = COALESCE($9, bank_details), invoice_prefix = COALESCE($10, invoice_prefix),
+       invoice_next_number = COALESCE($11, invoice_next_number)
        WHERE id = $8 RETURNING *`,
-      [name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url, req.user.id]
+      [name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
+       bank_details, invoice_prefix, invoice_next_number]
     );
 
     res.json(result.rows[0]);

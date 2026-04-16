@@ -2254,10 +2254,12 @@ async function openGigDetail(gigId) {
       <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">\uD83C\uDF92 Gig Pack</div>
       ${getGigType(gig) ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Type</span><span style="color:var(--text);font-weight:500;">${escapeHtml(getGigType(gig))}</span></div>` : ''}
       ${gig.dress_code ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Dress code</span><span style="color:var(--text);font-weight:500;">${escapeHtml(gig.dress_code)}</span></div>` : ''}
+      ${gig.parking_info ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Parking</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(gig.parking_info)}</span></div>` : ''}
       ${gig.load_in_time ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Load-in</span><span style="color:var(--text);font-weight:500;">${formatTime(gig.load_in_time)}</span></div>` : ''}
+      ${gig.day_of_contact ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Day-of contact</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(gig.day_of_contact)}</span></div>` : ''}
       ${buildSetTimesDisplay(gig)}
       ${getGigNotes(gig) ? `<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;"><span style="color:var(--text-2);">Notes</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(getGigNotes(gig))}</span></div>` : ''}
-      ${!gig.dress_code && !gig.load_in_time && !getGigNotes(gig) && !getGigType(gig) ? '<div style="font-size:13px;color:var(--text-3);padding:10px 0;">No gig pack info yet. Edit the gig to add details.</div>' : ''}
+      ${!gig.dress_code && !gig.load_in_time && !getGigNotes(gig) && !getGigType(gig) && !gig.parking_info && !gig.day_of_contact ? '<div style="font-size:13px;color:var(--text-3);padding:10px 0;">No gig pack info yet. Edit the gig to add details.</div>' : ''}
     </div>
     <!-- Lineup (Premium) -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
@@ -2640,6 +2642,14 @@ async function openEditGig(gigId) {
           </div>
         </div>
         <div class="form-group">
+          <div class="form-label">Parking</div>
+          <input type="text" class="form-input" id="editParkingInfo" value="${escapeHtml(gig.parking_info || '')}" placeholder="e.g. Q-Park, rear entrance" />
+        </div>
+        <div class="form-group">
+          <div class="form-label">Day-of contact</div>
+          <input type="text" class="form-input" id="editDayOfContact" value="${escapeHtml(gig.day_of_contact || '')}" placeholder="e.g. Sarah 07700 900123" />
+        </div>
+        <div class="form-group">
           <div class="form-label">Notes</div>
           <textarea class="form-input" id="editNotes" style="resize:vertical;min-height:80px;">${escapeHtml(getGigNotes(gig))}</textarea>
         </div>
@@ -2715,6 +2725,8 @@ async function saveEditGig(gigId) {
       status: document.getElementById('editStatus').value,
       gig_type: document.getElementById('editGigType').value || null,
       dress_code: document.getElementById('editDressCode').value || null,
+      parking_info: document.getElementById('editParkingInfo').value || null,
+      day_of_contact: document.getElementById('editDayOfContact').value || null,
       notes: document.getElementById('editNotes').value || null,
       set_times: collectSetTimes(),
     };
@@ -2783,6 +2795,23 @@ function editProfile() {
         <input id="editFacebookReview" type="url" value="${escapeHtml(profile.facebook_review_url || '')}" placeholder="https://facebook.com/..." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Paste your Facebook page review link</div>
       </div>
+      <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Invoice Settings</div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Bank / Payment Details</label>
+        <textarea id="editBankDetails" rows="3" placeholder="e.g. Sort code: 12-34-56&#10;Account: 12345678&#10;Gareth Gwyn" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;min-height:60px;font-family:inherit;">${escapeHtml(profile.bank_details || '')}</textarea>
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Auto-fills on every new invoice</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Invoice Prefix</label>
+          <input id="editInvoicePrefix" type="text" value="${escapeHtml(profile.invoice_prefix || 'INV')}" placeholder="INV" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;" />
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Next Number</label>
+          <input id="editInvoiceNextNum" type="number" min="1" value="${profile.invoice_next_number || 1}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+        </div>
+      </div>
+      <div style="font-size:10px;color:var(--text-3);margin-bottom:14px;">Next invoice will be numbered ${escapeHtml((profile.invoice_prefix || 'INV') + '-' + String(profile.invoice_next_number || 1).padStart(3, '0'))}</div>
     </div>`;
 
   openPanel('panel-edit-profile');
@@ -2795,6 +2824,9 @@ async function saveProfile() {
   const homePostcode = document.getElementById('editHomePostcode')?.value?.trim().toUpperCase();
   const googleReviewUrl = document.getElementById('editGoogleReview')?.value?.trim();
   const facebookReviewUrl = document.getElementById('editFacebookReview')?.value?.trim();
+  const bankDetails = document.getElementById('editBankDetails')?.value?.trim();
+  const invoicePrefix = document.getElementById('editInvoicePrefix')?.value?.trim().toUpperCase();
+  const invoiceNextNum = parseInt(document.getElementById('editInvoiceNextNum')?.value, 10) || null;
 
   const instruments = instrumentsRaw ? instrumentsRaw.split(',').map(s => s.trim()).filter(Boolean).join(', ') : '';
 
@@ -2809,6 +2841,9 @@ async function saveProfile() {
         home_postcode: homePostcode || null,
         google_review_url: googleReviewUrl || null,
         facebook_review_url: facebookReviewUrl || null,
+        bank_details: bankDetails || null,
+        invoice_prefix: invoicePrefix || null,
+        invoice_next_number: invoiceNextNum,
       })
     });
 
@@ -3808,7 +3843,7 @@ function initInvoicePanel() {
   populateGigDropdown();
 
   // Live preview updates
-  const fields = ['invBillTo', 'invDesc', 'invAmount'];
+  const fields = ['invBillTo', 'invDesc', 'invAmount', 'invNotes', 'invInvoiceNumber'];
   fields.forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', updateInvoicePreview);
@@ -3817,6 +3852,19 @@ function initInvoicePanel() {
   // Gig selector auto-fill
   const gigSelect = document.getElementById('invLinkedGig');
   if (gigSelect) gigSelect.addEventListener('change', onGigSelected);
+
+  // Auto-populate bank details and invoice number from profile
+  const profile = window._cachedProfile || window._currentUser || {};
+  if (profile.bank_details) {
+    const notesEl = document.getElementById('invNotes');
+    if (notesEl && !notesEl.value) notesEl.value = profile.bank_details;
+  }
+  // Generate next invoice number
+  const prefix = profile.invoice_prefix || 'INV';
+  const nextNum = profile.invoice_next_number || 1;
+  const invNum = prefix + '-' + String(nextNum).padStart(3, '0');
+  const invNumEl = document.getElementById('invInvoiceNumber');
+  if (invNumEl && !invNumEl.value) invNumEl.value = invNum;
 
   updateInvoicePreview();
 
@@ -3864,17 +3912,26 @@ function onGigSelected() {
     document.getElementById('invAmount').value = parseFloat(gig.fee).toFixed(2);
   }
 
-  // Update preview with gig info
+  // Auto-generate description: "Performing [instrument] at [venue], [date]"
+  const profile = window._cachedProfile || window._currentUser || {};
+  const instrumentsStr = profile.instruments || '';
+  const firstInstrument = instrumentsStr.split(',')[0]?.trim() || 'guitar';
   const d = new Date(gig.date);
   const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const venuePart = gig.venue_name || '';
+  const descDefault = `Performing ${firstInstrument}${venuePart ? ' at ' + venuePart : ''}${gig.date ? ', ' + dateStr : ''}`;
+  document.getElementById('invDesc').value = descDefault;
+
+  // Update preview with gig info
   const gigLabel = [gig.venue_name, dateStr].filter(Boolean).join(' / ');
   document.getElementById('invPreviewGig').textContent = gigLabel;
 
-  // Show venue address in preview if available
+  // Show venue in preview: name + address
   const venueRow = document.getElementById('invPreviewVenueRow');
   const venueEl = document.getElementById('invPreviewVenue');
-  if (gig.venue_address && venueRow && venueEl) {
-    venueEl.textContent = gig.venue_address;
+  if ((gig.venue_name || gig.venue_address) && venueRow && venueEl) {
+    const parts = [gig.venue_name, gig.venue_address].filter(Boolean);
+    venueEl.textContent = parts.join(', ');
     venueRow.style.display = '';
   } else if (venueRow) {
     venueRow.style.display = 'none';
@@ -3899,6 +3956,24 @@ function updateInvoicePreview() {
     document.getElementById('invPreviewFrom').textContent =
       currentUser.name || currentUser.email;
   }
+
+  // Update invoice number in preview
+  const invNumInput = document.getElementById('invInvoiceNumber');
+  const invNumPreview = document.getElementById('invPreviewNum');
+  if (invNumInput && invNumPreview) {
+    invNumPreview.textContent = (invNumInput.value || 'INV-001') + ' \u00B7 Draft';
+  }
+
+  // Update bank details in preview
+  const bankNotes = document.getElementById('invNotes')?.value || '';
+  const bankRow = document.getElementById('invPreviewBankRow');
+  const bankEl = document.getElementById('invPreviewBank');
+  if (bankNotes && bankRow && bankEl) {
+    bankEl.textContent = bankNotes;
+    bankRow.style.display = '';
+  } else if (bankRow) {
+    bankRow.style.display = 'none';
+  }
 }
 
 async function submitInvoice() {
@@ -3920,6 +3995,8 @@ async function submitInvoice() {
     }
   }
 
+  const invoiceNumber = document.getElementById('invInvoiceNumber')?.value?.trim() || null;
+
   try {
     const res = await fetch('/api/invoices', {
       method: 'POST',
@@ -3931,6 +4008,7 @@ async function submitInvoice() {
         amount,
         due_date: document.getElementById('invDueDate').value || null,
         notes: document.getElementById('invNotes').value,
+        invoice_number: invoiceNumber,
         venue_name: venueName,
         venue_address: venueAddress,
         status: 'sent',
@@ -3940,6 +4018,17 @@ async function submitInvoice() {
       // Invalidate invoices cache so the list refreshes
       window._cachedInvoices = null;
       window._cachedInvoicesTime = 0;
+      // Auto-increment the user's next invoice number
+      const profile = window._cachedProfile || window._currentUser || {};
+      const nextNum = (profile.invoice_next_number || 1) + 1;
+      fetch('/api/user/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice_next_number: nextNum }),
+      }).then(() => {
+        if (window._cachedProfile) window._cachedProfile.invoice_next_number = nextNum;
+        if (window._currentUser) window._currentUser.invoice_next_number = nextNum;
+      }).catch(() => {});
       closePanel('panel-invoice');
       showToast('Invoice sent!');
     } else {
