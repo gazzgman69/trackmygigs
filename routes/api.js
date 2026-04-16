@@ -376,63 +376,69 @@ router.get('/stats', async (req, res) => {
       taxYearStart = `${now.getFullYear() - 1}-04-06`;
     }
 
-    // Next gig
-    const nextGigResult = await db.query(
-      `SELECT * FROM gigs WHERE user_id = $1 AND date >= $2 AND status IN ('confirmed', 'enquiry')
-       ORDER BY date ASC LIMIT 1`,
-      [userId, today]
-    );
-
-    // This month earnings & count
+    // Run all queries in parallel instead of sequentially
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
       .toISOString()
       .split('T')[0];
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0)
       .toISOString()
       .split('T')[0];
-    const thisMonthResult = await db.query(
-      `SELECT COALESCE(SUM(fee), 0) as earnings, COUNT(*) as count FROM gigs
-       WHERE user_id = $1 AND date >= $2 AND date <= $3 AND status = 'confirmed'`,
-      [userId, monthStart, monthEnd]
-    );
 
-    // Tax year earnings & count
-    const taxYearResult = await db.query(
-      `SELECT COALESCE(SUM(fee), 0) as earnings, COUNT(*) as count FROM gigs
-       WHERE user_id = $1 AND date >= $2 AND status = 'confirmed'`,
-      [userId, taxYearStart]
-    );
-
-    // Overdue invoice
-    const overdueResult = await db.query(
-      `SELECT id, amount, band_name FROM invoices
-       WHERE user_id = $1 AND status = 'sent' AND due_date < $2
-       ORDER BY due_date ASC LIMIT 1`,
-      [userId, today]
-    );
-
-    // Draft invoice
-    const draftResult = await db.query(
-      `SELECT id, amount, band_name FROM invoices
-       WHERE user_id = $1 AND status = 'draft'
-       ORDER BY created_at DESC LIMIT 1`,
-      [userId]
-    );
-
-    // Unread messages
-    const unreadResult = await db.query(
-      `SELECT COUNT(*) as count FROM messages
-       WHERE thread_id IN (SELECT id FROM threads WHERE participant_ids @> ARRAY[$1::uuid])
-       AND NOT (read_by @> ARRAY[$1::uuid])`,
-      [userId]
-    );
-
-    // Pending offers
-    const offersResult = await db.query(
-      `SELECT COUNT(*) as count FROM offers
-       WHERE recipient_id = $1 AND status = 'pending'`,
-      [userId]
-    );
+    const [
+      nextGigResult,
+      thisMonthResult,
+      taxYearResult,
+      overdueResult,
+      draftResult,
+      unreadResult,
+      offersResult,
+    ] = await Promise.all([
+      // Next gig
+      db.query(
+        `SELECT * FROM gigs WHERE user_id = $1 AND date >= $2 AND status IN ('confirmed', 'enquiry')
+         ORDER BY date ASC LIMIT 1`,
+        [userId, today]
+      ),
+      // This month earnings & count
+      db.query(
+        `SELECT COALESCE(SUM(fee), 0) as earnings, COUNT(*) as count FROM gigs
+         WHERE user_id = $1 AND date >= $2 AND date <= $3 AND status = 'confirmed'`,
+        [userId, monthStart, monthEnd]
+      ),
+      // Tax year earnings & count
+      db.query(
+        `SELECT COALESCE(SUM(fee), 0) as earnings, COUNT(*) as count FROM gigs
+         WHERE user_id = $1 AND date >= $2 AND status = 'confirmed'`,
+        [userId, taxYearStart]
+      ),
+      // Overdue invoice
+      db.query(
+        `SELECT id, amount, band_name FROM invoices
+         WHERE user_id = $1 AND status = 'sent' AND due_date < $2
+         ORDER BY due_date ASC LIMIT 1`,
+        [userId, today]
+      ),
+      // Draft invoice
+      db.query(
+        `SELECT id, amount, band_name FROM invoices
+         WHERE user_id = $1 AND status = 'draft'
+         ORDER BY created_at DESC LIMIT 1`,
+        [userId]
+      ),
+      // Unread messages
+      db.query(
+        `SELECT COUNT(*) as count FROM messages
+         WHERE thread_id IN (SELECT id FROM threads WHERE participant_ids @> ARRAY[$1::uuid])
+         AND NOT (read_by @> ARRAY[$1::uuid])`,
+        [userId]
+      ),
+      // Pending offers
+      db.query(
+        `SELECT COUNT(*) as count FROM offers
+         WHERE recipient_id = $1 AND status = 'pending'`,
+        [userId]
+      ),
+    ]);
 
     res.json({
       next_gig: nextGigResult.rows[0] || null,
