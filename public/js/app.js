@@ -2801,17 +2801,26 @@ function editProfile() {
         <textarea id="editBankDetails" rows="3" placeholder="e.g. Sort code: 12-34-56&#10;Account: 12345678&#10;Gareth Gwyn" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;min-height:60px;font-family:inherit;">${escapeHtml(profile.bank_details || '')}</textarea>
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Auto-fills on every new invoice</div>
       </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Number Format</label>
+        <select id="editInvoiceFormat" onchange="updateInvFormatPreview()" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
+          <option value="plain" ${(profile.invoice_format || 'plain') === 'plain' ? 'selected' : ''}>Sequential (INV-001)</option>
+          <option value="year" ${profile.invoice_format === 'year' ? 'selected' : ''}>Year (INV-2026-001)</option>
+          <option value="year-month" ${profile.invoice_format === 'year-month' ? 'selected' : ''}>Year-month (INV-2026-04-001)</option>
+          <option value="year-short" ${profile.invoice_format === 'year-short' ? 'selected' : ''}>Short date (INV-2604-001)</option>
+        </select>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
         <div>
-          <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Invoice Prefix</label>
-          <input id="editInvoicePrefix" type="text" value="${escapeHtml(profile.invoice_prefix || 'INV')}" placeholder="INV" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;" />
+          <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Prefix</label>
+          <input id="editInvoicePrefix" type="text" value="${escapeHtml(profile.invoice_prefix || 'INV')}" placeholder="INV" oninput="updateInvFormatPreview()" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;" />
         </div>
         <div>
           <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Next Number</label>
-          <input id="editInvoiceNextNum" type="number" min="1" value="${profile.invoice_next_number || 1}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+          <input id="editInvoiceNextNum" type="number" min="1" value="${profile.invoice_next_number || 1}" oninput="updateInvFormatPreview()" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
         </div>
       </div>
-      <div style="font-size:10px;color:var(--text-3);margin-bottom:14px;">Next invoice will be numbered ${escapeHtml((profile.invoice_prefix || 'INV') + '-' + String(profile.invoice_next_number || 1).padStart(3, '0'))}</div>
+      <div id="invFormatPreview" style="font-size:12px;color:var(--accent);margin-bottom:14px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">Next invoice: ${escapeHtml(generateInvoiceNumber(profile.invoice_prefix || 'INV', profile.invoice_next_number || 1, profile.invoice_format || 'plain'))}</div>
     </div>`;
 
   openPanel('panel-edit-profile');
@@ -2827,6 +2836,7 @@ async function saveProfile() {
   const bankDetails = document.getElementById('editBankDetails')?.value?.trim();
   const invoicePrefix = document.getElementById('editInvoicePrefix')?.value?.trim().toUpperCase();
   const invoiceNextNum = parseInt(document.getElementById('editInvoiceNextNum')?.value, 10) || null;
+  const invoiceFormat = document.getElementById('editInvoiceFormat')?.value || null;
 
   const instruments = instrumentsRaw ? instrumentsRaw.split(',').map(s => s.trim()).filter(Boolean).join(', ') : '';
 
@@ -2844,6 +2854,7 @@ async function saveProfile() {
         bank_details: bankDetails || null,
         invoice_prefix: invoicePrefix || null,
         invoice_next_number: invoiceNextNum,
+        invoice_format: invoiceFormat,
       })
     });
 
@@ -2867,6 +2878,16 @@ async function saveProfile() {
     alert('Failed to save profile. Please try again.');
   }
 }
+
+function updateInvFormatPreview() {
+  const prefix = document.getElementById('editInvoicePrefix')?.value?.trim().toUpperCase() || 'INV';
+  const nextNum = parseInt(document.getElementById('editInvoiceNextNum')?.value, 10) || 1;
+  const format = document.getElementById('editInvoiceFormat')?.value || 'plain';
+  const preview = generateInvoiceNumber(prefix, nextNum, format);
+  const el = document.getElementById('invFormatPreview');
+  if (el) el.textContent = 'Next invoice: ' + preview;
+}
+window.updateInvFormatPreview = updateInvFormatPreview;
 
 function shareProfile() {
   // TODO: implement share profile
@@ -3824,6 +3845,22 @@ async function sendChatMessage() {
 
 // ── Invoice Panel ─────────────────────────────────────────────────────────────
 
+function generateInvoiceNumber(prefix, nextNum, format) {
+  prefix = prefix || 'INV';
+  nextNum = nextNum || 1;
+  format = format || 'plain';
+  const num = String(nextNum).padStart(3, '0');
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  switch (format) {
+    case 'year':        return prefix + '-' + y + '-' + num;
+    case 'year-month':  return prefix + '-' + y + '-' + m + '-' + num;
+    case 'year-short':  return prefix + '-' + String(y).slice(2) + m + '-' + num;
+    default:            return prefix + '-' + num;
+  }
+}
+
 function createInvoiceForGig(gigId) {
   // Close gig detail, open invoice panel, pre-select the gig and auto-fill
   closePanel('panel-gig-detail');
@@ -3859,10 +3896,11 @@ function initInvoicePanel() {
     const notesEl = document.getElementById('invNotes');
     if (notesEl && !notesEl.value) notesEl.value = profile.bank_details;
   }
-  // Generate next invoice number
+  // Generate next invoice number using format setting
   const prefix = profile.invoice_prefix || 'INV';
   const nextNum = profile.invoice_next_number || 1;
-  const invNum = prefix + '-' + String(nextNum).padStart(3, '0');
+  const format = profile.invoice_format || 'plain';
+  const invNum = generateInvoiceNumber(prefix, nextNum, format);
   const invNumEl = document.getElementById('invInvoiceNumber');
   if (invNumEl && !invNumEl.value) invNumEl.value = invNum;
 
