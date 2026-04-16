@@ -118,6 +118,7 @@ async function runMigrations() {
     // Add review URLs to users for Google/Facebook review links
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_review_url TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS facebook_review_url TEXT`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS set_times JSONB DEFAULT '[]'`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);

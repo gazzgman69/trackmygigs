@@ -2255,7 +2255,7 @@ async function openGigDetail(gigId) {
       ${getGigType(gig) ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Type</span><span style="color:var(--text);font-weight:500;">${escapeHtml(getGigType(gig))}</span></div>` : ''}
       ${gig.dress_code ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Dress code</span><span style="color:var(--text);font-weight:500;">${escapeHtml(gig.dress_code)}</span></div>` : ''}
       ${gig.load_in_time ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Load-in</span><span style="color:var(--text);font-weight:500;">${formatTime(gig.load_in_time)}</span></div>` : ''}
-      ${gig.start_time ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Set times</span><span style="color:var(--text);font-weight:500;">${formatTime(gig.start_time)}${gig.end_time ? '\u2013' + formatTime(gig.end_time) : ''}</span></div>` : ''}
+      ${buildSetTimesDisplay(gig)}
       ${getGigNotes(gig) ? `<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;"><span style="color:var(--text-2);">Notes</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(getGigNotes(gig))}</span></div>` : ''}
       ${!gig.dress_code && !gig.load_in_time && !getGigNotes(gig) && !getGigType(gig) ? '<div style="font-size:13px;color:var(--text-3);padding:10px 0;">No gig pack info yet. Edit the gig to add details.</div>' : ''}
     </div>
@@ -2352,6 +2352,17 @@ function getGigType(gig) {
 }
 
 // Get notes without legacy [Type] prefix
+function buildSetTimesDisplay(gig) {
+  const sets = gig.set_times && Array.isArray(gig.set_times) && gig.set_times.length > 0 ? gig.set_times : [];
+  if (sets.length === 0) return '';
+  return sets.map(s =>
+    `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;">
+      <span style="color:var(--text-2);">${escapeHtml(s.name || 'Set')}</span>
+      <span style="color:var(--text);font-weight:500;">${formatTime(s.start)}${s.end ? '\u2013' + formatTime(s.end) : ''}</span>
+    </div>`
+  ).join('');
+}
+
 function getGigNotes(gig) {
   if (gig.gig_type || !gig.notes) return gig.notes || '';
   // Strip legacy [Type] prefix
@@ -2632,6 +2643,13 @@ async function openEditGig(gigId) {
           <div class="form-label">Notes</div>
           <textarea class="form-input" id="editNotes" style="resize:vertical;min-height:80px;">${escapeHtml(getGigNotes(gig))}</textarea>
         </div>
+        <div class="form-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <div class="form-label" style="margin-bottom:0;">Sets</div>
+            <span onclick="addSetTimeRow()" style="font-size:11px;color:var(--accent);cursor:pointer;">+ Add set</span>
+          </div>
+          <div id="editSetTimesContainer">${buildEditSetTimesHTML(gig)}</div>
+        </div>
         <button onclick="saveEditGig('${gig.id}')" class="btn-pill" style="width:100%;margin-top:8px;">Save Changes</button>
       </div>`;
 
@@ -2640,6 +2658,45 @@ async function openEditGig(gigId) {
     console.error('Edit gig error:', err);
     body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load gig</div>';
   }
+}
+
+function buildEditSetTimesHTML(gig) {
+  const sets = gig.set_times && Array.isArray(gig.set_times) && gig.set_times.length > 0 ? gig.set_times : [];
+  if (sets.length === 0) return '<div id="editSetTimesEmpty" style="font-size:12px;color:var(--text-3);padding:8px 0;">No sets defined yet. Add sets to plan your performance.</div>';
+  return sets.map((s, i) => buildSetTimeRow(i, s.name, s.start, s.end)).join('');
+}
+
+function buildSetTimeRow(index, name, start, end) {
+  return `<div class="set-time-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+    <input type="text" class="form-input set-name" value="${escapeHtml(name || 'Set ' + (index + 1))}" placeholder="Set ${index + 1}" style="flex:1;min-width:0;padding:10px;font-size:13px;" />
+    <input type="time" class="form-input set-start" value="${start || ''}" style="width:90px;padding:10px;font-size:13px;" />
+    <span style="color:var(--text-3);font-size:12px;">to</span>
+    <input type="time" class="form-input set-end" value="${end || ''}" style="width:90px;padding:10px;font-size:13px;" />
+    <span onclick="this.parentElement.remove()" style="color:var(--text-3);cursor:pointer;padding:4px;font-size:14px;">\u2715</span>
+  </div>`;
+}
+
+function addSetTimeRow() {
+  const container = document.getElementById('editSetTimesContainer');
+  if (!container) return;
+  const empty = document.getElementById('editSetTimesEmpty');
+  if (empty) empty.remove();
+  const count = container.querySelectorAll('.set-time-row').length;
+  container.insertAdjacentHTML('beforeend', buildSetTimeRow(count, 'Set ' + (count + 1), '', ''));
+}
+
+function collectSetTimes() {
+  const rows = document.querySelectorAll('#editSetTimesContainer .set-time-row');
+  const sets = [];
+  rows.forEach(row => {
+    const name = row.querySelector('.set-name').value.trim();
+    const start = row.querySelector('.set-start').value;
+    const end = row.querySelector('.set-end').value;
+    if (name || start || end) {
+      sets.push({ name: name || 'Set', start: start || '', end: end || '' });
+    }
+  });
+  return sets;
 }
 
 async function saveEditGig(gigId) {
@@ -2659,6 +2716,7 @@ async function saveEditGig(gigId) {
       gig_type: document.getElementById('editGigType').value || null,
       dress_code: document.getElementById('editDressCode').value || null,
       notes: document.getElementById('editNotes').value || null,
+      set_times: collectSetTimes(),
     };
 
     const res = await fetch(`/api/gigs/${gigId}`, {

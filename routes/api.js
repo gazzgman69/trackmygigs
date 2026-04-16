@@ -82,7 +82,7 @@ router.get('/gigs/:id', async (req, res) => {
 
 router.patch('/gigs/:id', async (req, res) => {
   try {
-    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete } = req.body;
+    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times } = req.body;
     const result = await db.query(
       `UPDATE gigs SET
         band_name = COALESCE($1, band_name), venue_name = COALESCE($2, venue_name),
@@ -92,9 +92,10 @@ router.patch('/gigs/:id', async (req, res) => {
         status = COALESCE($9, status), source = COALESCE($10, source),
         dress_code = COALESCE($11, dress_code), notes = COALESCE($12, notes),
         checklist = COALESCE($15, checklist), gig_type = COALESCE($16, gig_type),
-        details_complete = COALESCE($17, details_complete)
+        details_complete = COALESCE($17, details_complete),
+        set_times = COALESCE($18, set_times)
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     res.json(result.rows[0]);
