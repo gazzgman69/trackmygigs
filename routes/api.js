@@ -37,11 +37,12 @@ router.post('/gigs', async (req, res) => {
       gig_type,
       parking_info,
       day_of_contact,
+      mileage_miles,
     } = req.body;
 
     const result = await db.query(
-      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, day_of_contact)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, day_of_contact, mileage_miles)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        RETURNING *`,
       [
         req.user.id,
@@ -60,6 +61,7 @@ router.post('/gigs', async (req, res) => {
         gig_type || null,
         parking_info || null,
         day_of_contact || null,
+        mileage_miles || null,
       ]
     );
 
@@ -86,7 +88,7 @@ router.get('/gigs/:id', async (req, res) => {
 
 router.patch('/gigs/:id', async (req, res) => {
   try {
-    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, day_of_contact } = req.body;
+    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, day_of_contact, mileage_miles } = req.body;
     const result = await db.query(
       `UPDATE gigs SET
         band_name = COALESCE($1, band_name), venue_name = COALESCE($2, venue_name),
@@ -99,9 +101,10 @@ router.patch('/gigs/:id', async (req, res) => {
         details_complete = COALESCE($17, details_complete),
         set_times = COALESCE($18, set_times),
         parking_info = COALESCE($19, parking_info),
-        day_of_contact = COALESCE($20, day_of_contact)
+        day_of_contact = COALESCE($20, day_of_contact),
+        mileage_miles = COALESCE($21, mileage_miles)
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, day_of_contact || null]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, day_of_contact || null, mileage_miles != null ? mileage_miles : null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     res.json(result.rows[0]);
@@ -642,6 +645,21 @@ router.patch('/contacts/:id', async (req, res) => {
   } catch (error) {
     console.error('Update contact error:', error);
     res.status(500).json({ error: 'Failed to update contact' });
+  }
+});
+
+router.patch('/contacts/:id/favourite', async (req, res) => {
+  try {
+    const { is_favourite } = req.body;
+    const result = await db.query(
+      'UPDATE contacts SET is_favourite = $1 WHERE id = $2 AND owner_id = $3 RETURNING *',
+      [!!is_favourite, req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Toggle favourite error:', error);
+    res.status(500).json({ error: 'Failed to toggle favourite' });
   }
 });
 

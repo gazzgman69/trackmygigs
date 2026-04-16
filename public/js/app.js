@@ -28,6 +28,8 @@ let gigWizardData = {};
 window._cachedGigs = null;
 window._cachedStats = null;
 window._cachedStatsTime = 0;
+window._cachedContacts = [];
+window._contactFilterType = 'all';
 window._cachedProfile = null;
 window._cachedProfileTime = 0;
 window._cachedInvoices = null;
@@ -601,6 +603,7 @@ function renderGigsList(gigs) {
             <div class="gt">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
             <div class="gv">${escapeHtml(gig.venue_name || 'No venue')}${gig.start_time ? ' \u00B7 ' + formatTime(gig.start_time) + (gig.end_time ? '\u2013' + formatTime(gig.end_time) : '') : ''}</div>
             ${gig.load_in_time ? `<div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">Load-in ${formatTime(gig.load_in_time)}</div>` : ''}
+            ${gig.mileage_miles ? `<div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">\uD83D\uDE97 ${Math.round(parseFloat(gig.mileage_miles))} miles from home</div>` : ''}
             <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
               <span class="badge badge-${statusBadgeClass(gig.status)}" style="font-size:11px;">${statusLabel(gig.status)}</span>
               ${gig.fee ? `<span class="gf">\u00A3${parseFloat(gig.fee).toFixed(0)}</span>` : ''}
@@ -1926,6 +1929,7 @@ async function selectVenue(placeId, name) {
           const distData = await distResp.json();
           if (distData.miles) {
             addrMeta.textContent = `\u2713 Full address saved \u00B7 ${distData.miles} miles from home \u00B7 ~${distData.duration}`;
+            gigWizardData.mileage_miles = distData.miles;
           }
         } catch (e) {
           console.error('Distance fetch error:', e);
@@ -1971,6 +1975,7 @@ async function submitGigWizard() {
       notes: gigWizardData.notes || null,
       gig_type: gigWizardData.gig_type || null,
       dress_code: gigWizardData.dress_code || null,
+      mileage_miles: gigWizardData.mileage_miles || null,
       source: 'manual',
     };
 
@@ -2370,12 +2375,21 @@ async function openGigDetail(gigId) {
 
   openPanel('panel-gig-detail');
 
-  // Fetch mileage in background
-  if (homePostcode && gig.venue_address) {
+  // Show mileage: use stored value first, then fetch in background if needed
+  const mileageEl = document.getElementById('gigDetailMileage');
+  if (gig.mileage_miles && mileageEl) {
+    const miles = Math.round(parseFloat(gig.mileage_miles));
+    const claimable = (miles * 2 * 0.45).toFixed(2);
+    mileageEl.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="font-size:14px;color:var(--text-2);">\uD83D\uDE97 ${miles} miles round trip</div>
+        <span style="font-size:11px;color:var(--success);background:var(--success-dim);border-radius:8px;padding:2px 8px;font-weight:600;">\u00A3${claimable} claimable</span>
+      </div>
+    `;
+  } else if (homePostcode && gig.venue_address) {
     try {
       const distResp = await fetch(`/api/distance?origin=${encodeURIComponent(homePostcode)}&destination=${encodeURIComponent(gig.venue_address)}`);
       const distData = await distResp.json();
-      const mileageEl = document.getElementById('gigDetailMileage');
       if (distData.miles && mileageEl) {
         const claimable = (distData.miles * 2 * 0.45).toFixed(2);
         mileageEl.innerHTML = `
@@ -2384,6 +2398,17 @@ async function openGigDetail(gigId) {
             <span style="font-size:11px;color:var(--success);background:var(--success-dim);border-radius:8px;padding:2px 8px;font-weight:600;">\u00A3${claimable} claimable</span>
           </div>
         `;
+        // Save mileage to the gig record so it shows on cards next time
+        fetch('/api/gigs/' + gig.id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mileage_miles: distData.miles })
+        }).catch(e => console.error('Save mileage error:', e));
+        // Update cached gig too
+        if (window._cachedGigs) {
+          const cached = window._cachedGigs.find(g => g.id === gig.id);
+          if (cached) cached.mileage_miles = distData.miles;
+        }
       }
     } catch (e) {
       console.error('Mileage fetch error:', e);
@@ -3012,39 +3037,27 @@ async function openNetworkPanel() {
     const res = await fetch('/api/contacts');
     if (!res.ok) throw new Error('Failed to fetch contacts');
     const contacts = await res.json();
+    window._cachedContacts = contacts;
+    window._contactFilterType = 'all';
 
     let html = `
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('network-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <button onclick="closePanel('network-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">&#8249;</button>
         <div style="font-size:16px;font-weight:700;color:var(--text);">My Network</div>
         <button onclick="openPanel('add-contact')" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
       </div>
       <div style="padding:0 16px 8px;">
         <input type="text" class="fi" placeholder="Search contacts..." id="contactSearch" oninput="filterContacts()" />
       </div>
-      <div style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
+      <div id="contactFilterBadges" style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
         <button class="filter-badge ac" onclick="filterContactsByType('all')">All</button>
         <button class="filter-badge" onclick="filterContactsByType('favourite')">Favourites</button>
         <button class="filter-badge" onclick="filterContactsByType('instrument')">By instrument</button>
       </div>
-      <div id="contactsList" style="padding:0 16px;">`;
+      <div id="contactsList" style="padding:0 16px;"></div>`;
 
-    contacts.forEach(contact => {
-      const initial = (contact.name || 'U')[0].toUpperCase();
-      html += `
-      <div onclick="openContactDetail('${contact.id}')" style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
-        <div style="width:40px;height:40px;border-radius:20px;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--accent);flex-shrink:0;">${initial}</div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(contact.name)}</div>
-          <div style="font-size:11px;color:var(--text-2);">${escapeHtml(contact.instruments || 'No instruments')}</div>
-          <div style="font-size:10px;color:var(--text-3);">Last gig: ${contact.last_gig_date ? formatDateShort(contact.last_gig_date) : 'Never'}</div>
-        </div>
-        <span style="font-size:14px;cursor:pointer;" onclick="toggleFavourite('${contact.id}', event)">${contact.favourite ? '⭐' : '☆'}</span>
-      </div>`;
-    });
-
-    html += `</div>`;
     body.innerHTML = html;
+    renderContactsList();
   } catch (err) {
     console.error('Network panel error:', err);
     body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load contacts</div>';
@@ -3375,18 +3388,113 @@ function saveSong(songId) {
   closePanel('song-form-panel');
 }
 
+function renderContactsList() {
+  const container = document.getElementById('contactsList');
+  if (!container) return;
+
+  const searchQuery = (document.getElementById('contactSearch')?.value || '').toLowerCase().trim();
+  let contacts = window._cachedContacts || [];
+  const filterType = window._contactFilterType || 'all';
+
+  // Text search across name and instruments
+  if (searchQuery) {
+    contacts = contacts.filter(c =>
+      (c.name || '').toLowerCase().includes(searchQuery) ||
+      (c.instruments || '').toLowerCase().includes(searchQuery)
+    );
+  }
+
+  // Filter by type
+  if (filterType === 'favourite') {
+    contacts = contacts.filter(c => c.is_favourite);
+  }
+
+  if (contacts.length === 0) {
+    const msg = filterType === 'favourite' ? 'No favourites yet. Tap the star on a contact to add them.'
+      : searchQuery ? 'No contacts matching "' + escapeHtml(searchQuery) + '"'
+      : 'No contacts yet. Tap + Add to get started.';
+    container.innerHTML = `<div style="text-align:center;padding:30px 10px;color:var(--text-2);font-size:13px;">${msg}</div>`;
+    return;
+  }
+
+  // Group by instrument if that filter is active
+  if (filterType === 'instrument') {
+    const groups = {};
+    contacts.forEach(c => {
+      const instr = (c.instruments || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (instr.length === 0) instr.push('No instrument listed');
+      instr.forEach(inst => {
+        if (!groups[inst]) groups[inst] = [];
+        groups[inst].push(c);
+      });
+    });
+
+    // Sort group names alphabetically, but put "No instrument listed" last
+    const sortedKeys = Object.keys(groups).sort((a, b) => {
+      if (a === 'No instrument listed') return 1;
+      if (b === 'No instrument listed') return -1;
+      return a.localeCompare(b);
+    });
+
+    let html = '';
+    sortedKeys.forEach(inst => {
+      html += `<div style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px;padding:12px 0 6px;border-bottom:1px solid var(--border);">${escapeHtml(inst)} (${groups[inst].length})</div>`;
+      groups[inst].forEach(contact => {
+        html += renderContactRow(contact);
+      });
+    });
+    container.innerHTML = html;
+    return;
+  }
+
+  // Default: flat list sorted by name
+  container.innerHTML = contacts.map(c => renderContactRow(c)).join('');
+}
+
+function renderContactRow(contact) {
+  const initial = (contact.name || 'U')[0].toUpperCase();
+  return `
+    <div onclick="openContactDetail('${contact.id}')" style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
+      <div style="width:40px;height:40px;border-radius:20px;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--accent);flex-shrink:0;">${initial}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(contact.name)}</div>
+        <div style="font-size:11px;color:var(--text-2);">${escapeHtml(contact.instruments || 'No instruments')}</div>
+        <div style="font-size:10px;color:var(--text-3);">Last gig: ${contact.last_gig_date ? formatDateShort(contact.last_gig_date) : 'Never'}</div>
+      </div>
+      <span style="font-size:14px;cursor:pointer;" onclick="toggleFavourite('${contact.id}', event)">${contact.is_favourite ? '\u2B50' : '\u2606'}</span>
+    </div>`;
+}
+
 function filterContacts() {
-  // TODO: implement contact filtering
+  renderContactsList();
 }
 
 function filterContactsByType(type) {
-  document.querySelectorAll('#networkBody .filter-badge').forEach(b => b.classList.remove('ac'));
-  event.target.classList.add('ac');
+  window._contactFilterType = type;
+  document.querySelectorAll('#contactFilterBadges .filter-badge').forEach(b => b.classList.remove('ac'));
+  if (event && event.target) event.target.classList.add('ac');
+  renderContactsList();
 }
 
-function toggleFavourite(contactId, e) {
+async function toggleFavourite(contactId, e) {
   e.stopPropagation();
-  // TODO: implement favourite toggle
+  const contact = (window._cachedContacts || []).find(c => c.id === contactId);
+  if (!contact) return;
+
+  const newVal = !contact.is_favourite;
+  try {
+    const res = await fetch('/api/contacts/' + contactId + '/favourite', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_favourite: newVal })
+    });
+    if (res.ok) {
+      contact.is_favourite = newVal;
+      renderContactsList();
+    }
+  } catch (err) {
+    console.error('Toggle favourite error:', err);
+  }
 }
 
 function sendDepOffer(contactId) {
