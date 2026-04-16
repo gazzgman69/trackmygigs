@@ -1660,6 +1660,9 @@ function wizardBack() {
 }
 
 function selectGigStatus(status) {
+  // Capture current fee before re-render destroys the input
+  const feeEl = document.getElementById('wFee');
+  if (feeEl) gigWizardData.fee = feeEl.value || '';
   gigWizardData.status = status;
   // Re-render step 4 to update chip styles
   renderWizardStep(4);
@@ -2469,6 +2472,7 @@ async function deleteGig(gigId) {
     await fetch(`/api/gigs/${gigId}`, { method: 'DELETE' });
     // Refresh gigs cache and list
     window._cachedGigs = (window._cachedGigs || []).filter((g) => g.id !== gigId);
+    window._cachedStats = null;
     renderGigsList(window._cachedGigs);
   } catch (e) {
     console.error('Delete gig error:', e);
@@ -2600,8 +2604,9 @@ async function saveEditGig(gigId) {
 
     if (!res.ok) throw new Error('Failed to save gig');
 
-    // Update cache
+    // Update cache and invalidate stats so homepage refreshes
     window._cachedGigs = (window._cachedGigs || []).map(g => g.id === gigId ? { ...g, ...data, id: gigId } : g);
+    window._cachedStats = null;
     closePanel('panel-edit-gig');
     renderGigsList(window._cachedGigs);
   } catch (err) {
