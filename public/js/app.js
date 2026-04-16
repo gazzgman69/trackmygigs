@@ -1329,11 +1329,11 @@ function buildProfileHTML(content, profile) {
       </div>
       <div style="padding:0 16px 12px;">
         <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Menu</div>
-        <div onclick="openPanel('network-panel')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+        <div onclick="openPanel('panel-network'); openNetworkPanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span style="color:var(--text);font-size:14px;">My Network</span>
           <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
-        <div onclick="openPanel('repertoire-panel')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+        <div onclick="openPanel('panel-repertoire'); openRepertoirePanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span style="color:var(--text);font-size:14px;">Repertoire library</span>
           <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
@@ -3042,7 +3042,7 @@ async function openNetworkPanel() {
 
     let html = `
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('network-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">&#8249;</button>
+        <button onclick="closePanel('panel-network')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">&#8249;</button>
         <div style="font-size:16px;font-weight:700;color:var(--text);">My Network</div>
         <button onclick="openPanel('add-contact')" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
       </div>
@@ -3128,7 +3128,7 @@ async function openRepertoirePanel() {
 
     let html = `
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('repertoire-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <button onclick="closePanel('panel-repertoire')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
         <div style="font-size:16px;font-weight:700;color:var(--text);">Repertoire</div>
         <div style="width:32px;"></div>
       </div>
