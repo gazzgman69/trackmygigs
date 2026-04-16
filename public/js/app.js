@@ -531,6 +531,13 @@ function filterGigsList() {
   if (window._cachedGigs) renderGigsList(window._cachedGigs);
 }
 
+// Parse a gig date safely - handles both "YYYY-MM-DD" and full ISO "YYYY-MM-DDTHH:mm:ss.sssZ"
+function parseGigDate(dateStr) {
+  if (!dateStr) return null;
+  const iso = dateStr.substring(0, 10); // always grab YYYY-MM-DD
+  return new Date(iso + 'T12:00:00');
+}
+
 function renderGigsList(gigs) {
   const listContent = document.getElementById('gigsListContent');
   if (!listContent) return;
@@ -560,7 +567,7 @@ function renderGigsList(gigs) {
     weekEnd.setHours(23, 59, 59, 999);
 
     const weekGigs = filtered.filter(g => {
-      const d = new Date(g.date + 'T12:00:00');
+      const d = parseGigDate(g.date);
       return d >= weekStart && d <= weekEnd;
     });
     viewFiltered = weekGigs;
@@ -587,7 +594,7 @@ function renderGigsList(gigs) {
       const dayNum = dayDate.getDate();
       const isToday = dayDate.toDateString() === now.toDateString();
       const hasGig = weekGigs.some(g => {
-        const d = new Date(g.date + 'T12:00:00');
+        const d = parseGigDate(g.date);
         return d.toDateString() === dayDate.toDateString();
       });
 
@@ -630,7 +637,7 @@ function renderGigsList(gigs) {
     const monthName = targetDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 
     const monthGigs = filtered.filter(g => {
-      const d = new Date(g.date + 'T12:00:00');
+      const d = parseGigDate(g.date);
       return d >= monthStart && d <= monthEnd;
     });
     viewFiltered = monthGigs;
@@ -643,7 +650,7 @@ function renderGigsList(gigs) {
     const daysInMonth = monthEnd.getDate();
     const gigDateSet = {};
     monthGigs.forEach(g => {
-      const d = new Date(g.date + 'T12:00:00');
+      const d = parseGigDate(g.date);
       const day = d.getDate();
       if (!gigDateSet[day]) gigDateSet[day] = [];
       gigDateSet[day].push(g);
@@ -665,7 +672,7 @@ function renderGigsList(gigs) {
       if (dayGigs) {
         // Determine color based on payment status
         const allPaid = dayGigs.every(g => g.status === 'paid' || g.invoice_status === 'paid');
-        const isUpcoming = dayGigs.some(g => new Date(g.date + 'T12:00:00') >= now);
+        const isUpcoming = dayGigs.some(g => parseGigDate(g.date) >= now);
         let bgColor, textColor;
         if (allPaid) {
           bgColor = 'var(--success-dim)'; textColor = 'var(--success)';
@@ -712,7 +719,7 @@ function renderGigsList(gigs) {
     const endDate = new Date(taxYearEnd, 2, 31, 23, 59, 59); // 31 March
 
     const yearGigs = filtered.filter(g => {
-      const d = new Date(g.date + 'T12:00:00');
+      const d = parseGigDate(g.date);
       return d >= startDate && d <= endDate;
     });
     viewFiltered = yearGigs;
@@ -725,7 +732,7 @@ function renderGigsList(gigs) {
     const monthNames = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar'];
     const monthTotals = new Array(12).fill(0);
     yearGigs.forEach(g => {
-      const d = new Date(g.date + 'T12:00:00');
+      const d = parseGigDate(g.date);
       const m = d.getMonth(); // 0-11
       // Map to tax year index: Apr(3)=0, May(4)=1, ... Mar(2)=11
       const idx = m >= 3 ? m - 3 : m + 9;
