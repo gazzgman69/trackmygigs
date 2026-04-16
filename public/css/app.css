@@ -41,17 +41,16 @@
 }
 
 html {
-  /* Let the browser's default font-size (usually 16px) be the baseline.
-     On iOS/Android, when users adjust their text size in accessibility
-     settings, the browser default scales, and rem units scale with it. */
-  font-size: 100%;
+  /* Base font-size respects Dynamic Type on iOS via JS (see setupTextScaling).
+     The --text-scale custom property is set by JS based on the user's
+     preferred font size. All rem values then scale proportionally. */
+  font-size: calc(100% * var(--text-scale, 1));
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 
 html, body {
   height: 100%;
-  height: 100dvh;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background-color: var(--bg);
   color: var(--text);
@@ -63,14 +62,16 @@ body {
 }
 
 .app-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
   max-width: 390px;
   margin: 0 auto;
   background-color: var(--bg);
-  position: relative;
 }
 
 .app-header {
@@ -171,7 +172,7 @@ body {
   display: flex;
   flex-direction: column;
   padding-top: 4px;
-  padding-bottom: max(4px, env(safe-area-inset-bottom, 4px));
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 8px));
 }
 
 .nav-main {
@@ -186,13 +187,15 @@ body {
   align-items: center;
   justify-content: center;
   gap: 1px;
-  padding-top: 5px;
-  padding-bottom: 5px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  min-height: 44px;
   position: relative;
   cursor: pointer;
   color: var(--text-2);
   transition: color 0.15s;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 .nav-item:hover {
@@ -244,14 +247,16 @@ body {
   align-items: center;
   justify-content: center;
   gap: 1px;
-  padding-top: 5px;
-  padding-bottom: 5px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  min-height: 40px;
   cursor: pointer;
   border: none;
   background: none;
   color: var(--text-2);
   transition: color 0.15s;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 .nav-quick-btn svg {
@@ -526,8 +531,7 @@ body {
   flex-direction: column;
   flex: 1;
   overflow: hidden;
-  height: 100vh;
-  height: 100dvh;
+  min-height: 0; /* allow flex shrinking */
 }
 
 #appScreen.active {
@@ -946,8 +950,7 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
-  min-height: 100dvh;
+  min-height: 100%;
   padding: var(--spacing-4);
 }
 

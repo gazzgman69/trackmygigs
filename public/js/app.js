@@ -1,6 +1,14 @@
 let currentUser = null;
 let currentScreen = 'home';
 
+// Run text scaling immediately so all screens (including auth) scale correctly
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => { if (typeof setupTextScaling === 'function') setupTextScaling(); });
+} else {
+  // DOM already ready (e.g. script loaded at end of body)
+  setTimeout(() => { if (typeof setupTextScaling === 'function') setupTextScaling(); }, 0);
+}
+
 // Wizard state
 let gigWizardStep = 1;
 let gigWizardData = {};
@@ -24,6 +32,7 @@ const DATA_CACHE_TTL = 30000;
 function initApp(user) {
   currentUser = user;
   window._currentUser = user;
+  setupTextScaling();
   setupThemeToggle();
   setupNavigation();
   setupScreenHandlers();
@@ -121,6 +130,24 @@ function buildSkeletonHTML() {
       <div style="flex:1;${pulse}height:60px;"></div>
       <div style="flex:1;${pulse}height:60px;"></div>
     </div>`;
+}
+
+function setupTextScaling() {
+  // Detect the user's preferred text size (iOS Dynamic Type / Android font scale).
+  // Create a hidden element with font: -apple-system-body which respects Dynamic Type,
+  // measure its computed font-size, and derive a scale factor from the default 16px.
+  try {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'font:-apple-system-body;position:absolute;visibility:hidden;pointer-events:none;';
+    document.body.appendChild(probe);
+    const preferredSize = parseFloat(getComputedStyle(probe).fontSize);
+    document.body.removeChild(probe);
+    if (preferredSize && preferredSize !== 16) {
+      // Clamp between 0.8x and 1.4x to prevent layout breakage
+      const scale = Math.min(1.4, Math.max(0.8, preferredSize / 16));
+      document.documentElement.style.setProperty('--text-scale', scale.toFixed(3));
+    }
+  } catch (e) { /* silent - will use default 1x */ }
 }
 
 function setupThemeToggle() {
