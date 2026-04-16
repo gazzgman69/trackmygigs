@@ -928,7 +928,7 @@ function buildInvoicesHTML(content, invoices) {
           <div style="font-size:24px;font-weight:700;color:var(--text);">Invoices</div>
           <div style="font-size:13px;color:var(--text-2);margin-top:2px;">${invoices.length} total &middot; &pound;${(paid + overdue + draft + sent).toFixed(0)} invoiced</div>
         </div>
-        <button onclick="openPanel('create-invoice')" style="background:var(--accent);color:#000;border:none;border-radius:24px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;">+ New</button>
+        <button onclick="openPanel('panel-invoice');initInvoicePanel();" style="background:var(--accent);color:#000;border:none;border-radius:24px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;">+ New</button>
       </div>
       <div style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
         <button class="filter-badge ac" onclick="filterInvoicesByStatus('all')">All</button>
@@ -1006,6 +1006,16 @@ async function openInvoiceDetail(invoiceId) {
         <div style="display:flex;justify-content:space-between;">
           <span style="color:var(--text-2);font-size:12px;">Due date</span>
           <span style="font-weight:600;color:var(--text);">${formatDateShort(invoice.due_date)}</span>
+        </div>` : ''}
+        ${invoice.venue_name ? `
+        <div style="display:flex;justify-content:space-between;margin-top:8px;">
+          <span style="color:var(--text-2);font-size:12px;">Venue</span>
+          <span style="font-weight:600;color:var(--text);text-align:right;max-width:60%;">${escapeHtml(invoice.venue_name)}</span>
+        </div>` : ''}
+        ${invoice.venue_address ? `
+        <div style="display:flex;justify-content:space-between;margin-top:4px;">
+          <span style="color:var(--text-2);font-size:12px;">Address</span>
+          <span style="font-size:12px;color:var(--text);text-align:right;max-width:60%;">${escapeHtml(invoice.venue_address)}</span>
         </div>` : ''}
       </div>`;
 
@@ -3448,23 +3458,90 @@ async function sendChatMessage() {
 // ── Invoice Panel ─────────────────────────────────────────────────────────────
 
 function initInvoicePanel() {
+  // Populate gig dropdown from cached gigs
+  populateGigDropdown();
+
   // Live preview updates
   const fields = ['invBillTo', 'invDesc', 'invAmount'];
   fields.forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', updateInvoicePreview);
   });
+
+  // Gig selector auto-fill
+  const gigSelect = document.getElementById('invLinkedGig');
+  if (gigSelect) gigSelect.addEventListener('change', onGigSelected);
+
   updateInvoicePreview();
 
   document.getElementById('sendInvoiceBtn').onclick = submitInvoice;
   document.getElementById('saveInvoiceDraft').onclick = () => saveInvoiceDraft();
 }
 
+function populateGigDropdown() {
+  const select = document.getElementById('invLinkedGig');
+  if (!select) return;
+  select.innerHTML = '<option value="">Select a gig...</option>';
+  const gigs = window._cachedGigs || [];
+  // Sort by date descending so recent gigs are first
+  const sorted = [...gigs].sort((a, b) => new Date(b.date) - new Date(a.date));
+  sorted.forEach((g) => {
+    const d = new Date(g.date);
+    const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const label = [g.venue_name, g.band_name, dateStr].filter(Boolean).join(' / ');
+    const opt = document.createElement('option');
+    opt.value = g.id;
+    opt.textContent = label || dateStr;
+    select.appendChild(opt);
+  });
+}
+
+function onGigSelected() {
+  const select = document.getElementById('invLinkedGig');
+  const gigId = select ? select.value : '';
+  if (!gigId) {
+    // Cleared selection, reset venue preview
+    const venueRow = document.getElementById('invPreviewVenueRow');
+    if (venueRow) venueRow.style.display = 'none';
+    document.getElementById('invPreviewGig').textContent = '--';
+    return;
+  }
+  const gigs = window._cachedGigs || [];
+  const gig = gigs.find((g) => g.id === gigId);
+  if (!gig) return;
+
+  // Auto-fill fields from the linked gig
+  if (gig.band_name) {
+    document.getElementById('invBillTo').value = gig.band_name;
+  }
+  if (gig.fee) {
+    document.getElementById('invAmount').value = parseFloat(gig.fee).toFixed(2);
+  }
+
+  // Update preview with gig info
+  const d = new Date(gig.date);
+  const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const gigLabel = [gig.venue_name, dateStr].filter(Boolean).join(' / ');
+  document.getElementById('invPreviewGig').textContent = gigLabel;
+
+  // Show venue address in preview if available
+  const venueRow = document.getElementById('invPreviewVenueRow');
+  const venueEl = document.getElementById('invPreviewVenue');
+  if (gig.venue_address && venueRow && venueEl) {
+    venueEl.textContent = gig.venue_address;
+    venueRow.style.display = '';
+  } else if (venueRow) {
+    venueRow.style.display = 'none';
+  }
+
+  updateInvoicePreview();
+}
+
 function updateInvoicePreview() {
-  const to = document.getElementById('invBillTo').value || '—';
+  const to = document.getElementById('invBillTo').value || '--';
   const desc = document.getElementById('invDesc').value || 'Performance fee';
   const amt = parseFloat(document.getElementById('invAmount').value) || 0;
-  const fmt = '£' + amt.toFixed(2);
+  const fmt = '\u00A3' + amt.toFixed(2);
 
   document.getElementById('invPreviewTo').textContent = to;
   document.getElementById('invPreviewDesc').textContent = desc;
@@ -3484,21 +3561,39 @@ async function submitInvoice() {
   if (!billTo) { showToast('Enter a client name'); return; }
   if (!amount || amount <= 0) { showToast('Enter an amount'); return; }
 
+  // Get linked gig details for venue address
+  const gigId = document.getElementById('invLinkedGig').value || null;
+  let venueName = null;
+  let venueAddress = null;
+  if (gigId) {
+    const gigs = window._cachedGigs || [];
+    const gig = gigs.find((g) => g.id === gigId);
+    if (gig) {
+      venueName = gig.venue_name || null;
+      venueAddress = gig.venue_address || null;
+    }
+  }
+
   try {
     const res = await fetch('/api/invoices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        client_name: billTo,
-        gig_reference: document.getElementById('invLinkedGig').value,
+        band_name: billTo,
+        gig_id: gigId,
         description: document.getElementById('invDesc').value,
         amount,
         due_date: document.getElementById('invDueDate').value || null,
         notes: document.getElementById('invNotes').value,
+        venue_name: venueName,
+        venue_address: venueAddress,
         status: 'sent',
       }),
     });
     if (res.ok) {
+      // Invalidate invoices cache so the list refreshes
+      window._cachedInvoices = null;
+      window._cachedInvoicesTime = 0;
       closePanel('panel-invoice');
       showToast('Invoice sent!');
     } else {

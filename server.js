@@ -104,6 +104,11 @@ async function runMigrations() {
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`);
     // Add created_at to gigs if missing
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`);
+    // Add venue_address to invoices for auto-fill from linked gig
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS venue_address TEXT`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS venue_name VARCHAR(255)`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS description TEXT`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS notes TEXT`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);

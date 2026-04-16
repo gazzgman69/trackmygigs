@@ -205,9 +205,10 @@
             <div id="invPreviewNum" style="font-size:12px;color:var(--text-2)">INV-001 · Draft</div>
           </div>
         </div>
-        <div class="invoice-preview-row"><span>From</span><span id="invPreviewFrom">—</span></div>
-        <div class="invoice-preview-row"><span>To</span><span id="invPreviewTo">—</span></div>
-        <div class="invoice-preview-row"><span>Gig</span><span id="invPreviewGig">—</span></div>
+        <div class="invoice-preview-row"><span>From</span><span id="invPreviewFrom">--</span></div>
+        <div class="invoice-preview-row"><span>To</span><span id="invPreviewTo">--</span></div>
+        <div class="invoice-preview-row"><span>Gig</span><span id="invPreviewGig">--</span></div>
+        <div class="invoice-preview-row" id="invPreviewVenueRow" style="display:none"><span>Venue</span><span id="invPreviewVenue">--</span></div>
         <div class="invoice-divider"></div>
         <div class="invoice-line-item">
           <span id="invPreviewDesc">Performance fee</span>
@@ -219,7 +220,7 @@
         </div>
       </div>
       <div class="form-group"><div class="form-label">Bill to</div><input class="form-input" id="invBillTo" placeholder="Band / client name"></div>
-      <div class="form-group"><div class="form-label">Linked gig (optional)</div><input class="form-input" id="invLinkedGig" placeholder="e.g. The Grand, Birmingham · 19 Apr 2026"></div>
+      <div class="form-group"><div class="form-label">Linked gig (optional)</div><select class="form-input" id="invLinkedGig"><option value="">Select a gig...</option></select></div>
       <div class="form-group"><div class="form-label">Description</div><input class="form-input" id="invDesc" placeholder="Keys / Vocals performance" value="Performance fee"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div class="form-group"><div class="form-label">Amount (£)</div><input class="form-input" id="invAmount" type="number" placeholder="0.00"></div>

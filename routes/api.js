@@ -129,12 +129,13 @@ router.get('/invoices', async (req, res) => {
 
 router.post('/invoices', async (req, res) => {
   try {
-    const { gig_id, band_name, amount, status, invoice_number, payment_terms, due_date } =
-      req.body;
+    const { gig_id, band_name, amount, status, invoice_number, payment_terms, due_date,
+            venue_address, venue_name, description, notes } = req.body;
 
     const result = await db.query(
-      `INSERT INTO invoices (user_id, gig_id, band_name, amount, status, invoice_number, payment_terms, due_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO invoices (user_id, gig_id, band_name, amount, status, invoice_number, payment_terms, due_date,
+                             venue_address, venue_name, description, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
       [
         req.user.id,
@@ -145,6 +146,10 @@ router.post('/invoices', async (req, res) => {
         invoice_number,
         payment_terms,
         due_date,
+        venue_address || null,
+        venue_name || null,
+        description || null,
+        notes || null,
       ]
     );
 
