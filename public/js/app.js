@@ -35,7 +35,7 @@ function initApp(user) {
   showScreen('home');
 
   // Prefetch ALL screen data in parallel so every tab opens instantly
-  prefetchAllData();
+  window._prefetchPromise = prefetchAllData();
 }
 
 async function prefetchAllData() {
@@ -602,7 +602,15 @@ async function renderCalendarScreen() {
   }
 
   try {
-    // Fetch both in parallel, using cache where available
+    // Wait for in-flight prefetch first instead of firing duplicate requests
+    if (window._prefetchPromise && (!window._cachedGigs || !window._cachedBlocked)) {
+      await window._prefetchPromise;
+      if (window._cachedGigs && window._cachedBlocked) {
+        buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+        return;
+      }
+    }
+    // Fetch anything still missing in parallel
     const fetches = [];
     const needGigs = !window._cachedGigs;
     const needBlocked = !window._cachedBlocked || (now - (window._cachedBlockedTime || 0)) >= DATA_CACHE_TTL;
@@ -927,6 +935,15 @@ async function renderInvoicesScreen() {
   content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading invoices...</div>';
 
   try {
+    // Wait for in-flight prefetch first instead of firing a duplicate request
+    if (window._prefetchPromise) {
+      await window._prefetchPromise;
+      if (window._cachedInvoices) {
+        buildInvoicesHTML(content, window._cachedInvoices);
+        return;
+      }
+    }
+    // Fallback: fetch directly if prefetch didn't populate cache
     const res = await fetch('/api/invoices');
     if (!res.ok) throw new Error('Failed to fetch invoices');
     const invoices = await res.json();
@@ -1094,6 +1111,15 @@ async function renderOffersScreen() {
   content.innerHTML = buildSkeletonHTML();
 
   try {
+    // Wait for in-flight prefetch first instead of firing a duplicate request
+    if (window._prefetchPromise) {
+      await window._prefetchPromise;
+      if (window._cachedOffers) {
+        buildOffersHTML(content, window._cachedOffers);
+        return;
+      }
+    }
+    // Fallback: fetch directly if prefetch didn't populate cache
     const res = await fetch('/api/offers');
     if (!res.ok) throw new Error('Failed to fetch offers');
     const offers = await res.json();
@@ -1182,6 +1208,15 @@ async function renderProfileScreen() {
   content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading profile...</div>';
 
   try {
+    // Wait for in-flight prefetch first instead of firing a duplicate request
+    if (window._prefetchPromise) {
+      await window._prefetchPromise;
+      if (window._cachedProfile) {
+        buildProfileHTML(content, window._cachedProfile);
+        return;
+      }
+    }
+    // Fallback: fetch directly if prefetch didn't populate cache
     const res = await fetch('/api/user/profile');
     const profile = res.ok ? await res.json() : { name: window._currentUser?.name || 'Guest', email: window._currentUser?.email || '' };
     window._cachedProfile = profile;
