@@ -109,6 +109,13 @@ async function runMigrations() {
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS venue_name VARCHAR(255)`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS description TEXT`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS notes TEXT`);
+    // Add checklist JSON to gigs for prep items
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS checklist JSONB DEFAULT '[]'`);
+    // Add gig_type as its own column (previously embedded in notes as [Type])
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS gig_type VARCHAR(100)`);
+    // Add review URLs to users for Google/Facebook review links
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_review_url TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS facebook_review_url TEXT`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);

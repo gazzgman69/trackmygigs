@@ -34,11 +34,12 @@ router.post('/gigs', async (req, res) => {
       source,
       dress_code,
       notes,
+      gig_type,
     } = req.body;
 
     const result = await db.query(
-      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING *`,
       [
         req.user.id,
@@ -54,6 +55,7 @@ router.post('/gigs', async (req, res) => {
         source || 'manual',
         dress_code,
         notes,
+        gig_type || null,
       ]
     );
 
@@ -80,7 +82,7 @@ router.get('/gigs/:id', async (req, res) => {
 
 router.patch('/gigs/:id', async (req, res) => {
   try {
-    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes } = req.body;
+    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type } = req.body;
     const result = await db.query(
       `UPDATE gigs SET
         band_name = COALESCE($1, band_name), venue_name = COALESCE($2, venue_name),
@@ -88,9 +90,10 @@ router.patch('/gigs/:id', async (req, res) => {
         start_time = COALESCE($5, start_time), end_time = COALESCE($6, end_time),
         load_in_time = COALESCE($7, load_in_time), fee = COALESCE($8, fee),
         status = COALESCE($9, status), source = COALESCE($10, source),
-        dress_code = COALESCE($11, dress_code), notes = COALESCE($12, notes)
+        dress_code = COALESCE($11, dress_code), notes = COALESCE($12, notes),
+        checklist = COALESCE($15, checklist), gig_type = COALESCE($16, gig_type)
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     res.json(result.rows[0]);
@@ -205,13 +208,14 @@ router.get('/user/profile', async (req, res) => {
 
 router.patch('/user/profile', async (req, res) => {
   try {
-    const { name, phone, instruments, home_postcode, avatar_url } = req.body;
+    const { name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url } = req.body;
 
     const result = await db.query(
       `UPDATE users SET name = COALESCE($1, name), phone = COALESCE($2, phone), instruments = COALESCE($3, instruments),
-       home_postcode = COALESCE($4, home_postcode), avatar_url = COALESCE($5, avatar_url)
-       WHERE id = $6 RETURNING *`,
-      [name, phone, instruments, home_postcode, avatar_url, req.user.id]
+       home_postcode = COALESCE($4, home_postcode), avatar_url = COALESCE($5, avatar_url),
+       google_review_url = COALESCE($6, google_review_url), facebook_review_url = COALESCE($7, facebook_review_url)
+       WHERE id = $8 RETURNING *`,
+      [name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url, req.user.id]
     );
 
     res.json(result.rows[0]);

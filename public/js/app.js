@@ -1906,13 +1906,8 @@ async function submitGigWizard() {
       load_in_time: gigWizardData.load_in_time || null,
       fee: gigWizardData.fee ? parseFloat(gigWizardData.fee) : null,
       status: gigWizardData.status,
-      notes: gigWizardData.notes
-        ? (gigWizardData.gig_type
-            ? `[${gigWizardData.gig_type}] `
-            : '') + gigWizardData.notes
-        : gigWizardData.gig_type
-          ? `[${gigWizardData.gig_type}]`
-          : null,
+      notes: gigWizardData.notes || null,
+      gig_type: gigWizardData.gig_type || null,
       dress_code: gigWizardData.dress_code || null,
       source: 'manual',
     };
@@ -2091,11 +2086,7 @@ function renderFullGigForm() {
     });
     data.status = gigWizardData.status || 'confirmed';
     data.source = gigWizardData.source || 'manual';
-    if (gigWizardData.gig_type) {
-      data.notes = data.notes
-        ? `[${gigWizardData.gig_type}] ${data.notes}`
-        : `[${gigWizardData.gig_type}]`;
-    }
+    data.gig_type = gigWizardData.gig_type || null;
 
     try {
       const response = await fetch('/api/gigs', {
@@ -2256,11 +2247,12 @@ async function openGigDetail(gigId) {
     <!-- Gig Pack -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
       <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">\uD83C\uDF92 Gig Pack</div>
+      ${getGigType(gig) ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Type</span><span style="color:var(--text);font-weight:500;">${escapeHtml(getGigType(gig))}</span></div>` : ''}
       ${gig.dress_code ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Dress code</span><span style="color:var(--text);font-weight:500;">${escapeHtml(gig.dress_code)}</span></div>` : ''}
       ${gig.load_in_time ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Load-in</span><span style="color:var(--text);font-weight:500;">${formatTime(gig.load_in_time)}</span></div>` : ''}
       ${gig.start_time ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Set times</span><span style="color:var(--text);font-weight:500;">${formatTime(gig.start_time)}${gig.end_time ? '\u2013' + formatTime(gig.end_time) : ''}</span></div>` : ''}
-      ${gig.notes ? `<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;"><span style="color:var(--text-2);">Notes</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(gig.notes)}</span></div>` : ''}
-      ${!gig.dress_code && !gig.load_in_time && !gig.notes ? '<div style="font-size:13px;color:var(--text-3);padding:10px 0;">No gig pack info yet. Edit the gig to add details.</div>' : ''}
+      ${getGigNotes(gig) ? `<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;"><span style="color:var(--text-2);">Notes</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(getGigNotes(gig))}</span></div>` : ''}
+      ${!gig.dress_code && !gig.load_in_time && !getGigNotes(gig) && !getGigType(gig) ? '<div style="font-size:13px;color:var(--text-3);padding:10px 0;">No gig pack info yet. Edit the gig to add details.</div>' : ''}
     </div>
     <!-- Lineup (Premium) -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
@@ -2281,26 +2273,11 @@ async function openGigDetail(gigId) {
     <!-- Prep checklist -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">📋 Prep checklist</div>
-        <span style="font-size:11px;color:var(--accent);cursor:pointer;">+ Add</span>
+        <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Prep checklist</div>
+        <span onclick="addChecklistItem('${gig.id}')" style="font-size:11px;color:var(--accent);cursor:pointer;">+ Add</span>
       </div>
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
-        <div class="prep-item" onclick="togglePrepItem(this)" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;">
-          <span style="font-size:14px;">○</span>
-          <span style="font-size:13px;color:var(--text);">Check PA requirements</span>
-        </div>
-        <div class="prep-item" onclick="togglePrepItem(this)" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;">
-          <span style="font-size:14px;">○</span>
-          <span style="font-size:13px;color:var(--text);">Confirm set times with band</span>
-        </div>
-        <div class="prep-item" onclick="togglePrepItem(this)" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;">
-          <span style="font-size:14px;">○</span>
-          <span style="font-size:13px;color:var(--text);">Pack gear the night before</span>
-        </div>
-        <div class="prep-item" onclick="togglePrepItem(this)" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;">
-          <span style="font-size:14px;">○</span>
-          <span style="font-size:13px;color:var(--text);">Print/download setlist</span>
-        </div>
+      <div id="checklistItems" style="background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+        ${buildChecklistHTML(gig)}
       </div>
     </div>
     <!-- Actions -->
@@ -2317,10 +2294,10 @@ async function openGigDetail(gigId) {
           </div>
         </div>
         <div style="display:flex;gap:6px;">
-          <button style="flex:1;background:var(--card);color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:11px;font-weight:600;cursor:pointer;">🔵 Google Review</button>
-          <button style="flex:1;background:var(--card);color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:11px;font-weight:600;cursor:pointer;">📘 Facebook Review</button>
+          <button onclick="shareReviewLink('google')" style="flex:1;background:var(--card);color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:11px;font-weight:600;cursor:pointer;">🔵 Google Review</button>
+          <button onclick="shareReviewLink('facebook')" style="flex:1;background:var(--card);color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:11px;font-weight:600;cursor:pointer;">📘 Facebook Review</button>
         </div>
-        <div style="text-align:center;font-size:10px;color:var(--text-3);margin-top:6px;">Set up your review links in Profile > Account settings</div>
+        <div style="text-align:center;font-size:10px;color:var(--text-3);margin-top:6px;">Set up your review links in Profile > Edit Profile</div>
       </div>
       <button style="width:100%;background:var(--card);color:var(--danger);border:1px solid var(--danger);border-radius:24px;padding:12px;font-size:14px;font-weight:500;cursor:pointer;" onclick="closePanel('panel-gig-detail');deleteGig('${gig.id}')">Delete gig</button>
     </div>
@@ -2349,6 +2326,96 @@ async function openGigDetail(gigId) {
   }
 }
 
+// -- Checklist functions --
+
+const DEFAULT_CHECKLIST = [
+  { text: 'Check PA requirements', done: false },
+  { text: 'Confirm set times with band', done: false },
+  { text: 'Pack gear the night before', done: false },
+  { text: 'Print/download setlist', done: false },
+];
+
+// Extract gig type - use dedicated column, or parse legacy [Type] prefix from notes
+function getGigType(gig) {
+  if (gig.gig_type) return gig.gig_type;
+  // Legacy: parse [Type] from notes
+  if (gig.notes) {
+    const m = gig.notes.match(/^\[([^\]]+)\]/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+// Get notes without legacy [Type] prefix
+function getGigNotes(gig) {
+  if (gig.gig_type || !gig.notes) return gig.notes || '';
+  // Strip legacy [Type] prefix
+  return gig.notes.replace(/^\[[^\]]+\]\s*/, '');
+}
+
+function getGigChecklist(gig) {
+  if (gig.checklist && Array.isArray(gig.checklist) && gig.checklist.length > 0) return gig.checklist;
+  return DEFAULT_CHECKLIST;
+}
+
+function buildChecklistHTML(gig) {
+  const items = getGigChecklist(gig);
+  if (!items.length) return '<div style="padding:10px 14px;font-size:12px;color:var(--text-3);">No items yet</div>';
+  return items.map((item, i) => `
+    <div onclick="toggleChecklistItem('${gig.id}', ${i})" style="display:flex;align-items:center;gap:10px;padding:10px 14px;${i < items.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}cursor:pointer;">
+      <span style="font-size:14px;${item.done ? 'color:var(--success);' : ''}">${item.done ? '\u2713' : '\u25CB'}</span>
+      <span style="font-size:13px;color:var(--text);${item.done ? 'text-decoration:line-through;opacity:0.5;' : ''}flex:1;">${escapeHtml(item.text)}</span>
+      <span onclick="event.stopPropagation();removeChecklistItem('${gig.id}', ${i})" style="font-size:11px;color:var(--text-3);cursor:pointer;padding:2px 6px;">\u2715</span>
+    </div>`).join('');
+}
+
+async function toggleChecklistItem(gigId, index) {
+  const gig = (window._cachedGigs || []).find(g => g.id === gigId);
+  if (!gig) return;
+  const items = getGigChecklist(gig);
+  items[index].done = !items[index].done;
+  gig.checklist = items;
+  const container = document.getElementById('checklistItems');
+  if (container) container.innerHTML = buildChecklistHTML(gig);
+  await saveChecklist(gigId, items);
+}
+
+async function addChecklistItem(gigId) {
+  const text = prompt('Add checklist item:');
+  if (!text || !text.trim()) return;
+  const gig = (window._cachedGigs || []).find(g => g.id === gigId);
+  if (!gig) return;
+  const items = getGigChecklist(gig);
+  items.push({ text: text.trim(), done: false });
+  gig.checklist = items;
+  const container = document.getElementById('checklistItems');
+  if (container) container.innerHTML = buildChecklistHTML(gig);
+  await saveChecklist(gigId, items);
+}
+
+async function removeChecklistItem(gigId, index) {
+  const gig = (window._cachedGigs || []).find(g => g.id === gigId);
+  if (!gig) return;
+  const items = getGigChecklist(gig);
+  items.splice(index, 1);
+  gig.checklist = items;
+  const container = document.getElementById('checklistItems');
+  if (container) container.innerHTML = buildChecklistHTML(gig);
+  await saveChecklist(gigId, items);
+}
+
+async function saveChecklist(gigId, items) {
+  try {
+    await fetch(`/api/gigs/${gigId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checklist: items }),
+    });
+  } catch (e) {
+    console.error('Save checklist error:', e);
+  }
+}
+
 function togglePrepItem(el) {
   const icon = el.querySelector('span:first-child');
   const text = el.querySelector('span:last-child');
@@ -2365,6 +2432,37 @@ function togglePrepItem(el) {
   }
 }
 
+async function shareReviewLink(platform) {
+  const profile = window._cachedProfile || window._currentUser || {};
+  const url = platform === 'google' ? profile.google_review_url : profile.facebook_review_url;
+  const label = platform === 'google' ? 'Google' : 'Facebook';
+
+  if (!url) {
+    showToast(`Set up your ${label} review link in Profile > Edit Profile`);
+    return;
+  }
+
+  // Try native share, fall back to clipboard
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: `Leave a ${label} review`, url: url });
+      showToast('Review link shared!');
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        await navigator.clipboard.writeText(url);
+        showToast('Review link copied to clipboard!');
+      }
+    }
+  } else {
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('Review link copied to clipboard!');
+    } catch (e) {
+      showToast(`${label} review: ${url}`);
+    }
+  }
+}
+
 async function deleteGig(gigId) {
   if (!confirm('Are you sure you want to delete this gig?')) return;
   try {
@@ -2378,11 +2476,11 @@ async function deleteGig(gigId) {
 }
 
 async function openEditGig(gigId) {
-  const panel = document.getElementById('edit-gig-panel');
-  if (!panel) return;
+  const body = document.getElementById('editGigBody');
+  if (!body) return;
 
-  panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading gig...</div>';
-  openPanel('edit-gig-panel');
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading gig...</div>';
+  openPanel('panel-edit-gig');
 
   try {
     let gig = (window._cachedGigs || []).find(g => g.id === gigId);
@@ -2393,11 +2491,6 @@ async function openEditGig(gigId) {
     }
 
     let html = `
-      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('edit-gig-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
-        <div style="font-size:16px;font-weight:700;color:var(--text);">Edit Gig</div>
-        <button onclick="deleteGig('${gig.id}')" style="background:none;border:none;color:var(--danger);font-size:14px;cursor:pointer;font-weight:600;">Delete</button>
-      </div>
       <div style="padding:0 16px 20px;">
         <div class="form-group">
           <label class="fl">Band name</label>
@@ -2435,20 +2528,36 @@ async function openEditGig(gigId) {
           </select>
         </div>
         <div class="form-group">
+          <label class="fl">Gig type</label>
+          <select class="fi" id="editGigType">
+            <option value="" ${!getGigType(gig) ? 'selected' : ''}>None</option>
+            <option value="Wedding" ${getGigType(gig) === 'Wedding' ? 'selected' : ''}>Wedding</option>
+            <option value="Corporate" ${getGigType(gig) === 'Corporate' ? 'selected' : ''}>Corporate</option>
+            <option value="Pub / Club" ${getGigType(gig) === 'Pub / Club' ? 'selected' : ''}>Pub / Club</option>
+            <option value="Private party" ${getGigType(gig) === 'Private party' ? 'selected' : ''}>Private party</option>
+            <option value="Festival" ${getGigType(gig) === 'Festival' ? 'selected' : ''}>Festival</option>
+            <option value="Hotel" ${getGigType(gig) === 'Hotel' ? 'selected' : ''}>Hotel</option>
+            <option value="Theatre" ${getGigType(gig) === 'Theatre' ? 'selected' : ''}>Theatre</option>
+            <option value="Church" ${getGigType(gig) === 'Church' ? 'selected' : ''}>Church</option>
+            <option value="Restaurant" ${getGigType(gig) === 'Restaurant' ? 'selected' : ''}>Restaurant</option>
+            <option value="Other" ${getGigType(gig) === 'Other' ? 'selected' : ''}>Other</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label class="fl">Dress code</label>
           <input type="text" class="fi" id="editDressCode" value="${escapeHtml(gig.dress_code || '')}" />
         </div>
         <div class="form-group">
           <label class="fl">Notes</label>
-          <textarea class="fi" id="editNotes" style="resize:vertical;height:80px;">${escapeHtml(gig.notes || '')}</textarea>
+          <textarea class="fi" id="editNotes" style="resize:vertical;height:80px;">${escapeHtml(getGigNotes(gig))}</textarea>
         </div>
         <button onclick="saveEditGig('${gig.id}')" class="pill">Save Changes</button>
       </div>`;
 
-    panel.innerHTML = html;
+    body.innerHTML = html;
   } catch (err) {
     console.error('Edit gig error:', err);
-    panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load gig</div>';
+    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load gig</div>';
   }
 }
 
@@ -2462,6 +2571,7 @@ async function saveEditGig(gigId) {
       end_time: document.getElementById('editEndTime').value,
       fee: parseFloat(document.getElementById('editFee').value) || 0,
       status: document.getElementById('editStatus').value,
+      gig_type: document.getElementById('editGigType').value || null,
       dress_code: document.getElementById('editDressCode').value,
       notes: document.getElementById('editNotes').value,
     };
@@ -2476,7 +2586,7 @@ async function saveEditGig(gigId) {
 
     // Update cache
     window._cachedGigs = (window._cachedGigs || []).map(g => g.id === gigId ? { ...g, ...data, id: gigId } : g);
-    closePanel('edit-gig-panel');
+    closePanel('panel-edit-gig');
     renderGigsList(window._cachedGigs);
   } catch (err) {
     console.error('Save gig error:', err);
@@ -2518,6 +2628,17 @@ function editProfile() {
         <input id="editHomePostcode" type="text" value="${escapeHtml(profile.home_postcode || '')}" placeholder="e.g. CF10 1AA" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;" />
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Used to calculate mileage to gig venues</div>
       </div>
+      <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Review Links</div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Google Review URL</label>
+        <input id="editGoogleReview" type="url" value="${escapeHtml(profile.google_review_url || '')}" placeholder="https://g.page/r/..." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Paste your Google Business review link</div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Facebook Review URL</label>
+        <input id="editFacebookReview" type="url" value="${escapeHtml(profile.facebook_review_url || '')}" placeholder="https://facebook.com/..." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Paste your Facebook page review link</div>
+      </div>
     </div>`;
 
   openPanel('panel-edit-profile');
@@ -2528,6 +2649,8 @@ async function saveProfile() {
   const phone = document.getElementById('editPhone')?.value?.trim();
   const instrumentsRaw = document.getElementById('editInstruments')?.value?.trim();
   const homePostcode = document.getElementById('editHomePostcode')?.value?.trim().toUpperCase();
+  const googleReviewUrl = document.getElementById('editGoogleReview')?.value?.trim();
+  const facebookReviewUrl = document.getElementById('editFacebookReview')?.value?.trim();
 
   const instruments = instrumentsRaw ? instrumentsRaw.split(',').map(s => s.trim()).filter(Boolean).join(', ') : '';
 
@@ -2539,7 +2662,9 @@ async function saveProfile() {
         name: name || null,
         phone: phone || null,
         instruments: instruments || null,
-        home_postcode: homePostcode || null
+        home_postcode: homePostcode || null,
+        google_review_url: googleReviewUrl || null,
+        facebook_review_url: facebookReviewUrl || null,
       })
     });
 
