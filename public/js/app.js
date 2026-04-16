@@ -2283,7 +2283,7 @@ async function openGigDetail(gigId) {
     <!-- Actions -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
       <button style="width:100%;background:var(--card);color:var(--accent);border:1px solid var(--accent);border-radius:24px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:8px;" onclick="openGigChat('${gig.id}')">💬 Message band</button>
-      <button style="width:100%;background:var(--accent);color:#000;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;" onclick="closePanel('panel-gig-detail')">Create invoice for this gig</button>
+      <button style="width:100%;background:var(--accent);color:#000;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;" onclick="createInvoiceForGig('${gig.id}')">Create invoice for this gig</button>
       <!-- Ask for review -->
       <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:8px;">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
@@ -3644,6 +3644,20 @@ async function sendChatMessage() {
 }
 
 // ── Invoice Panel ─────────────────────────────────────────────────────────────
+
+function createInvoiceForGig(gigId) {
+  // Close gig detail, open invoice panel, pre-select the gig and auto-fill
+  closePanel('panel-gig-detail');
+  openPanel('panel-invoice');
+  initInvoicePanel();
+
+  // Pre-select the gig in the dropdown and trigger auto-fill
+  const select = document.getElementById('invLinkedGig');
+  if (select && gigId) {
+    select.value = gigId;
+    onGigSelected();
+  }
+}
 
 function initInvoicePanel() {
   // Populate gig dropdown from cached gigs
