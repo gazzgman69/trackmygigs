@@ -113,6 +113,8 @@ async function runMigrations() {
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS checklist JSONB DEFAULT '[]'`);
     // Add gig_type as its own column (previously embedded in notes as [Type])
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS gig_type VARCHAR(100)`);
+    // Allow users to mark gig details as complete (dismisses optional fields)
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS details_complete BOOLEAN DEFAULT FALSE`);
     // Add review URLs to users for Google/Facebook review links
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_review_url TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS facebook_review_url TEXT`);

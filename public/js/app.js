@@ -2210,11 +2210,12 @@ async function openGigDetail(gigId) {
     { name: 'Venue', ok: !!gig.venue_name },
     { name: 'Times', ok: !!gig.start_time },
     { name: 'Fee', ok: !!gig.fee && parseFloat(gig.fee) > 0 },
-    { name: 'Dress code', ok: !!gig.dress_code },
-    { name: 'Notes', ok: !!gig.notes },
+    { name: 'Dress code', ok: !!gig.dress_code || !!gig.details_complete },
+    { name: 'Notes', ok: !!gig.notes || !!gig.details_complete },
     { name: 'Address', ok: !!gig.venue_address },
   ];
   const doneCount = fields.filter((f) => f.ok).length;
+  const allDone = doneCount === fields.length;
 
   body.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--border);">
@@ -2239,11 +2240,12 @@ async function openGigDetail(gigId) {
         <div style="display:flex;gap:3px;margin-bottom:8px;">
           ${fields.map((f) => `<div style="flex:1;height:4px;border-radius:2px;background:${f.ok ? 'var(--success)' : 'var(--border)'};"></div>`).join('')}
         </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
           ${fields.map((f) => f.ok
             ? `<span style="font-size:10px;color:var(--success);background:var(--success-dim);border-radius:8px;padding:3px 8px;">\u2713 ${f.name}</span>`
             : `<span style="font-size:10px;color:var(--warning);background:var(--warning-dim);border:1px solid rgba(240,165,0,.3);border-radius:8px;padding:3px 8px;">+ Add ${f.name.toLowerCase()}</span>`
           ).join('')}
+          ${!allDone ? `<span onclick="markGigDetailsComplete('${gig.id}')" style="font-size:10px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px 10px;cursor:pointer;margin-left:auto;">Mark complete</span>` : ''}
         </div>
       </div>
     </div>
@@ -2463,6 +2465,25 @@ async function shareReviewLink(platform) {
     } catch (e) {
       showToast(`${label} review: ${url}`);
     }
+  }
+}
+
+async function markGigDetailsComplete(gigId) {
+  try {
+    const res = await fetch(`/api/gigs/${gigId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ details_complete: true }),
+    });
+    if (!res.ok) throw new Error('Failed to update gig');
+    // Update cache and re-render detail view
+    window._cachedGigs = (window._cachedGigs || []).map(g =>
+      g.id === gigId ? { ...g, details_complete: true } : g
+    );
+    openGigDetail(gigId);
+    showToast('Marked as complete');
+  } catch (e) {
+    console.error('Mark complete error:', e);
   }
 }
 
