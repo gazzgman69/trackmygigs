@@ -251,6 +251,19 @@ router.post('/expenses', async (req, res) => {
 // Uses existing blocked_dates table; stores range start in date, reason, and
 // recurring_pattern for recurring/range modes
 
+router.get('/blocked-dates', async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM blocked_dates WHERE user_id = $1 ORDER BY date ASC',
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get blocked dates error:', error);
+    res.status(500).json({ error: 'Failed to fetch blocked dates' });
+  }
+});
+
 router.post('/blocked-dates', async (req, res) => {
   try {
     const { mode, date, from, to, reason, days } = req.body;
@@ -440,14 +453,21 @@ router.get('/stats', async (req, res) => {
       ),
     ]);
 
+    const overdueInvoice = overdueResult.rows[0] || null;
+    const draftInvoice = draftResult.rows[0] || null;
+
     res.json({
       next_gig: nextGigResult.rows[0] || null,
-      this_month_earnings: parseFloat(thisMonthResult.rows[0]?.earnings || 0),
-      this_month_gig_count: parseInt(thisMonthResult.rows[0]?.count || 0),
-      tax_year_earnings: parseFloat(taxYearResult.rows[0]?.earnings || 0),
-      tax_year_gig_count: parseInt(taxYearResult.rows[0]?.count || 0),
-      overdue_invoice: overdueResult.rows[0] || null,
-      draft_invoice: draftResult.rows[0] || null,
+      // Field names matching frontend expectations
+      month_earnings: parseFloat(thisMonthResult.rows[0]?.earnings || 0),
+      month_gigs: parseInt(thisMonthResult.rows[0]?.count || 0),
+      year_earnings: parseFloat(taxYearResult.rows[0]?.earnings || 0),
+      year_gigs: parseInt(taxYearResult.rows[0]?.count || 0),
+      overdue_invoices: overdueInvoice ? 1 : 0,
+      overdue_total: overdueInvoice ? parseFloat(overdueInvoice.amount || 0) : 0,
+      draft_invoices: draftInvoice ? 1 : 0,
+      draft_total: draftInvoice ? parseFloat(draftInvoice.amount || 0) : 0,
+      unread_notifications: parseInt(unreadResult.rows[0]?.count || 0),
       unread_messages: parseInt(unreadResult.rows[0]?.count || 0),
       offer_count: parseInt(offersResult.rows[0]?.count || 0),
     });

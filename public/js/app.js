@@ -5,8 +5,16 @@ let currentScreen = 'home';
 let gigWizardStep = 1;
 let gigWizardData = {};
 window._cachedGigs = null;
+window._cachedStats = null;
+window._cachedStatsTime = 0;
+window._cachedProfile = null;
+window._cachedProfileTime = 0;
 window._calViewMode = 'month';
 window._calDate = new Date();
+
+// Cache TTL in ms (30 seconds for stats, 60 seconds for profile)
+const STATS_CACHE_TTL = 30000;
+const PROFILE_CACHE_TTL = 60000;
 
 function initApp(user) {
   currentUser = user;
@@ -18,7 +26,7 @@ function initApp(user) {
   // Update the fixed header with user info
   updateAppHeader();
 
-  renderHomeScreen();
+  // showScreen('home') already calls renderHomeScreen - no need to call it twice
   showScreen('home');
 
   // Pre-fetch gigs in background so they're instant when the user taps the tab
@@ -135,17 +143,46 @@ function showScreen(screenName) {
   }
 }
 
+async function fetchStatsWithCache(forceRefresh) {
+  const now = Date.now();
+  if (!forceRefresh && window._cachedStats && (now - window._cachedStatsTime) < STATS_CACHE_TTL) {
+    return window._cachedStats;
+  }
+  const res = await fetch('/api/stats');
+  if (!res.ok) throw new Error('Failed to fetch stats');
+  const stats = await res.json();
+  window._cachedStats = stats;
+  window._cachedStatsTime = now;
+  return stats;
+}
+
 async function renderHomeScreen() {
   const content = document.getElementById('homeScreen');
 
-  // Show loading state
+  // If we have cached stats, render immediately (no loading flash)
+  if (window._cachedStats && (Date.now() - window._cachedStatsTime) < STATS_CACHE_TTL) {
+    buildHomeHTML(content, window._cachedStats);
+    return;
+  }
+
+  // Show loading state only on first load
   content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading home screen...</div>';
 
   try {
-    const res = await fetch('/api/stats');
-    if (!res.ok) throw new Error('Failed to fetch stats');
-    const stats = await res.json();
+    const stats = await fetchStatsWithCache(false);
+    buildHomeHTML(content, stats);
+  } catch (err) {
+    console.error('Home screen error:', err);
+    content.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:8px;">&#9888;&#65039;</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load home</div>
+        <div style="font-size:13px;color:var(--text-2);">Check your connection and refresh</div>
+      </div>`;
+  }
+}
 
+function buildHomeHTML(content, stats) {
     // Update notification dot in the fixed header
     const notifDot = document.getElementById('notificationDot');
     if (notifDot) notifDot.style.display = stats.unread_notifications > 0 ? 'block' : 'none';
@@ -270,15 +307,6 @@ async function renderHomeScreen() {
 
     html += '</div>';
     content.innerHTML = html;
-  } catch (err) {
-    console.error('Home screen error:', err);
-    content.innerHTML = `
-      <div style="padding:40px 20px;text-align:center;">
-        <div style="font-size:32px;margin-bottom:8px;">⚠️</div>
-        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load home</div>
-        <div style="font-size:13px;color:var(--text-2);">Check your connection and refresh</div>
-      </div>`;
-  }
 }
 
 // Current gig view state
@@ -501,13 +529,25 @@ function statusLabel(status) {
 
 async function renderCalendarScreen() {
   const content = document.getElementById('calendarScreen');
-  content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading calendar...</div>';
+
+  // Use cached gigs if available for instant render
+  const cachedGigs = window._cachedGigs;
+  if (!cachedGigs) {
+    content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading calendar...</div>';
+  }
 
   try {
-    const gigsRes = await fetch('/api/gigs');
-    const gigsData = gigsRes.ok ? await gigsRes.json() : [];
+    // Use cached gigs or fetch fresh ones
+    let gigsData;
+    if (cachedGigs) {
+      gigsData = cachedGigs;
+    } else {
+      const gigsRes = await fetch('/api/gigs');
+      gigsData = gigsRes.ok ? await gigsRes.json() : [];
+      window._cachedGigs = gigsData;
+    }
 
-    const blockedRes = await fetch('/api/calendar/blocked-dates');
+    const blockedRes = await fetch('/api/blocked-dates');
     const blockedData = blockedRes.ok ? await blockedRes.json() : [];
 
     const view = window._calViewMode || 'month';
@@ -1015,17 +1055,34 @@ function switchOffersTab(tab) {
 async function renderProfileScreen() {
   // Render into the panel overlay body (profile-panel), falling back to the screen
   const content = document.getElementById('profilePanelBody') || document.getElementById('profileScreen');
+
+  // Use cached profile for instant render
+  const now = Date.now();
+  if (window._cachedProfile && (now - window._cachedProfileTime) < PROFILE_CACHE_TTL) {
+    buildProfileHTML(content, window._cachedProfile);
+    return;
+  }
+
   content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading profile...</div>';
 
   try {
     const res = await fetch('/api/user/profile');
     const profile = res.ok ? await res.json() : { name: window._currentUser?.name || 'Guest', email: window._currentUser?.email || '' };
+    window._cachedProfile = profile;
+    window._cachedProfileTime = Date.now();
+    buildProfileHTML(content, profile);
+  } catch (err) {
+    console.error('Profile error:', err);
+    content.innerHTML = `<div style="padding:40px 20px;text-align:center;">Error loading profile</div>`;
+  }
+}
 
+function buildProfileHTML(content, profile) {
     const userInitial = (profile.name || profile.email || 'G')[0].toUpperCase();
 
     let html = `
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('profile-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <button onclick="closePanel('profile-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">&#8249;</button>
         <div style="font-size:16px;font-weight:700;color:var(--text);">Profile</div>
         <button onclick="editProfile()" style="background:none;border:none;color:var(--accent);font-size:14px;cursor:pointer;font-weight:600;">Edit</button>
       </div>
@@ -1116,11 +1173,6 @@ async function renderProfileScreen() {
       </div>`;
 
     content.innerHTML = html;
-  } catch (err) {
-    console.error('Profile error:', err);
-    const userInitial = (window._currentUser?.name || window._currentUser?.email || 'G')[0].toUpperCase();
-    content.innerHTML = `<div style="padding:40px 20px;text-align:center;">Error loading profile</div>`;
-  }
 }
 
 function toggleDocs() {
