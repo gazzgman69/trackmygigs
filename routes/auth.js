@@ -35,7 +35,12 @@ function rateLimitOk(key) {
   return true;
 }
 
-// Gmail transporter
+// Gmail transporter — used as a fallback if RESEND_API_KEY is not configured.
+// S10-07: Gmail SMTP is fine for beta but isn't a production transactional-email
+// path (Gmail explicitly doesn't support this at scale, and every bounce or
+// spam report lands in the owner's personal inbox). When RESEND_API_KEY is set
+// we call Resend's HTTPS API instead of SMTP, which gives a real
+// no-reply@trackmygigs.app envelope sender and the standard reputation tools.
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -43,6 +48,35 @@ const transporter = nodemailer.createTransport({
     pass: process.env.GMAIL_APP_PASSWORD,
   },
 });
+
+// Mail wrapper: prefer Resend over Gmail SMTP when available. Keeps the call
+// sites identical (`sendEmail({ to, subject, html })`) so we don't have to
+// branch per provider in every route.
+async function sendEmail({ to, subject, html }) {
+  if (process.env.RESEND_API_KEY) {
+    const from = process.env.MAIL_FROM || 'TrackMyGigs <no-reply@trackmygigs.app>';
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to, subject, html }),
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new Error(`Resend send failed (${resp.status}): ${body}`);
+    }
+    return;
+  }
+  // Fallback: Gmail SMTP.
+  await transporter.sendMail({
+    from: `"TrackMyGigs" <${process.env.GMAIL_USER}>`,
+    to,
+    subject,
+    html,
+  });
+}
 
 // Google OAuth client (for ID token verification)
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -74,16 +108,37 @@ async function createSession(res, userId) {
   return sessionToken;
 }
 
+// S10-05: Magic-link signups arrive with name = '', which used to produce a
+// user with name='' / display_name=null and a "Good morning, Guest" header on
+// first load. Derive a sensible fallback from the email local-part (gareth@… →
+// "Gareth") so the first-touch experience isn't literally anonymous. Users
+// can overwrite this later from Settings or as part of the new onboarding
+// form (S10-06).
+function deriveNameFromEmail(email) {
+  if (!email) return '';
+  const local = String(email).split('@')[0] || '';
+  if (!local) return '';
+  // Replace separators with spaces then title-case each token.
+  return local
+    .replace(/[._-]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
 // Helper: find or create user by email
 async function findOrCreateUser(email, name, avatarUrl, googleId) {
   let userResult = await db.query('SELECT * FROM users WHERE email = $1', [email]);
 
   if (userResult.rows.length === 0) {
     // On creation, seed display_name with the provided name (typically the user's real name from Google)
-    // name stays in sync for back-compat, but users can later edit name to be an act/band name
+    // name stays in sync for back-compat, but users can later edit name to be an act/band name.
+    // S10-05: when no name is provided (magic-link flow), derive from email.
+    const derivedName = name || deriveNameFromEmail(email);
     const createResult = await db.query(
       'INSERT INTO users (email, name, display_name, avatar_url, google_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [email, name || '', name || null, avatarUrl || null, googleId || null]
+      [email, derivedName, derivedName || null, avatarUrl || null, googleId || null]
     );
     return createResult.rows[0];
   }
@@ -147,9 +202,10 @@ router.post('/request', async (req, res) => {
 
     const magicLink = `${process.env.APP_URL}/auth/verify/${token}`;
 
-    // Send email via Gmail
-    await transporter.sendMail({
-      from: `"TrackMyGigs" <${process.env.GMAIL_USER}>`,
+    // S10-07: goes through sendEmail(), which prefers Resend over Gmail SMTP
+    // when RESEND_API_KEY is configured. Keeping the HTML body identical so
+    // we don't re-test rendering across providers.
+    await sendEmail({
       to: normalizedEmail,
       subject: 'Your TrackMyGigs sign-in link',
       html: `
@@ -181,7 +237,65 @@ router.post('/request', async (req, res) => {
   }
 });
 
+// S10-02: splitting verify into GET (landing page only, does NOT consume the
+// token) and POST (consumes + signs in). Email-preview scanners like
+// Microsoft Defender for 365 prefetch every link in an incoming email; with
+// the old GET-only flow a scanner would burn the magic link before the user
+// ever clicked. The scanner's GET now lands on a harmless confirmation page,
+// and the real sign-in only happens when the human presses the button, which
+// POSTs back to the same token.
 router.get('/verify/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const linkResult = await db.query(
+      'SELECT email, expires_at, used FROM magic_links WHERE token = $1',
+      [token]
+    );
+    if (linkResult.rows.length === 0) {
+      return res.redirect('/?error=invalid_link');
+    }
+    const link = linkResult.rows[0];
+    if (link.used || new Date(link.expires_at) < new Date()) {
+      return res.redirect('/?error=invalid_link');
+    }
+    const emailEsc = String(link.email || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    res.set('Content-Type', 'text/html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Sign in to TrackMyGigs</title>
+  <style>
+    :root { --bg:#0D1117; --card:#161B22; --border:#30363D; --text:#F0F6FC; --text-2:#8B949E; --accent:#F0A500; }
+    *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}
+    body{background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:32px 24px;max-width:420px;width:100%;text-align:center;}
+    h1{font-size:22px;margin-bottom:6px;}
+    p{color:var(--text-2);font-size:14px;line-height:1.5;margin-bottom:20px;}
+    .email{color:var(--text);font-weight:600;word-break:break-all;}
+    button{display:block;width:100%;background:var(--accent);color:#0D1117;border:0;border-radius:8px;padding:14px 16px;font-size:15px;font-weight:700;cursor:pointer;}
+    .logo{font-size:40px;margin-bottom:8px;}
+  </style>
+</head>
+<body>
+  <form class="card" method="POST" action="/auth/verify/${encodeURIComponent(token)}">
+    <div class="logo">&#x1F3B5;</div>
+    <h1>Sign in to TrackMyGigs</h1>
+    <p>You're about to sign in as<br><span class="email">${emailEsc}</span></p>
+    <button type="submit">Sign me in</button>
+  </form>
+</body>
+</html>`);
+  } catch (error) {
+    console.error('Verify GET error:', error);
+    res.redirect('/?error=verification_failed');
+  }
+});
+
+router.post('/verify/:token', async (req, res) => {
   try {
     const { token } = req.params;
 
@@ -197,6 +311,8 @@ router.get('/verify/:token', async (req, res) => {
     const magicLink = linkResult.rows[0];
     const email = magicLink.email;
 
+    // S10-05: findOrCreateUser now derives a name from the email local-part
+    // when none is passed, so first-load won't say "Good morning, Guest".
     const user = await findOrCreateUser(email, '', null, null);
 
     await createSession(res, user.id);
@@ -207,7 +323,7 @@ router.get('/verify/:token', async (req, res) => {
 
     res.redirect('/');
   } catch (error) {
-    console.error('Verify token error:', error);
+    console.error('Verify POST error:', error);
     res.redirect('/?error=verification_failed');
   }
 });
@@ -395,28 +511,40 @@ router.get('/me', async (req, res) => {
     }
 
     const session = result.rows[0];
+    // S10-04: return the full user profile (minus secret fields) so the app
+    // doesn't also have to fetch /api/user/profile to bootstrap. The old
+    // 9-field response forced two round-trips and opened a race where
+    // window._currentUser and window._cachedProfile could disagree until
+    // prefetchAllData() completed.
     const userResult = await db.query(
-      'SELECT id, name, display_name, email, avatar_url, home_postcode, instruments, google_access_token FROM users WHERE id = $1',
+      `SELECT id, name, display_name, email, avatar_url, home_postcode, postcode,
+              instruments, public_slug, onboarded_at, share_token,
+              share_token_enabled, text_scale, colour_theme, invoice_prefix,
+              invoice_next_number, invoice_due_days, invoice_footer,
+              business_name, business_address, business_phone, vat_number,
+              bank_account_name, bank_sort_code, bank_account_number,
+              rate_standard, rate_premium, rate_dep, rate_deposit_pct, rate_notes,
+              epk_bio, epk_photo_url, epk_video_url, epk_audio_url,
+              available_for_deps, created_at, updated_at,
+              (google_access_token IS NOT NULL) AS calendar_connected
+         FROM users WHERE id = $1`,
       [session.user_id]
-    );
+    ).catch(async () => {
+      // Some columns may not exist on older databases; fall back to SELECT *.
+      return await db.query('SELECT * FROM users WHERE id = $1', [session.user_id]);
+    });
 
     if (userResult.rows.length === 0) {
       return res.json({ user: null });
     }
 
-    const user = userResult.rows[0];
-    res.json({
-      user: {
-        id: user.id,
-        name: user.name,
-        display_name: user.display_name,
-        email: user.email,
-        avatar_url: user.avatar_url,
-        home_postcode: user.home_postcode,
-        instruments: user.instruments,
-        calendar_connected: !!user.google_access_token,
-      },
-    });
+    const u = userResult.rows[0];
+    // Strip secret fields before returning. Only drop them if present.
+    const SECRET_FIELDS = ['google_access_token', 'google_refresh_token', 'google_token_expires_at'];
+    const safe = { ...u };
+    for (const f of SECRET_FIELDS) delete safe[f];
+    if (!('calendar_connected' in safe)) safe.calendar_connected = !!u.google_access_token;
+    res.json({ user: safe });
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Internal server error' });

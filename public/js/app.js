@@ -8232,36 +8232,116 @@ window.exportFinancePDF = exportFinancePDF;
 // A simple first-run welcome shown once (gated by users.onboarded_at).
 // Fires after prefetchAllData settles so we have the profile to check.
 
+// S10-06: the old onboarding was five info-only slides. The user landed on a
+// blank home screen with no act name, no postcode, no instruments, and no
+// idea that their public EPK would just show the email local-part. Two of
+// the slides are now forms whose values are POSTed to /api/user/profile so
+// the first-run experience actually seeds the minimum profile the rest of
+// the app depends on.
 const ONBOARDING_STEPS = [
   {
+    kind: 'info',
     emoji: '🎵',
     title: 'Welcome to TrackMyGigs',
-    body: "Your home for every gig, invoice, expense and mile. Let's take a 30-second tour.",
-    cta: 'Start tour',
+    body: "Your home for every gig, invoice, expense and mile. Let's set up the basics in 30 seconds.",
+    cta: 'Get started',
   },
   {
-    emoji: '📋',
-    title: 'Log a gig in 10 seconds',
-    body: "Tap the big + button at the bottom to log a new gig. Just venue, date, and fee. Everything else can come later.",
+    kind: 'form',
+    id: 'profile-basics',
+    emoji: '👋',
+    title: 'What should we call you?',
+    render: (profile) => `
+      <div style="text-align:left;margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Name or act name</label>
+        <input id="onbName" type="text" value="${escapeHtml(profile.display_name || profile.name || '')}" placeholder="Your name or band/act" style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;box-sizing:border-box;">
+      </div>
+      <div style="text-align:left;margin-bottom:4px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Home postcode</label>
+        <input id="onbPostcode" type="text" value="${escapeHtml(profile.home_postcode || profile.postcode || '')}" placeholder="e.g. SE1 9SG" style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;">
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Used for mileage claims and travel-time estimates. Never shared.</div>
+      </div>`,
+    collect: () => {
+      const name = (document.getElementById('onbName')?.value || '').trim();
+      const postcode = (document.getElementById('onbPostcode')?.value || '').trim().toUpperCase();
+      const body = {};
+      if (name) { body.display_name = name; body.name = name; }
+      if (postcode) body.home_postcode = postcode;
+      return body;
+    },
     cta: 'Next',
   },
   {
+    kind: 'form',
+    id: 'profile-music',
+    emoji: '🎸',
+    title: 'What do you play?',
+    render: (profile) => {
+      const current = Array.isArray(profile.instruments)
+        ? profile.instruments
+        : (typeof profile.instruments === 'string'
+            ? profile.instruments.replace(/[{}]/g, '').split(',').map(s => s.trim()).filter(Boolean)
+            : []);
+      const options = ['Vocals', 'Guitar', 'Bass', 'Drums', 'Keys', 'Sax', 'Trumpet', 'Violin', 'DJ'];
+      const chips = options.map(opt => {
+        const active = current.map(c => c.toLowerCase()).includes(opt.toLowerCase());
+        return `<label style="display:inline-flex;align-items:center;gap:6px;background:${active ? 'var(--accent)' : 'var(--bg)'};color:${active ? '#000' : 'var(--text)'};border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" name="onbInstrument" value="${escapeHtml(opt)}" ${active ? 'checked' : ''} style="display:none;">
+          ${escapeHtml(opt)}
+        </label>`;
+      }).join('');
+      const avail = profile.available_for_deps === true;
+      return `
+        <div style="text-align:left;margin-bottom:14px;">
+          <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Instruments</label>
+          <div id="onbInstrChips" style="display:flex;flex-wrap:wrap;gap:6px;">${chips}</div>
+        </div>
+        <div style="text-align:left;">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;">
+            <input id="onbDepToggle" type="checkbox" ${avail ? 'checked' : ''} style="accent-color:var(--accent);">
+            <span style="font-size:14px;color:var(--text);">Available for dep gigs</span>
+          </label>
+          <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Other users can invite you to cover their bookings. You can change this later.</div>
+        </div>`;
+    },
+    collect: () => {
+      const body = {};
+      const inputs = document.querySelectorAll('input[name="onbInstrument"]:checked');
+      body.instruments = Array.from(inputs).map(i => i.value);
+      body.available_for_deps = !!document.getElementById('onbDepToggle')?.checked;
+      return body;
+    },
+    cta: 'Next',
+    // Wire chip toggle visual after render.
+    afterRender: () => {
+      const chipHost = document.getElementById('onbInstrChips');
+      if (!chipHost) return;
+      chipHost.querySelectorAll('label').forEach(lbl => {
+        const input = lbl.querySelector('input');
+        if (!input) return;
+        input.addEventListener('change', () => {
+          const active = input.checked;
+          lbl.style.background = active ? 'var(--accent)' : 'var(--bg)';
+          lbl.style.color = active ? '#000' : 'var(--text)';
+          lbl.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+        });
+      });
+    },
+  },
+  {
+    kind: 'info',
     emoji: '💷',
     title: 'Get paid, stay sane',
     body: "Every gig can turn into an invoice with one tap. Overdue invoices show up on your home screen so nothing slips.",
     cta: 'Next',
   },
   {
-    emoji: '📅',
-    title: 'Share your availability',
-    body: "Open Settings to grab your public share link. Anyone can see what dates you're free, with no login needed.",
-    cta: 'Next',
-  },
-  {
+    kind: 'info',
     emoji: '✨',
     title: "You're ready",
-    body: "Your first gig is the hardest. After that it gets addictive. Let's go.",
-    cta: "Let's go",
+    body: "Add your first gig and everything else falls into place. Your home and Finance panels fill up as you go.",
+    cta: "Log my first gig",
+    final: true,
   },
 ];
 
@@ -8297,23 +8377,64 @@ function showOnboardingStep(index) {
     `<span style="width:6px;height:6px;border-radius:50%;background:${i === index ? 'var(--accent)' : 'var(--border)'};"></span>`
   ).join('');
 
+  // S10-06: render info steps with step.body, form steps with step.render(profile).
+  // Form steps also get an optional afterRender() hook for post-insertion wiring
+  // (chip toggles, etc.) and a collect() call on Next that POSTs to /api/user/profile.
+  const profile = window._cachedProfile || {};
+  const bodyHtml = step.kind === 'form' && typeof step.render === 'function'
+    ? step.render(profile)
+    : `<div style="font-size:14px;color:var(--text-2);line-height:1.5;">${escapeHtml(step.body || '')}</div>`;
+
   overlay.innerHTML = `
     <div style="max-width:360px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px 24px;text-align:center;box-shadow:0 30px 60px rgba(0,0,0,.5);">
       <div style="font-size:52px;margin-bottom:12px;">${step.emoji}</div>
-      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:10px;">${escapeHtml(step.title)}</div>
-      <div style="font-size:14px;color:var(--text-2);line-height:1.5;margin-bottom:20px;">${escapeHtml(step.body)}</div>
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:14px;">${escapeHtml(step.title)}</div>
+      <div style="margin-bottom:20px;">${bodyHtml}</div>
       <div style="display:flex;justify-content:center;gap:6px;margin-bottom:20px;">${pips}</div>
       <button id="onbNext" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:12px;font-size:15px;font-weight:700;cursor:pointer;">${escapeHtml(step.cta)}</button>
       <button id="onbSkip" style="margin-top:10px;width:100%;background:transparent;color:var(--text-3);border:none;padding:8px;font-size:13px;cursor:pointer;">Skip tour</button>
     </div>`;
 
+  // Wire any post-render hooks (chip toggle visuals, focus, etc.)
+  if (step.kind === 'form' && typeof step.afterRender === 'function') {
+    try { step.afterRender(); } catch (err) { console.error('Onboarding afterRender failed:', err); }
+  }
+
   const nextBtn = overlay.querySelector('#onbNext');
   const skipBtn = overlay.querySelector('#onbSkip');
-  nextBtn.onclick = () => showOnboardingStep(index + 1);
-  skipBtn.onclick = () => finishOnboarding();
+  nextBtn.onclick = async () => {
+    // For form steps, collect values and persist before advancing.
+    if (step.kind === 'form' && typeof step.collect === 'function') {
+      try {
+        nextBtn.disabled = true;
+        nextBtn.textContent = 'Saving…';
+        const body = step.collect();
+        if (body && Object.keys(body).length) {
+          const res = await fetch('/api/user/profile', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (res.ok) {
+            const updated = await res.json().catch(() => null);
+            if (updated) window._cachedProfile = Object.assign({}, window._cachedProfile || {}, updated);
+            else window._cachedProfile = Object.assign({}, window._cachedProfile || {}, body);
+          }
+        }
+      } catch (err) {
+        console.error('Onboarding step save failed (non-fatal, continuing):', err);
+      }
+    }
+    if (step.final) {
+      await finishOnboarding({ openGigWizard: true });
+    } else {
+      showOnboardingStep(index + 1);
+    }
+  };
+  skipBtn.onclick = () => finishOnboarding({ openGigWizard: false });
 }
 
-async function finishOnboarding() {
+async function finishOnboarding(opts) {
   const overlay = document.getElementById('onboardingOverlay');
   if (overlay) overlay.remove();
   try {
@@ -8322,6 +8443,15 @@ async function finishOnboarding() {
     if (window._cachedProfile) window._cachedProfile.onboarded_at = new Date().toISOString();
   } catch (err) {
     console.error('Mark onboarded failed (non-fatal):', err);
+  }
+  // S10-06: if the final step asked us to, jump straight into the gig wizard so
+  // the first-run experience ends with the user adding their first booking.
+  if (opts && opts.openGigWizard) {
+    try {
+      if (typeof openGigWizard === 'function') setTimeout(() => openGigWizard(), 200);
+    } catch (err) {
+      console.error('Auto-open gig wizard failed (non-fatal):', err);
+    }
   }
 }
 window.finishOnboarding = finishOnboarding;
