@@ -6515,14 +6515,17 @@ function showMapsChooser(address) {
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
       <div style="font-size:15px;font-weight:700;color:var(--text);text-align:center;margin-bottom:4px;">Open directions in</div>
       <div style="font-size:12px;color:var(--text-2);text-align:center;margin-bottom:16px;">Pick an app. We'll remember it next time if you tick the box below.</div>
-      <button onclick="pickMapsApp('google','${safeAddr}')" class="pill-o" style="width:100%;justify-content:flex-start;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">
-        <span style="font-size:20px;">🗺️</span><span style="font-size:14px;font-weight:600;">Google Maps</span>
+      <button onclick="pickMapsApp('google','${safeAddr}')" class="pill-o" style="width:100%;justify-content:space-between;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;">
+        <span style="font-size:14px;font-weight:600;color:var(--text);">Google Maps</span>
+        <span style="color:var(--accent);font-size:16px;">\u203A</span>
       </button>
-      <button onclick="pickMapsApp('apple','${safeAddr}')" class="pill-o" style="width:100%;justify-content:flex-start;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">
-        <span style="font-size:20px;">🍎</span><span style="font-size:14px;font-weight:600;">Apple Maps</span>
+      <button onclick="pickMapsApp('apple','${safeAddr}')" class="pill-o" style="width:100%;justify-content:space-between;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;">
+        <span style="font-size:14px;font-weight:600;color:var(--text);">Apple Maps</span>
+        <span style="color:var(--accent);font-size:16px;">\u203A</span>
       </button>
-      <button onclick="pickMapsApp('waze','${safeAddr}')" class="pill-o" style="width:100%;justify-content:flex-start;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px;">
-        <span style="font-size:20px;">🚗</span><span style="font-size:14px;font-weight:600;">Waze</span>
+      <button onclick="pickMapsApp('waze','${safeAddr}')" class="pill-o" style="width:100%;justify-content:space-between;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;">
+        <span style="font-size:14px;font-weight:600;color:var(--text);">Waze</span>
+        <span style="color:var(--accent);font-size:16px;">\u203A</span>
       </button>
       <label style="display:flex;align-items:center;gap:10px;padding:8px 4px;cursor:pointer;">
         <input type="checkbox" id="mapsRememberChoice" checked style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;">
@@ -6552,14 +6555,14 @@ function openMapsPreferencePicker() {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:flex-end;justify-content:center;';
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 
-  const row = (value, label, emoji) => {
+  const row = (value, label) => {
     const active = current === value;
     const neutralActive = !current && value === 'ask';
     const isSelected = active || neutralActive;
     return `
-      <button onclick="applyMapsPreference('${value}')" class="pill-o" style="width:100%;justify-content:space-between;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;${isSelected ? 'border-color:var(--accent);background:var(--accent-dim);' : ''}">
-        <span style="display:flex;align-items:center;gap:12px;"><span style="font-size:20px;">${emoji}</span><span style="font-size:14px;font-weight:600;">${label}</span></span>
-        ${isSelected ? '<span style="color:var(--accent);font-size:16px;">✓</span>' : ''}
+      <button onclick="applyMapsPreference('${value}')" class="pill-o" style="width:100%;justify-content:space-between;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;${isSelected ? 'border-color:var(--accent);background:var(--accent-dim);' : ''}">
+        <span style="font-size:14px;font-weight:600;color:var(--text);">${label}</span>
+        ${isSelected ? '<span style="color:var(--accent);font-size:16px;">\u2713</span>' : '<span style="color:var(--accent);font-size:16px;">\u203A</span>'}
       </button>`;
   };
 
@@ -6568,10 +6571,10 @@ function openMapsPreferencePicker() {
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
       <div style="font-size:15px;font-weight:700;color:var(--text);text-align:center;margin-bottom:4px;">Preferred maps app</div>
       <div style="font-size:12px;color:var(--text-2);text-align:center;margin-bottom:16px;">Used when you tap a venue address.</div>
-      ${row('google','Google Maps','🗺️')}
-      ${row('apple','Apple Maps','🍎')}
-      ${row('waze','Waze','🚗')}
-      ${row('ask','Ask me each time','❓')}
+      ${row('google','Google Maps')}
+      ${row('apple','Apple Maps')}
+      ${row('waze','Waze')}
+      ${row('ask','Ask me each time')}
       <button onclick="document.getElementById('mapsPrefPickerOverlay').remove()" style="width:100%;background:none;border:none;color:var(--text-2);padding:12px;margin-top:4px;font-size:14px;cursor:pointer;">Close</button>
     </div>
   `;
