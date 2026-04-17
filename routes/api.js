@@ -999,11 +999,14 @@ router.get('/places/detail', async (req, res) => {
 
 router.get('/distance', async (req, res) => {
   const key = process.env.GOOGLE_PLACES_KEY;
-  if (!key) return res.json({ distance: null });
+  if (!key) {
+    console.error('[distance] GOOGLE_PLACES_KEY not set');
+    return res.json({ distance: null, error: 'key_missing' });
+  }
 
   const origin = req.query.origin;
   const dest = req.query.destination;
-  if (!origin || !dest) return res.json({ distance: null });
+  if (!origin || !dest) return res.json({ distance: null, error: 'missing_params' });
 
   try {
     const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(dest)}&units=imperial&key=${key}`;
@@ -1011,17 +1014,28 @@ router.get('/distance', async (req, res) => {
     const data = await response.json();
     const element = data.rows?.[0]?.elements?.[0];
     if (element?.status === 'OK') {
-      res.json({
+      return res.json({
         distance: element.distance?.text || null,
         duration: element.duration?.text || null,
         miles: element.distance ? Math.round(element.distance.value / 1609.34) : null,
       });
-    } else {
-      res.json({ distance: null });
     }
+    // Log everything we need to diagnose why this failed
+    console.error('[distance] non-OK response', {
+      top_status: data.status,
+      top_error: data.error_message,
+      element_status: element?.status,
+      origin,
+      dest,
+    });
+    return res.json({
+      distance: null,
+      error: data.status || element?.status || 'unknown',
+      error_message: data.error_message || null,
+    });
   } catch (error) {
-    console.error('Distance matrix error:', error);
-    res.json({ distance: null });
+    console.error('[distance] fetch threw', error);
+    return res.json({ distance: null, error: 'fetch_failed', error_message: String(error) });
   }
 });
 
