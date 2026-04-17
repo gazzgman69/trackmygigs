@@ -352,7 +352,8 @@ router.patch('/user/profile', async (req, res) => {
   try {
     const { name, display_name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url,
             bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme,
-            epk_bio, epk_photo_url, epk_video_url, epk_audio_url } = req.body;
+            epk_bio, epk_photo_url, epk_video_url, epk_audio_url,
+            rate_standard, rate_premium, rate_dep, rate_deposit_pct, rate_notes } = req.body;
 
     // instruments comes as a comma-separated string from the client but the
     // column is TEXT[].  Convert it to a proper PG array (or null to keep
@@ -374,11 +375,19 @@ router.patch('/user/profile', async (req, res) => {
        epk_bio = COALESCE($15, epk_bio),
        epk_photo_url = COALESCE($16, epk_photo_url),
        epk_video_url = COALESCE($17, epk_video_url),
-       epk_audio_url = COALESCE($18, epk_audio_url)
+       epk_audio_url = COALESCE($18, epk_audio_url),
+       rate_standard = COALESCE($19, rate_standard),
+       rate_premium = COALESCE($20, rate_premium),
+       rate_dep = COALESCE($21, rate_dep),
+       rate_deposit_pct = COALESCE($22, rate_deposit_pct),
+       rate_notes = COALESCE($23, rate_notes)
        WHERE id = $8 RETURNING *`,
       [name, phone, instrumentsArr, home_postcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
        bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name,
-       epk_bio, epk_photo_url, epk_video_url, epk_audio_url]
+       epk_bio, epk_photo_url, epk_video_url, epk_audio_url,
+       rate_standard || null, rate_premium || null, rate_dep || null,
+       rate_deposit_pct != null && rate_deposit_pct !== '' ? parseInt(rate_deposit_pct, 10) : null,
+       rate_notes]
     );
 
     res.json(result.rows[0]);

@@ -159,6 +159,15 @@ async function runMigrations() {
     // Thread classification: 'dep' threads are private 1:1 chats with a dep;
     // anything else is a gig-band group thread. Older rows default to NULL.
     await db.query(`ALTER TABLE threads ADD COLUMN IF NOT EXISTS kind VARCHAR(32)`);
+    // Rate card: default rates the user quotes for different gig types.
+    // Stored as DECIMAL so we never hit floating-point fee errors.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_standard DECIMAL(10,2)`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_premium DECIMAL(10,2)`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_dep DECIMAL(10,2)`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_deposit_pct INTEGER`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_notes TEXT`);
+    // Onboarding: has the user seen the welcome tour yet?
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_completed_at TIMESTAMP`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);

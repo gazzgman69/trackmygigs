@@ -548,22 +548,68 @@ async function checkCalendarNudges() {
     }
     window._calendarNudges = toReview;
     bar.style.display = 'block';
-    bar.innerHTML = `
-      <div onclick="openGigNudge()" style="margin:8px 16px;padding:12px 16px;background:var(--accent-dim);border:1px solid rgba(0,207,130,.3);border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span style="font-size:20px;">📅</span>
-          <div>
-            <div style="font-size:14px;font-weight:600;color:var(--text);">${toReview.length} import${toReview.length === 1 ? '' : 's'} to review</div>
-            <div style="font-size:11px;color:var(--text-2);">Found possible gigs in your calendar</div>
-          </div>
-        </div>
-        <span style="font-size:18px;color:var(--accent);">&#8250;</span>
-      </div>
-    `;
+    bar.innerHTML = renderImportsBarHtml(toReview);
   } catch (e) {
     // Silent fail - calendar nudges are optional
   }
 }
+
+// Collapsible imports-to-review bar with inline items (matches mockup lines 396-417)
+function renderImportsBarHtml(toReview) {
+  const count = toReview.length;
+  const expanded = !!window._importsBarExpanded;
+  const itemsHtml = toReview.slice(0, 6).map((e, i) => {
+    const raw = e.start_time || e.start || e.date || '';
+    let dateLabel = '';
+    try {
+      if (raw) {
+        const d = new Date(raw);
+        if (!isNaN(d.getTime())) {
+          dateLabel = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+        }
+      }
+    } catch (_) {}
+    const title = (e.summary || e.title || 'Calendar event').replace(/"/g, '&quot;');
+    const src = e.source_label || 'Calendar';
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${title}</div>
+          <div style="font-size:10px;color:var(--text-3);">${dateLabel ? dateLabel + ' · ' : ''}${src}</div>
+        </div>
+        <button onclick="event.stopPropagation();quickImportNudge(${i})" style="font-size:11px;font-weight:600;color:var(--success);background:none;border:1px solid rgba(63,185,80,.3);border-radius:10px;padding:3px 10px;cursor:pointer;">Gig</button>
+        <button onclick="event.stopPropagation();dismissNudge(${i})" style="font-size:11px;color:var(--text-3);background:none;border:1px solid var(--border);border-radius:10px;padding:3px 8px;cursor:pointer;">Skip</button>
+      </div>
+    `;
+  }).join('');
+  const overflow = count > 6
+    ? `<div style="padding-top:8px;text-align:center;"><button onclick="event.stopPropagation();openGigNudge()" style="background:none;border:none;color:var(--accent);font-size:11px;font-weight:600;cursor:pointer;">See all ${count} →</button></div>`
+    : '';
+  return `
+    <div style="margin:8px 16px 0;background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+      <div onclick="toggleImportsBar()" style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="min-width:22px;height:22px;padding:0 7px;border-radius:11px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#000;">${count}</div>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text);">Imports to review</div>
+            <div style="font-size:10px;color:var(--text-3);">Tap to ${expanded ? 'collapse' : 'expand'} · found in your calendar</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);transform:rotate(${expanded ? '180' : '0'}deg);transition:transform .15s;">▾</div>
+      </div>
+      ${expanded ? `<div style="border-top:1px solid var(--border);padding:4px 14px 12px;">${itemsHtml}${overflow}</div>` : ''}
+    </div>
+  `;
+}
+
+function toggleImportsBar() {
+  window._importsBarExpanded = !window._importsBarExpanded;
+  const bar = document.getElementById('calendarNudgeBar');
+  if (bar && Array.isArray(window._calendarNudges)) {
+    bar.innerHTML = renderImportsBarHtml(window._calendarNudges);
+  }
+}
+window.toggleImportsBar = toggleImportsBar;
 
 function switchGigTab(el, mode) {
   gigViewMode = mode;
@@ -3959,9 +4005,16 @@ function editProfile() {
         </div>
       </div>
       <div id="invFormatPreview" style="font-size:12px;color:var(--accent);margin-bottom:14px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">Next invoice: ${escapeHtml(generateInvoiceNumber(profile.invoice_prefix || 'INV', profile.invoice_next_number || 1, profile.invoice_format || 'plain'))}</div>
+      ${buildRateCardEditor(profile)}
     </div>`;
 
   openPanel('panel-edit-profile');
+
+  // Live preview of EPK video if we're rendering an editor that includes it
+  setTimeout(() => {
+    const inp = document.getElementById('epkVideo');
+    if (inp && typeof renderEpkVideoPreview === 'function') renderEpkVideoPreview(inp.value);
+  }, 0);
 }
 
 async function saveProfile() {
@@ -4110,8 +4163,9 @@ function buildEPKEditor() {
 
       <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Video URL</label>
-        <input id="epkVideo" type="url" value="${escapeHtml(profile.epk_video_url || '')}" placeholder="https://youtube.com/watch?v=..." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
+        <input id="epkVideo" type="url" value="${escapeHtml(profile.epk_video_url || '')}" placeholder="https://youtube.com/watch?v=..." oninput="renderEpkVideoPreview(this.value)" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">YouTube, Vimeo, or any direct video link.</div>
+        <div id="epkVideoPreview" style="margin-top:8px;"></div>
       </div>
 
       <div style="margin-bottom:14px;">
@@ -4128,6 +4182,126 @@ function buildEPKEditor() {
     </div>`;
 }
 window.buildEPKEditor = buildEPKEditor;
+
+// Parse a YouTube or Vimeo URL and return an embed URL, or null for direct files.
+function epkEmbedUrl(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') {
+      const id = u.pathname.replace(/^\//, '').split('/')[0];
+      return id ? `https://www.youtube.com/embed/${id}` : null;
+    }
+    if (host.endsWith('youtube.com')) {
+      const id = u.searchParams.get('v');
+      if (id) return `https://www.youtube.com/embed/${id}`;
+      // handle /embed/ and /shorts/
+      const m = u.pathname.match(/\/(?:embed|shorts)\/([^/?#]+)/);
+      if (m) return `https://www.youtube.com/embed/${m[1]}`;
+    }
+    if (host.endsWith('vimeo.com')) {
+      const id = u.pathname.split('/').filter(Boolean)[0];
+      return id ? `https://player.vimeo.com/video/${id}` : null;
+    }
+  } catch (_) {}
+  return null;
+}
+
+function renderEpkVideoPreview(url) {
+  const box = document.getElementById('epkVideoPreview');
+  if (!box) return;
+  const embed = epkEmbedUrl(url);
+  if (embed) {
+    box.innerHTML = `
+      <div style="position:relative;width:100%;padding-bottom:56.25%;background:var(--card);border-radius:var(--rs);overflow:hidden;">
+        <iframe src="${embed}" style="position:absolute;inset:0;width:100%;height:100%;border:0;" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+      </div>
+      <div style="font-size:10px;color:var(--text-3);margin-top:3px;">This is how it will show on your public EPK.</div>
+    `;
+  } else if (url && /^https?:\/\//i.test(url)) {
+    box.innerHTML = `
+      <video controls style="width:100%;border-radius:var(--rs);background:#000;">
+        <source src="${url}">
+      </video>
+      <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Direct video preview. If it does not play, check the URL.</div>
+    `;
+  } else {
+    box.innerHTML = '';
+  }
+}
+window.renderEpkVideoPreview = renderEpkVideoPreview;
+
+// Rate card editor — rendered in the Invoice settings panel
+function buildRateCardEditor(profile) {
+  const p = profile || window._currentUser || {};
+  return `
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">Default rates / rate card</div>
+      <div style="font-size:11px;color:var(--text-3);margin-bottom:12px;">These auto-fill when you create a new gig or invoice. Leave blank if you price each gig from scratch.</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div>
+          <label style="font-size:11px;color:var(--text-2);display:block;margin-bottom:4px;">Standard (£)</label>
+          <input id="rateStandard" type="number" inputmode="decimal" step="1" value="${p.rate_standard != null ? p.rate_standard : ''}" placeholder="280" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-2);display:block;margin-bottom:4px;">Premium / peak (£)</label>
+          <input id="ratePremium" type="number" inputmode="decimal" step="1" value="${p.rate_premium != null ? p.rate_premium : ''}" placeholder="400" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div>
+          <label style="font-size:11px;color:var(--text-2);display:block;margin-bottom:4px;">Dep rate (£)</label>
+          <input id="rateDep" type="number" inputmode="decimal" step="1" value="${p.rate_dep != null ? p.rate_dep : ''}" placeholder="200" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-2);display:block;margin-bottom:4px;">Deposit %</label>
+          <input id="rateDepositPct" type="number" inputmode="numeric" min="0" max="100" step="1" value="${p.rate_deposit_pct != null ? p.rate_deposit_pct : ''}" placeholder="25" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px;color:var(--text-2);display:block;margin-bottom:4px;">Notes for bookers</label>
+        <textarea id="rateNotes" rows="2" placeholder="e.g. Rates include PA and lights. Travel outside 30 miles quoted separately." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;font-family:inherit;">${escapeHtml(p.rate_notes || '')}</textarea>
+      </div>
+
+      <button onclick="saveRateCard()" class="pill-g" style="width:100%;">Save rate card</button>
+    </div>
+  `;
+}
+window.buildRateCardEditor = buildRateCardEditor;
+
+async function saveRateCard() {
+  const rate_standard = document.getElementById('rateStandard')?.value?.trim();
+  const rate_premium = document.getElementById('ratePremium')?.value?.trim();
+  const rate_dep = document.getElementById('rateDep')?.value?.trim();
+  const rate_deposit_pct = document.getElementById('rateDepositPct')?.value?.trim();
+  const rate_notes = document.getElementById('rateNotes')?.value?.trim();
+  try {
+    const res = await fetch('/api/user/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rate_standard: rate_standard || null,
+        rate_premium: rate_premium || null,
+        rate_dep: rate_dep || null,
+        rate_deposit_pct: rate_deposit_pct || null,
+        rate_notes: rate_notes || '',
+      }),
+    });
+    if (!res.ok) throw new Error('save failed');
+    const updated = await res.json();
+    window._cachedProfile = updated;
+    window._currentUser = { ...window._currentUser, ...updated };
+    showToast('Rate card saved');
+  } catch (err) {
+    console.error('Save rate card error:', err);
+    showToast('Failed to save rate card');
+  }
+}
+window.saveRateCard = saveRateCard;
 
 async function saveEPK() {
   const epk_bio = document.getElementById('epkBio')?.value?.trim();
@@ -6017,10 +6191,13 @@ function saveInvoiceDraft() {
 // ── Block Dates Panel ─────────────────────────────────────────────────────────
 
 function setBlockMode(mode) {
-  ['single', 'range', 'recurring'].forEach((m) => {
-    document.getElementById('block-' + m).style.display = m === mode ? '' : 'none';
-    document.getElementById('bm-' + m).classList.toggle('active', m === mode);
+  ['single', 'range', 'recurring', 'bulk'].forEach((m) => {
+    const el = document.getElementById('block-' + m);
+    const btn = document.getElementById('bm-' + m);
+    if (el) el.style.display = m === mode ? '' : 'none';
+    if (btn) btn.classList.toggle('active', m === mode);
   });
+  if (mode === 'bulk') initBulkBlockGrid();
 }
 window.setBlockMode = setBlockMode;
 
@@ -6028,6 +6205,82 @@ function toggleDayBtn(btn) {
   btn.classList.toggle('active');
 }
 window.toggleDayBtn = toggleDayBtn;
+
+// ── Bulk block dates grid ──────────────────────────────────────────────────
+// Lightweight mini month calendar where each date is a togglable cell.
+// State is kept in window._bulkBlockState so the user can switch months
+// without losing selection.
+let _bulkBlockMonthOffset = 0;
+if (!window._bulkBlockState) window._bulkBlockState = new Set();
+
+function initBulkBlockGrid() {
+  _bulkBlockMonthOffset = 0;
+  renderBulkBlockGrid();
+}
+
+function shiftBulkMonth(delta) {
+  _bulkBlockMonthOffset += delta;
+  renderBulkBlockGrid();
+}
+window.shiftBulkMonth = shiftBulkMonth;
+
+function renderBulkBlockGrid() {
+  const grid = document.getElementById('bulkMonthGrid');
+  const label = document.getElementById('bulkMonthLabel');
+  if (!grid || !label) return;
+
+  const now = new Date();
+  const display = new Date(now.getFullYear(), now.getMonth() + _bulkBlockMonthOffset, 1);
+  const year = display.getFullYear();
+  const month = display.getMonth();
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                      'July', 'August', 'September', 'October', 'November', 'December'];
+  label.textContent = monthNames[month] + ' ' + year;
+
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  // Monday-start week: JS getDay returns 0=Sun, so shift to 6=Sun
+  const leading = (firstDay.getDay() + 6) % 7;
+  const daysInMonth = lastDay.getDate();
+
+  const headers = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+    .map(d => `<div style="font-size:10px;color:var(--text-3);font-weight:600;text-align:center;">${d}</div>`).join('');
+  let cells = '';
+  for (let i = 0; i < leading; i++) cells += '<div></div>';
+  const todayIso = new Date().toISOString().slice(0, 10);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const selected = window._bulkBlockState.has(iso);
+    const isToday = (iso === todayIso);
+    let style = 'padding:8px 0;border-radius:8px;font-size:12px;text-align:center;cursor:pointer;';
+    if (selected) {
+      style += 'background:var(--danger,#ef4444);color:#fff;font-weight:700;';
+    } else if (isToday) {
+      style += 'background:var(--accent-dim);color:var(--accent);font-weight:700;border:1px solid var(--accent);';
+    } else {
+      style += 'color:var(--text);background:transparent;';
+    }
+    cells += `<div data-iso="${iso}" style="${style}" onclick="toggleBulkDay('${iso}')">${d}</div>`;
+  }
+
+  grid.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;">
+      ${headers}
+      ${cells}
+    </div>
+  `;
+
+  const count = window._bulkBlockState.size;
+  const countEl = document.getElementById('bulkSelectedCount');
+  if (countEl) countEl.textContent = `${count} date${count === 1 ? '' : 's'} selected`;
+}
+
+function toggleBulkDay(iso) {
+  if (window._bulkBlockState.has(iso)) window._bulkBlockState.delete(iso);
+  else window._bulkBlockState.add(iso);
+  renderBulkBlockGrid();
+}
+window.toggleBulkDay = toggleBulkDay;
 
 async function submitBlockDate(mode) {
   let payload = { mode };
@@ -6047,6 +6300,28 @@ async function submitBlockDate(mode) {
     const days = Array.from(document.querySelectorAll('.day-btn.active')).map(b => b.textContent);
     if (!days.length) { showToast('Select at least one day'); return; }
     payload.days = days;
+  } else if (mode === 'bulk') {
+    const dates = Array.from(window._bulkBlockState || []);
+    if (!dates.length) { showToast('Pick at least one date'); return; }
+    const reason = (document.getElementById('blockBulkReason') || {}).value || '';
+    try {
+      let ok = 0, fail = 0;
+      for (const d of dates) {
+        const r = await fetch('/api/blocked-dates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'single', date: d, reason }),
+        });
+        if (r.ok) ok++; else fail++;
+      }
+      if (window._bulkBlockState) window._bulkBlockState.clear();
+      closePanel('panel-block');
+      if (fail === 0) showToast(`Blocked ${ok} date${ok === 1 ? '' : 's'}`);
+      else showToast(`Blocked ${ok}, failed ${fail}`);
+    } catch (e) {
+      showToast('Failed to block dates');
+    }
+    return;
   }
 
   try {
