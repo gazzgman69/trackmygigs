@@ -1627,7 +1627,7 @@ function buildProfileHTML(content, profile) {
           <span style="color:var(--text);font-size:14px;">Repertoire library</span>
           <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
-        <div onclick="openPanel('epk-panel')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+        <div onclick="viewEPK()" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span style="color:var(--text);font-size:14px;">Professional EPK</span>
           <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
