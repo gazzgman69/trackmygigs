@@ -1965,7 +1965,18 @@ async function renderOffersScreen() {
 }
 
 function buildOffersHTML(content, offers) {
-  const pending = offers.filter(o => o.status === 'pending');
+  // S7-08: filter out offers snoozed until the future. snoozed_until comes from the
+  // server, which is now the source of truth; localStorage-only snoozes from older
+  // builds are honoured via the same check since the per-offer mirror uses timestamps.
+  const nowMs = Date.now();
+  const localSnoozes = JSON.parse(localStorage.getItem('snoozedOffers') || '{}');
+  const isSnoozed = (o) => {
+    if (o.snoozed_until && new Date(o.snoozed_until).getTime() > nowMs) return true;
+    const local = localSnoozes[o.id];
+    if (local && Number(local) > nowMs) return true;
+    return false;
+  };
+  const pending = offers.filter(o => o.status === 'pending' && !isSnoozed(o));
   const acceptedN = offers.filter(o => o.status === 'accepted').length;
   const declinedN = offers.filter(o => o.status === 'declined' || o.status === 'expired').length;
 
@@ -2359,7 +2370,11 @@ function buildProfileHTML(content, profile) {
           <span style="color:var(--accent);font-size:16px;" id="docs-arrow">›</span>
         </div>
         <div id="docs-section" style="display:none;background:var(--card);padding:8px 14px;border-bottom:1px solid var(--border);">
-          <div style="font-size:12px;color:var(--text-2);padding:6px 0;">DBS Check · Public Liability Insurance · Risk Assessment</div>
+          <!-- S8-03: hardcoded DBS/PLI/RA list removed. Upload-with-expiry UI is not built yet,
+               so we show a truthful coming-soon state instead of fake document rows. -->
+          <div style="font-size:12px;color:var(--text-2);padding:6px 0;line-height:1.5;">
+            Upload DBS, public liability insurance, risk assessments and other certs so leaders can see them at a glance. Coming soon.
+          </div>
         </div>
         <div onclick="openPanel('panel-finance'); if (typeof renderFinancePanel === 'function') renderFinancePanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span style="color:var(--text);font-size:14px;">Earnings & tax summary</span>
@@ -2374,7 +2389,12 @@ function buildProfileHTML(content, profile) {
           <span style="color:var(--accent);font-size:16px;" id="connected-arrow">›</span>
         </div>
         <div id="connected-section" style="display:none;background:var(--card);padding:8px 14px;border-bottom:1px solid var(--border);">
-          <div style="font-size:12px;color:var(--text-2);padding:6px 0;">Musician Tracker · ClientFlow CRM</div>
+          <!-- S8-04: dead placeholder removed. No account-linking flow exists yet between
+               TrackMyGigs and Musician Tracker / ClientFlow, so a truthful coming-soon
+               state replaces the hardcoded list. -->
+          <div style="font-size:12px;color:var(--text-2);padding:6px 0;line-height:1.5;">
+            Link your Musician Tracker and ClientFlow accounts for shared contacts, earnings and calendars. Coming soon.
+          </div>
         </div>
         <div onclick="openGigNudge()" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
           <span style="color:var(--text);font-size:14px;">Google Calendar</span>
@@ -3399,6 +3419,14 @@ function dismissNotification(key) {
     dismissed.push(key);
     localStorage.setItem('dismissedNotifications', JSON.stringify(dismissed));
   }
+  // S8-05: persist server-side so dismissals sync across devices and survive
+  // localStorage wipes. localStorage stays as an offline-first mirror so the
+  // UI reacts immediately even if the fetch fails.
+  fetch('/api/notifications/dismiss', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  }).catch(() => {});
   renderNotificationsPanel();
 }
 
@@ -3407,11 +3435,21 @@ function clearAllNotifications() {
   fetch('/api/notifications').then((r) => r.json()).then((list) => {
     if (!Array.isArray(list)) return;
     const dismissed = JSON.parse(localStorage.getItem('dismissedNotifications') || '[]');
+    const keys = [];
     list.forEach((n) => {
       const k = notifKey(n);
       if (!dismissed.includes(k)) dismissed.push(k);
+      keys.push(k);
     });
     localStorage.setItem('dismissedNotifications', JSON.stringify(dismissed));
+    // S8-05: bulk-persist dismissals on the server.
+    if (keys.length) {
+      fetch('/api/notifications/dismiss-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys }),
+      }).catch(() => {});
+    }
     const dot = document.getElementById('notificationDot');
     if (dot) dot.style.display = 'none';
     renderNotificationsPanel();
@@ -4135,7 +4173,14 @@ async function markGigDetailsComplete(gigId) {
 }
 
 async function deleteGig(gigId) {
-  if (!confirm('Are you sure you want to delete this gig?')) return;
+  // S1-05: in-app modal replaces window.confirm so the dialog matches the app
+  // design system and does not leak the host domain in its title.
+  const ok = await showConfirm('This will remove the gig, its set times, and any unpaid chase cadence. Invoices already sent will not be deleted.', {
+    title: 'Delete this gig?',
+    confirmLabel: 'Delete gig',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const res = await fetch(`/api/gigs/${gigId}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -4343,9 +4388,18 @@ async function saveEditGig(gigId) {
     window._cachedStats = null;
     closePanel('panel-edit-gig');
     renderGigsList(window._cachedGigs);
+    // S1-04: if the gig detail panel is still open underneath the edit panel, it is
+    // rendered from the pre-edit gig payload. Re-fetch and re-open so the user sees
+    // the new fee / date / venue immediately instead of the stale figures.
+    try {
+      const detailPanel = document.getElementById('panel-gig-detail');
+      if (detailPanel && detailPanel.classList.contains('active')) {
+        await openGigDetail(gigId);
+      }
+    } catch (_) { /* non-fatal — list has already refreshed */ }
   } catch (err) {
     console.error('Save gig error:', err);
-    alert('Failed to save gig');
+    showToast('Failed to save gig');
   }
 }
 
@@ -5258,7 +5312,12 @@ async function updateContact(contactId) {
 }
 
 async function deleteContact(contactId) {
-  if (!confirm('Delete this contact? This cannot be undone.')) return;
+  const ok = await showConfirm('Delete this contact? This cannot be undone.', {
+    title: 'Delete contact?',
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const res = await fetch(`/api/contacts/${contactId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Delete failed');
@@ -5756,7 +5815,11 @@ async function importChordProSongs() {
 }
 
 async function markInvoiceAsPaid(invoiceId) {
-  if (!confirm('Mark this invoice as paid?')) return;
+  const ok = await showConfirm('The invoice will show as paid in your finance totals and drop off the overdue list.', {
+    title: 'Mark as paid?',
+    confirmLabel: 'Mark paid',
+  });
+  if (!ok) return;
   try {
     const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`, {
       method: 'PATCH',
@@ -5782,7 +5845,12 @@ async function markInvoiceAsPaid(invoiceId) {
 }
 
 async function deleteInvoice(invoiceId) {
-  if (!confirm('Delete this invoice? This cannot be undone.')) return;
+  const ok = await showConfirm('Delete this invoice? This cannot be undone.', {
+    title: 'Delete invoice?',
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -5895,7 +5963,12 @@ async function acceptOffer(offerId) {
 }
 
 async function declineOffer(offerId) {
-  if (!confirm('Decline this offer?')) return;
+  const ok = await showConfirm('The sender will see this offer as declined. They can resend or pick someone else.', {
+    title: 'Decline this offer?',
+    confirmLabel: 'Decline',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const res = await fetch(`/api/offers/${offerId}`, {
       method: 'PATCH',
@@ -5912,13 +5985,26 @@ async function declineOffer(offerId) {
 }
 
 async function snoozeOffer(offerId, hours) {
-  // Snooze is a local-only UI defer; we stash a snooze_until in localStorage
-  // and hide the offer from the list until that time passes. Server is untouched.
+  // S7-08: snooze is now persisted on the server via `snoozed_until` so the
+  // state survives device switches and re-login. We keep a tiny localStorage
+  // mirror so offline snoozes still mask the offer optimistically; it gets
+  // overwritten on the next successful refresh.
   const until = Date.now() + (hours * 3600 * 1000);
   const key = 'snoozedOffers';
   const store = JSON.parse(localStorage.getItem(key) || '{}');
   store[offerId] = until;
   localStorage.setItem(key, JSON.stringify(store));
+  try {
+    await fetch(`/api/offers/${offerId}/snooze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hours }),
+    });
+  } catch (err) {
+    // Non-fatal: the localStorage mirror still masks the offer on this
+    // device; next online refresh will retry.
+    console.error('Snooze offer server call failed (non-fatal):', err);
+  }
   await refreshOffersAndBadge();
 }
 
@@ -6286,7 +6372,15 @@ async function submitCancelDep(offerId) {
   const reasonEl = document.getElementById('cancelDepReason');
   const reason = reasonEl?.value?.trim() || null;
   const replacement_user_id = window._cancelDepReplacementId || null;
-  if (!confirm('Cancel this commitment? The band will be notified.')) return;
+  {
+    const ok = await showConfirm('The band will be notified you can no longer do this gig. If you picked a replacement, they will receive the offer next.', {
+      title: 'Cancel this commitment?',
+      confirmLabel: 'Cancel commitment',
+      cancelLabel: 'Keep commitment',
+      danger: true,
+    });
+    if (!ok) return;
+  }
   try {
     const resp = await fetch(`/api/offers/${offerId}/cancel`, {
       method: 'POST',
@@ -7866,7 +7960,12 @@ async function saveReceiptEdit(id) {
 window.saveReceiptEdit = saveReceiptEdit;
 
 async function deleteReceipt(id) {
-  if (!confirm('Delete this receipt? This cannot be undone.')) return;
+  const ok = await showConfirm('Delete this receipt? This cannot be undone.', {
+    title: 'Delete receipt?',
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const res = await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed to delete');
@@ -7945,6 +8044,48 @@ function showToast(message) {
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), 2200);
 }
+
+// S1-05: in-app confirm modal. Replaces native window.confirm() which (a) leaks the
+// hosting domain in its title ("kirk.replit.dev says...") and (b) blocks the renderer
+// in headless-test harnesses. Returns a Promise<boolean> so callers can `await showConfirm(...)`.
+// Options: title, message, confirmLabel, cancelLabel, danger (styles confirm button red).
+function showConfirm(message, options) {
+  options = options || {};
+  const title = options.title || 'Are you sure?';
+  const confirmLabel = options.confirmLabel || 'Confirm';
+  const cancelLabel = options.cancelLabel || 'Cancel';
+  const danger = options.danger === true;
+  return new Promise((resolve) => {
+    // Remove any leftover confirm from a previous call.
+    const existing = document.getElementById('confirmOverlay');
+    if (existing) existing.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'confirmOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(13,17,23,.72);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);z-index:10050;display:flex;align-items:center;justify-content:center;padding:20px;';
+    const confirmBg = danger ? 'var(--danger)' : 'var(--accent)';
+    const confirmFg = danger ? '#fff' : '#000';
+    overlay.innerHTML = `
+      <div style="max-width:340px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:22px 20px 16px;box-shadow:0 30px 60px rgba(0,0,0,.6);">
+        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px;">${escapeHtml(title)}</div>
+        <div style="font-size:14px;color:var(--text-2);line-height:1.5;margin-bottom:18px;">${escapeHtml(message)}</div>
+        <div style="display:flex;gap:10px;">
+          <button id="confirmCancel" style="flex:1;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:14px;font-weight:600;cursor:pointer;">${escapeHtml(cancelLabel)}</button>
+          <button id="confirmOk" style="flex:1;background:${confirmBg};color:${confirmFg};border:none;border-radius:10px;padding:10px;font-size:14px;font-weight:700;cursor:pointer;">${escapeHtml(confirmLabel)}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const cleanup = (value) => { overlay.remove(); resolve(value); };
+    overlay.querySelector('#confirmOk').onclick = () => cleanup(true);
+    overlay.querySelector('#confirmCancel').onclick = () => cleanup(false);
+    overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+    // Escape key dismisses.
+    const escHandler = (e) => {
+      if (e.key === 'Escape') { document.removeEventListener('keydown', escHandler); cleanup(false); }
+    };
+    document.addEventListener('keydown', escHandler);
+  });
+}
+window.showConfirm = showConfirm;
 
 function getGreeting() {
   const hour = new Date().getHours();

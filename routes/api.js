@@ -222,6 +222,7 @@ router.get('/offers', async (req, res) => {
       `SELECT
          o.id, o.sender_id, o.recipient_id, o.gig_id, o.offer_type,
          o.status, o.fee, o.deadline, o.created_at, o.responded_at,
+         o.snoozed_until,
          g.band_name, g.venue_name, g.venue_address,
          g.date as gig_date, g.start_time, g.end_time, g.dress_code,
          u.display_name as sender_display_name, u.name as sender_name
@@ -236,6 +237,38 @@ router.get('/offers', async (req, res) => {
   } catch (error) {
     console.error('Get offers error:', error);
     res.status(500).json({ error: 'Failed to fetch offers' });
+  }
+});
+
+// S7-08: snooze a single offer server-side. The client sends `hours` (float
+// OK) and we stamp snoozed_until = NOW() + interval. Clearing a snooze is
+// done by passing hours <= 0 (nullifies the column). Scoped by recipient_id
+// so a sender can't snooze someone else's inbox.
+router.post('/offers/:id/snooze', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hoursRaw = Number(req.body && req.body.hours);
+    const hours = Number.isFinite(hoursRaw) ? hoursRaw : 0;
+    if (hours <= 0) {
+      const cleared = await db.query(
+        `UPDATE offers SET snoozed_until = NULL
+           WHERE id = $1 AND recipient_id = $2 RETURNING *`,
+        [id, req.user.id]
+      );
+      if (cleared.rows.length === 0) return res.status(404).json({ error: 'Offer not found' });
+      return res.json(cleared.rows[0]);
+    }
+    const updated = await db.query(
+      `UPDATE offers
+         SET snoozed_until = NOW() + ($3 || ' hours')::interval
+         WHERE id = $1 AND recipient_id = $2 RETURNING *`,
+      [id, req.user.id, String(hours)]
+    );
+    if (updated.rows.length === 0) return res.status(404).json({ error: 'Offer not found' });
+    res.json(updated.rows[0]);
+  } catch (error) {
+    console.error('Snooze offer error:', error);
+    res.status(500).json({ error: 'Failed to snooze offer' });
   }
 });
 
@@ -1752,6 +1785,13 @@ router.delete('/setlists/:id', async (req, res) => {
 
 // ── Notifications ──────────────────────────────────────────────────────────────
 
+// S8-05: helper — compute the same notification key the client uses when
+// dismissing. Keeping the algorithm identical on both sides lets the server
+// filter dismissed rows without the client having to re-send the full list.
+function _notifKey(n) {
+  return `${n.type}:${n.action_type || ''}:${n.action_id || ''}:${n.timestamp || ''}`;
+}
+
 router.get('/notifications', async (req, res) => {
   try {
     const userId = req.user.id;
@@ -1836,10 +1876,76 @@ router.get('/notifications', async (req, res) => {
     // Note: unpaid is same query as overdue, don't double-add them
     // They're already included above
 
-    res.json(notifications);
+    // S8-05: filter out anything the user has dismissed server-side. Keeps
+    // dismissals in sync across devices — a dismissal on the phone stays
+    // dismissed on the iPad.
+    try {
+      const dismissedRes = await db.query(
+        `SELECT notif_key FROM notification_dismissals WHERE user_id = $1`,
+        [userId]
+      );
+      const dismissedSet = new Set(dismissedRes.rows.map(r => r.notif_key));
+      const visible = notifications.filter(n => !dismissedSet.has(_notifKey(n)));
+      return res.json(visible);
+    } catch (dismissErr) {
+      // If the dismissals table isn't there yet (fresh deploy before migration)
+      // fall through to returning the full list — the client localStorage
+      // fallback will still mask them visually.
+      console.error('Notification dismiss-filter error (non-fatal):', dismissErr.message);
+      return res.json(notifications);
+    }
   } catch (error) {
     console.error('Get notifications error:', error);
     res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+// S8-05: dismiss one notification by its client-derived key. Idempotent — the
+// UNIQUE (user_id, notif_key) index means a re-post is a no-op.
+router.post('/notifications/dismiss', async (req, res) => {
+  try {
+    const key = req.body && req.body.key;
+    if (!key || typeof key !== 'string') {
+      return res.status(400).json({ error: 'Missing key' });
+    }
+    await db.query(
+      `INSERT INTO notification_dismissals (user_id, notif_key)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id, notif_key) DO NOTHING`,
+      [req.user.id, key]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Dismiss notification error:', error);
+    res.status(500).json({ error: 'Failed to dismiss notification' });
+  }
+});
+
+// S8-05: bulk dismiss. Takes an array of keys (what the client sees right now)
+// so "Clear all" mirrors the visible set.
+router.post('/notifications/dismiss-all', async (req, res) => {
+  try {
+    const keys = Array.isArray(req.body && req.body.keys) ? req.body.keys : [];
+    if (keys.length === 0) return res.json({ success: true, count: 0 });
+    // Flatten (user_id, key) pairs for a single VALUES insert.
+    const values = [];
+    const params = [];
+    keys.forEach((k, i) => {
+      if (typeof k !== 'string' || !k) return;
+      values.push(`($${params.length + 1}, $${params.length + 2})`);
+      params.push(req.user.id, k);
+    });
+    if (values.length === 0) return res.json({ success: true, count: 0 });
+    await db.query(
+      `INSERT INTO notification_dismissals (user_id, notif_key)
+         VALUES ${values.join(', ')}
+         ON CONFLICT (user_id, notif_key) DO NOTHING`,
+      params
+    );
+    res.json({ success: true, count: values.length });
+  } catch (error) {
+    console.error('Dismiss-all notifications error:', error);
+    res.status(500).json({ error: 'Failed to dismiss notifications' });
   }
 });
 

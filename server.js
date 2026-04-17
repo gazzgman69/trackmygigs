@@ -191,6 +191,19 @@ async function runMigrations() {
     // S13-09: link receipts to gigs so "expenses for this gig" and per-gig P&L work.
     await db.query(`ALTER TABLE receipts ADD COLUMN IF NOT EXISTS gig_id INTEGER`);
     await db.query(`CREATE INDEX IF NOT EXISTS receipts_gig_id_idx ON receipts (gig_id)`);
+    // S7-08: per-offer snooze timestamp so snooze survives device switches / re-auth.
+    // Offers whose snoozed_until is in the future are hidden from the inbox list.
+    await db.query(`ALTER TABLE offers ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMP`);
+    // S8-05: notification dismissals persisted server-side by notification key.
+    // Notification "keys" are synthesized client-side from type:action_type:action_id:timestamp.
+    await db.query(`CREATE TABLE IF NOT EXISTS notification_dismissals (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      notif_key TEXT NOT NULL,
+      dismissed_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE (user_id, notif_key)
+    )`);
+    await db.query(`CREATE INDEX IF NOT EXISTS notif_dismiss_user_idx ON notification_dismissals (user_id)`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);
