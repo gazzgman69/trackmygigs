@@ -975,8 +975,8 @@ router.get('/stats', async (req, res) => {
          WHERE user_id = $1
            AND date >= DATE_TRUNC('month', NOW()) - INTERVAL '6 months'
            AND date <  DATE_TRUNC('month', NOW()) + INTERVAL '6 months'
-         GROUP BY month_start
-         ORDER BY month_start ASC`,
+         GROUP BY DATE_TRUNC('month', date)
+         ORDER BY DATE_TRUNC('month', date) ASC`,
         [userId]
       ),
       // Recent messages preview (last 3 messages in threads the user participates in,
