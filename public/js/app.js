@@ -115,6 +115,12 @@ async function prefetchAllData() {
     window._cachedBlocked = await blockedRes.value.json();
     window._cachedBlockedTime = now;
   }
+
+  // Show onboarding tour on very first load (profile has no onboarded_at yet).
+  // Delay by a tick so the home screen paints first, then the tour appears over it.
+  setTimeout(() => {
+    if (typeof maybeStartOnboarding === 'function') maybeStartOnboarding();
+  }, 400);
 }
 
 // Update the bottom nav Offers tab badge based on pending offer count.
@@ -577,8 +583,11 @@ function renderGigsList(gigs) {
 
   if (gigViewMode === 'week') {
     // Calculate week range with offset
+    // getDay(): 0=Sun..6=Sat. We want Monday as week start.
+    // On Sunday, naive "date - getDay() + 1" rolls FORWARD a day; instead subtract ((getDay()+6)%7).
     const weekStart = new Date(now);
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1 + (gigWeekOffset * 7));
+    const dowMonday = (weekStart.getDay() + 6) % 7; // 0=Mon, 6=Sun
+    weekStart.setDate(weekStart.getDate() - dowMonday + (gigWeekOffset * 7));
     weekStart.setHours(0, 0, 0, 0);
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekEnd.getDate() + 6);
@@ -663,8 +672,8 @@ function renderGigsList(gigs) {
     const monthTotal = monthGigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
     const unpaidTotal = monthGigs.filter(g => g.status !== 'paid' && g.invoice_status !== 'paid').reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
 
-    // Build mini calendar grid
-    const firstDayOfMonth = monthStart.getDay() || 7; // 1=Mon ... 7=Sun
+    // Build mini calendar grid (Monday-first; 0..6 where 0=Mon, 6=Sun)
+    const firstDayOfMonth = (monthStart.getDay() + 6) % 7;
     const daysInMonth = monthEnd.getDate();
     const gigDateSet = {};
     monthGigs.forEach(g => {
@@ -680,7 +689,7 @@ function renderGigsList(gigs) {
       calGridHtml += `<div style="font-size:9px;color:var(--text-3);padding:4px;">${d}</div>`;
     });
     // Empty cells before first day
-    for (let i = 1; i < firstDayOfMonth; i++) {
+    for (let i = 0; i < firstDayOfMonth; i++) {
       calGridHtml += '<div style="padding:4px;"></div>';
     }
     // Day cells
@@ -1035,7 +1044,9 @@ function switchCalendarView(view) {
 function renderCalendarMonth(currentDate, gigs, blocked) {
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
-  const firstDay = new Date(year, month, 1).getDay();
+  // JS getDay(): 0=Sun..6=Sat. We render Mon-first, so shift: Mon=0..Sun=6.
+  const firstDayRaw = new Date(year, month, 1).getDay();
+  const firstDay = (firstDayRaw + 6) % 7; // 0 empty cells if month starts on Mon, 6 if Sun
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = new Date();
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
@@ -1050,8 +1061,8 @@ function renderCalendarMonth(currentDate, gigs, blocked) {
     <div class="cg">
       <div class="cdh">Mo</div><div class="cdh">Tu</div><div class="cdh">We</div><div class="cdh">Th</div><div class="cdh">Fr</div><div class="cdh">Sa</div><div class="cdh">Su</div>`;
 
-  // Empty cells
-  for (let i = 1; i < firstDay; i++) {
+  // Empty cells (firstDay is now 0..6 Monday-first)
+  for (let i = 0; i < firstDay; i++) {
     html += `<div class="cd empty"></div>`;
   }
 
@@ -3259,19 +3270,150 @@ function updateInvFormatPreview() {
 }
 window.updateInvFormatPreview = updateInvFormatPreview;
 
-function shareProfile() {
-  // TODO: implement share profile
-  alert('Share profile coming soon');
+// Ensure the current user has a public_slug, requesting one from the server if needed.
+// Returns the slug string, or null on failure.
+async function _ensurePublicSlug() {
+  const profile = window._cachedProfile || window._currentUser || {};
+  if (profile.public_slug) return profile.public_slug;
+  try {
+    const res = await fetch('/api/user/slug', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) throw new Error('slug fetch failed');
+    const { slug } = await res.json();
+    if (window._cachedProfile) window._cachedProfile.public_slug = slug;
+    if (window._currentUser) window._currentUser.public_slug = slug;
+    return slug;
+  } catch (err) {
+    console.error('Slug error:', err);
+    return null;
+  }
 }
+
+async function _shareOrCopy(url, shareTitle, shareText) {
+  // Native Web Share if available
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: shareTitle, text: shareText, url });
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+    }
+  }
+  // Fallback: copy to clipboard
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('Link copied: ' + url);
+  } catch {
+    prompt('Copy this link:', url);
+  }
+}
+
+async function shareProfile() {
+  const slug = await _ensurePublicSlug();
+  if (!slug) { showToast('Could not generate share link'); return; }
+  const name = window._currentUser?.display_name || window._currentUser?.name || 'my';
+  const url = `${location.origin}/epk/${slug}`;
+  _shareOrCopy(url, `${name} EPK`, `Check out ${name} on TrackMyGigs`);
+}
+window.shareProfile = shareProfile;
 
 function viewEPK() {
-  openPanel('epk-panel');
+  // Open the internal EPK editor; it includes a button to preview the public version
+  openPanel('panel-epk');
+  buildEPKEditor();
 }
+window.viewEPK = viewEPK;
 
-function shareAvailability() {
-  // TODO: implement share availability
-  alert('Share availability coming soon');
+function buildEPKEditor() {
+  const body = document.getElementById('epkBody');
+  if (!body) return;
+  const profile = window._cachedProfile || window._currentUser || {};
+
+  body.innerHTML = `
+    <div style="padding:16px;">
+      <p style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:16px;">
+        Fill these in and they'll show on your public EPK page. Anyone can view it once you share the link.
+      </p>
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Bio</label>
+        <textarea id="epkBio" rows="5" placeholder="A short bio promoters can read at a glance. Style of music, notable gigs, what makes you worth booking." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;font-family:inherit;">${escapeHtml(profile.epk_bio || '')}</textarea>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Photo URL</label>
+        <input id="epkPhoto" type="url" value="${escapeHtml(profile.epk_photo_url || '')}" placeholder="https://..." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">A wide hero photo works best. Upload to Imgur or Dropbox and paste the direct image URL.</div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Video URL</label>
+        <input id="epkVideo" type="url" value="${escapeHtml(profile.epk_video_url || '')}" placeholder="https://youtube.com/watch?v=..." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">YouTube, Vimeo, or any direct video link.</div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Audio URL</label>
+        <input id="epkAudio" type="url" value="${escapeHtml(profile.epk_audio_url || '')}" placeholder="https://soundcloud.com/..." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">A direct MP3, SoundCloud, or Dropbox link.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:20px;">
+        <button onclick="saveEPK()" class="pill-g">Save EPK</button>
+        <button onclick="previewEPK()" class="pill-o">Preview public page</button>
+        <button onclick="shareProfile()" class="pill-o">Share EPK link</button>
+      </div>
+    </div>`;
 }
+window.buildEPKEditor = buildEPKEditor;
+
+async function saveEPK() {
+  const epk_bio = document.getElementById('epkBio')?.value?.trim();
+  const epk_photo_url = document.getElementById('epkPhoto')?.value?.trim();
+  const epk_video_url = document.getElementById('epkVideo')?.value?.trim();
+  const epk_audio_url = document.getElementById('epkAudio')?.value?.trim();
+
+  try {
+    const res = await fetch('/api/user/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        epk_bio: epk_bio || '',
+        epk_photo_url: epk_photo_url || '',
+        epk_video_url: epk_video_url || '',
+        epk_audio_url: epk_audio_url || '',
+      }),
+    });
+    if (!res.ok) throw new Error('save failed');
+    const updated = await res.json();
+    window._cachedProfile = updated;
+    window._currentUser = { ...window._currentUser, ...updated };
+    showToast('EPK saved');
+  } catch (err) {
+    console.error('Save EPK error:', err);
+    showToast('Failed to save EPK');
+  }
+}
+window.saveEPK = saveEPK;
+
+async function previewEPK() {
+  const slug = await _ensurePublicSlug();
+  if (!slug) { showToast('Could not open preview'); return; }
+  window.open(`/epk/${slug}`, '_blank');
+}
+window.previewEPK = previewEPK;
+
+async function shareAvailability() {
+  const slug = await _ensurePublicSlug();
+  if (!slug) { showToast('Could not generate share link'); return; }
+  const name = window._currentUser?.display_name || window._currentUser?.name || 'my';
+  const url = `${location.origin}/share/${slug}`;
+  _shareOrCopy(url, `${name} availability`, `Book ${name}. Live availability here.`);
+}
+window.shareAvailability = shareAvailability;
 
 function toggleTheme() {
   document.body.classList.toggle('light-mode');
@@ -3603,6 +3745,31 @@ async function openFinancePanel() {
     if (!res.ok) throw new Error('Failed to fetch earnings');
     const earnings = await res.json();
 
+    const hasAnyActivity = (earnings.paid_total || 0) + (earnings.unpaid_total || 0)
+      + (earnings.overdue_total || 0) + (earnings.expenses_total || 0) > 0;
+
+    // Empty state: no paid/unpaid/overdue/expenses yet
+    if (!hasAnyActivity) {
+      body.innerHTML = `
+        <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+          <button onclick="closePanel('finance-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+          <div style="font-size:16px;font-weight:700;color:var(--text);">Earnings & Tax</div>
+          <div style="width:32px;"></div>
+        </div>
+        <div style="padding:32px 24px;text-align:center;">
+          <div style="font-size:48px;margin-bottom:12px;">💰</div>
+          <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px;">No earnings yet</div>
+          <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:20px;">
+            Add a gig with a fee, or log an expense, and you'll see your income, tax profile and monthly breakdown appear here.
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;max-width:240px;margin:0 auto;">
+            <button onclick="closePanel('finance-panel'); openGigWizard();" class="pill-g">Log a gig</button>
+            <button onclick="closePanel('finance-panel'); openPanel('panel-receipt'); setTimeout(()=>showReceiptForm('manual'),150); loadReceipts();" class="pill-o">Log an expense</button>
+          </div>
+        </div>`;
+      return;
+    }
+
     let html = `
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
         <button onclick="closePanel('finance-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
@@ -3657,9 +3824,10 @@ async function openFinancePanel() {
         </div>
       </div>
       <div style="padding:0 16px;display:flex;flex-direction:column;gap:6px;">
-        <button class="pill-g">Export CSV</button>
-        <button class="pill-g">Export PDF</button>
-        <button class="pill-g">Receipts ZIP</button>
+        <button class="pill-g" onclick="exportGigsCSV()">Export gigs (CSV)</button>
+        <button class="pill-g" onclick="exportExpensesCSV()">Export expenses (CSV)</button>
+        <button class="pill-o" onclick="alert('PDF export coming soon. CSV is ready now.')">Export PDF</button>
+        <button class="pill-o" onclick="alert('Receipts ZIP coming soon.')">Receipts ZIP</button>
       </div>`;
 
     body.innerHTML = html;
@@ -4986,3 +5154,269 @@ if ('serviceWorker' in navigator) {
     }
   });
 }
+
+// ── CSV Export ───────────────────────────────────────────────────────────────
+// Escapes a value for a CSV cell: wraps in quotes, doubles internal quotes, strips newlines
+function _csvCell(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v).replace(/\r?\n/g, ' ');
+  if (s.includes(',') || s.includes('"')) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function _downloadCSV(filename, rows) {
+  const csv = rows.map(r => r.map(_csvCell).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportGigsCSV() {
+  try {
+    const res = await fetch('/api/gigs');
+    if (!res.ok) throw new Error('Failed to fetch gigs');
+    const gigs = await res.json();
+    if (!gigs.length) { showToast('No gigs to export yet'); return; }
+
+    const header = ['Date', 'Time', 'Venue', 'Address', 'Act', 'Gig type', 'Fee', 'Status', 'Paid', 'Invoiced', 'Notes'];
+    const rows = [header];
+    gigs.forEach(g => {
+      rows.push([
+        (g.date || '').slice(0, 10),
+        g.start_time || '',
+        g.venue_name || '',
+        g.venue_address || '',
+        g.act_name || '',
+        g.gig_type || '',
+        g.fee || '',
+        g.status || '',
+        g.status === 'paid' || g.invoice_status === 'paid' ? 'Yes' : 'No',
+        g.invoice_id ? 'Yes' : 'No',
+        g.notes || '',
+      ]);
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    _downloadCSV(`trackmygigs-gigs-${today}.csv`, rows);
+    showToast(`Exported ${gigs.length} gigs`);
+  } catch (err) {
+    console.error('Export gigs CSV error:', err);
+    showToast('Failed to export gigs');
+  }
+}
+window.exportGigsCSV = exportGigsCSV;
+
+async function exportExpensesCSV() {
+  try {
+    const res = await fetch('/api/expenses');
+    if (!res.ok) throw new Error('Failed to fetch expenses');
+    const data = await res.json();
+    const expenses = Array.isArray(data) ? data : (data.expenses || []);
+    if (!expenses.length) { showToast('No expenses to export yet'); return; }
+
+    const header = ['Date', 'Description', 'Category', 'Amount (GBP)'];
+    const rows = [header];
+    expenses.forEach(e => {
+      rows.push([
+        (e.date || '').slice(0, 10),
+        e.description || '',
+        e.category || '',
+        parseFloat(e.amount || 0).toFixed(2),
+      ]);
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    _downloadCSV(`trackmygigs-expenses-${today}.csv`, rows);
+    showToast(`Exported ${expenses.length} expenses`);
+  } catch (err) {
+    console.error('Export expenses CSV error:', err);
+    showToast('Failed to export expenses');
+  }
+}
+window.exportExpensesCSV = exportExpensesCSV;
+
+// ── ONBOARDING TOUR ─────────────────────────────────────────────────────────
+// A simple first-run welcome shown once (gated by users.onboarded_at).
+// Fires after prefetchAllData settles so we have the profile to check.
+
+const ONBOARDING_STEPS = [
+  {
+    emoji: '🎵',
+    title: 'Welcome to TrackMyGigs',
+    body: "Your home for every gig, invoice, expense and mile. Let's take a 30-second tour.",
+    cta: 'Start tour',
+  },
+  {
+    emoji: '📋',
+    title: 'Log a gig in 10 seconds',
+    body: "Tap the big + button at the bottom to log a new gig. Just venue, date, and fee. Everything else can come later.",
+    cta: 'Next',
+  },
+  {
+    emoji: '💷',
+    title: 'Get paid, stay sane',
+    body: "Every gig can turn into an invoice with one tap. Overdue invoices show up on your home screen so nothing slips.",
+    cta: 'Next',
+  },
+  {
+    emoji: '📅',
+    title: 'Share your availability',
+    body: "Open Settings to grab your public share link. Anyone can see what dates you're free, with no login needed.",
+    cta: 'Next',
+  },
+  {
+    emoji: '✨',
+    title: "You're ready",
+    body: "Your first gig is the hardest. After that it gets addictive. Let's go.",
+    cta: "Let's go",
+  },
+];
+
+function maybeStartOnboarding() {
+  try {
+    // Skip if already done, or local flag set (avoids showing twice in same session)
+    if (window._onboardingShown) return;
+    const profile = window._cachedProfile || {};
+    if (profile.onboarded_at) return;
+    if (localStorage.getItem('tmg_onboarded') === '1') return;
+    window._onboardingShown = true;
+    showOnboardingStep(0);
+  } catch (err) {
+    console.error('Onboarding check failed:', err);
+  }
+}
+window.maybeStartOnboarding = maybeStartOnboarding;
+
+function showOnboardingStep(index) {
+  const step = ONBOARDING_STEPS[index];
+  if (!step) { finishOnboarding(); return; }
+
+  let overlay = document.getElementById('onboardingOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'onboardingOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(13,17,23,.88);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+    document.body.appendChild(overlay);
+  }
+
+  const total = ONBOARDING_STEPS.length;
+  const pips = Array.from({ length: total }, (_, i) =>
+    `<span style="width:6px;height:6px;border-radius:50%;background:${i === index ? 'var(--accent)' : 'var(--border)'};"></span>`
+  ).join('');
+
+  overlay.innerHTML = `
+    <div style="max-width:360px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px 24px;text-align:center;box-shadow:0 30px 60px rgba(0,0,0,.5);">
+      <div style="font-size:52px;margin-bottom:12px;">${step.emoji}</div>
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:10px;">${escapeHtml(step.title)}</div>
+      <div style="font-size:14px;color:var(--text-2);line-height:1.5;margin-bottom:20px;">${escapeHtml(step.body)}</div>
+      <div style="display:flex;justify-content:center;gap:6px;margin-bottom:20px;">${pips}</div>
+      <button id="onbNext" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:12px;font-size:15px;font-weight:700;cursor:pointer;">${escapeHtml(step.cta)}</button>
+      <button id="onbSkip" style="margin-top:10px;width:100%;background:transparent;color:var(--text-3);border:none;padding:8px;font-size:13px;cursor:pointer;">Skip tour</button>
+    </div>`;
+
+  const nextBtn = overlay.querySelector('#onbNext');
+  const skipBtn = overlay.querySelector('#onbSkip');
+  nextBtn.onclick = () => showOnboardingStep(index + 1);
+  skipBtn.onclick = () => finishOnboarding();
+}
+
+async function finishOnboarding() {
+  const overlay = document.getElementById('onboardingOverlay');
+  if (overlay) overlay.remove();
+  try {
+    localStorage.setItem('tmg_onboarded', '1');
+    await fetch('/api/user/onboarded', { method: 'POST' });
+    if (window._cachedProfile) window._cachedProfile.onboarded_at = new Date().toISOString();
+  } catch (err) {
+    console.error('Mark onboarded failed (non-fatal):', err);
+  }
+}
+window.finishOnboarding = finishOnboarding;
+
+// ── NUDGE FEEDBACK CAPTURE ──────────────────────────────────────────────────
+// Fire-and-forget POST so the server can learn which nudges users act on vs
+// dismiss, letting us tune scoring. Action: 'accepted' | 'dismissed' | 'snoozed'.
+
+function recordNudgeFeedback(nudgeType, action, gigId) {
+  try {
+    fetch('/api/nudge-feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nudge_type: String(nudgeType || 'unknown'),
+        action: String(action || 'unknown'),
+        gig_id: gigId || null,
+      }),
+    }).catch(() => { /* non-fatal */ });
+  } catch (_) { /* silent */ }
+}
+window.recordNudgeFeedback = recordNudgeFeedback;
+
+// ── TRAVEL-TIME & PACK-DOWN AUTO-BLOCKS ─────────────────────────────────────
+// Given the user's gigs, return pseudo-blocked windows representing drive time
+// before + pack-down + drive time home after. Purely client-side visualisation
+// — they display as "soft" entries on the calendar without touching blocked_dates.
+// Defaults: 60min travel each way, 30min load-in, 30min pack-down.
+
+function computeAutoBlocksForGigs(gigs) {
+  if (!Array.isArray(gigs) || gigs.length === 0) return [];
+  const TRAVEL_MIN = Number(localStorage.getItem('tmg_travel_mins')) || 60;
+  const LOAD_MIN = Number(localStorage.getItem('tmg_load_mins')) || 30;
+  const PACKDOWN_MIN = Number(localStorage.getItem('tmg_packdown_mins')) || 30;
+  const out = [];
+  for (const g of gigs) {
+    if (!g.date || g.status === 'cancelled') continue;
+    if (!g.start_time) continue;
+    const startIso = `${String(g.date).slice(0, 10)}T${g.start_time.length === 5 ? g.start_time + ':00' : g.start_time}`;
+    const start = new Date(startIso);
+    if (isNaN(+start)) continue;
+    const end = g.end_time
+      ? new Date(`${String(g.date).slice(0, 10)}T${g.end_time.length === 5 ? g.end_time + ':00' : g.end_time}`)
+      : new Date(start.getTime() + 3 * 3600000);
+    const preStart = new Date(start.getTime() - (TRAVEL_MIN + LOAD_MIN) * 60000);
+    const postEnd = new Date(end.getTime() + (TRAVEL_MIN + PACKDOWN_MIN) * 60000);
+    out.push({
+      gig_id: g.id,
+      kind: 'travel_out',
+      start: preStart.toISOString(),
+      end: start.toISOString(),
+      label: `Drive + load-in for ${g.venue_name || g.band_name || 'gig'}`,
+    });
+    out.push({
+      gig_id: g.id,
+      kind: 'travel_home',
+      start: end.toISOString(),
+      end: postEnd.toISOString(),
+      label: `Pack-down + drive home from ${g.venue_name || g.band_name || 'gig'}`,
+    });
+  }
+  return out;
+}
+window.computeAutoBlocksForGigs = computeAutoBlocksForGigs;
+
+// Returns true if a candidate window (ISO strings) collides with any auto-block
+// derived from the user's current gigs. Used by the availability calendar to
+// warn when a potential new gig clashes with travel/pack-down of an existing one.
+function isTimeAutoBlocked(startIso, endIso) {
+  try {
+    const gigs = window._cachedGigs || [];
+    const blocks = computeAutoBlocksForGigs(gigs);
+    const s = new Date(startIso).getTime();
+    const e = new Date(endIso).getTime();
+    for (const b of blocks) {
+      const bs = new Date(b.start).getTime();
+      const be = new Date(b.end).getTime();
+      if (s < be && e > bs) return b; // overlap — return offending block
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+window.isTimeAutoBlocked = isTimeAutoBlocked;

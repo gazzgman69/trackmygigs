@@ -1,10 +1,28 @@
 const express = require('express');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
+const calendarRouter = require('./calendar');
 
 const router = express.Router();
 
 router.use(authMiddleware);
+
+// Fire-and-forget helper — never let sync failures break API responses.
+// The gig has already been saved locally; Google is a mirror.
+function syncGigSafely(action, userId, gig) {
+  try {
+    if (!gig) return;
+    const fn = action === 'delete'
+      ? calendarRouter.removeGigFromGoogle
+      : calendarRouter.pushGigToGoogle;
+    if (typeof fn !== 'function') return;
+    Promise.resolve(fn(userId, gig)).catch((err) => {
+      console.error(`Calendar ${action} sync failed (non-fatal):`, err.message || err);
+    });
+  } catch (err) {
+    console.error('syncGigSafely error:', err);
+  }
+}
 
 router.get('/gigs', async (req, res) => {
   try {
@@ -65,7 +83,9 @@ router.post('/gigs', async (req, res) => {
       ]
     );
 
-    res.json(result.rows[0]);
+    const gig = result.rows[0];
+    syncGigSafely('create', req.user.id, gig);
+    res.json(gig);
   } catch (error) {
     console.error('Create gig error:', error);
     res.status(500).json({ error: 'Failed to create gig' });
@@ -107,7 +127,9 @@ router.patch('/gigs/:id', async (req, res) => {
       [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, day_of_contact || null, mileage_miles != null ? mileage_miles : null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
-    res.json(result.rows[0]);
+    const gig = result.rows[0];
+    syncGigSafely('update', req.user.id, gig);
+    res.json(gig);
   } catch (error) {
     console.error('Update gig error:', error);
     res.status(500).json({ error: 'Failed to update gig' });
@@ -117,10 +139,11 @@ router.patch('/gigs/:id', async (req, res) => {
 router.delete('/gigs/:id', async (req, res) => {
   try {
     const result = await db.query(
-      'DELETE FROM gigs WHERE id = $1 AND user_id = $2 RETURNING id',
+      'DELETE FROM gigs WHERE id = $1 AND user_id = $2 RETURNING *',
       [req.params.id, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
+    syncGigSafely('delete', req.user.id, result.rows[0]);
     res.json({ success: true });
   } catch (error) {
     console.error('Delete gig error:', error);
@@ -220,7 +243,8 @@ router.get('/user/profile', async (req, res) => {
 router.patch('/user/profile', async (req, res) => {
   try {
     const { name, display_name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url,
-            bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme } = req.body;
+            bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme,
+            epk_bio, epk_photo_url, epk_video_url, epk_audio_url } = req.body;
 
     // instruments comes as a comma-separated string from the client but the
     // column is TEXT[].  Convert it to a proper PG array (or null to keep
@@ -238,16 +262,84 @@ router.patch('/user/profile', async (req, res) => {
        google_review_url = COALESCE($6, google_review_url), facebook_review_url = COALESCE($7, facebook_review_url),
        bank_details = COALESCE($9, bank_details), invoice_prefix = COALESCE($10, invoice_prefix),
        invoice_next_number = COALESCE($11, invoice_next_number), invoice_format = COALESCE($12, invoice_format),
-       colour_theme = COALESCE($13, colour_theme)
+       colour_theme = COALESCE($13, colour_theme),
+       epk_bio = COALESCE($15, epk_bio),
+       epk_photo_url = COALESCE($16, epk_photo_url),
+       epk_video_url = COALESCE($17, epk_video_url),
+       epk_audio_url = COALESCE($18, epk_audio_url)
        WHERE id = $8 RETURNING *`,
       [name, phone, instrumentsArr, home_postcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
-       bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name]
+       bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name,
+       epk_bio, epk_photo_url, epk_video_url, epk_audio_url]
     );
 
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Update profile error:', error);
     res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// Generate / set a public slug for share + EPK links
+router.post('/user/slug', async (req, res) => {
+  try {
+    let { slug } = req.body;
+    // If blank, derive from name / email
+    if (!slug || !String(slug).trim()) {
+      const base = (req.user.display_name || req.user.name || req.user.email || 'artist')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'artist';
+      slug = base;
+    } else {
+      slug = String(slug).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+    }
+    if (!slug) return res.status(400).json({ error: 'Invalid slug' });
+
+    // Collision-safe: try base, then base-2, base-3, ...
+    let candidate = slug;
+    let attempt = 1;
+    while (true) {
+      const existing = await db.query('SELECT id FROM users WHERE public_slug = $1 AND id <> $2', [candidate, req.user.id]);
+      if (existing.rows.length === 0) break;
+      attempt += 1;
+      candidate = `${slug}-${attempt}`;
+      if (attempt > 50) return res.status(500).json({ error: 'Could not allocate slug' });
+    }
+
+    await db.query('UPDATE users SET public_slug = $1 WHERE id = $2', [candidate, req.user.id]);
+    res.json({ slug: candidate });
+  } catch (error) {
+    console.error('Set slug error:', error);
+    res.status(500).json({ error: 'Failed to set slug' });
+  }
+});
+
+// Mark the user as onboarded (dismiss the tour)
+router.post('/user/onboarded', async (req, res) => {
+  try {
+    await db.query('UPDATE users SET onboarded_at = COALESCE(onboarded_at, NOW()) WHERE id = $1', [req.user.id]);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Onboarded error:', error);
+    res.status(500).json({ error: 'Failed to mark onboarded' });
+  }
+});
+
+// Log nudge feedback so scoring can be tuned later
+router.post('/nudge-feedback', async (req, res) => {
+  try {
+    const { nudge_type, gig_id, action } = req.body;
+    if (!nudge_type || !action) return res.status(400).json({ error: 'nudge_type and action required' });
+    await db.query(
+      'INSERT INTO nudge_feedback (user_id, nudge_type, gig_id, action) VALUES ($1, $2, $3, $4)',
+      [req.user.id, nudge_type, gig_id || null, action]
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Nudge feedback error:', error);
+    res.status(500).json({ error: 'Failed to log feedback' });
   }
 });
 

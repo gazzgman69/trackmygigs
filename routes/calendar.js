@@ -276,4 +276,158 @@ router.post('/dismiss', async (req, res) => {
   }
 });
 
+// ── TWO-WAY SYNC: push TrackMyGigs gigs back to Google Calendar ─────────────
+//
+// We keep the logic tolerant: failures never break the app, Google is treated
+// as a mirror. Calls are safe to fire-and-forget from api.js.
+
+function buildEventResource(gig) {
+  const title = gig.band_name
+    ? `🎵 ${gig.band_name}${gig.venue_name ? ' @ ' + gig.venue_name : ''}`
+    : (gig.venue_name ? `🎵 Gig @ ${gig.venue_name}` : '🎵 Gig');
+
+  const descLines = [];
+  if (gig.fee != null && gig.fee !== '') descLines.push(`Fee: £${gig.fee}`);
+  if (gig.dress_code) descLines.push(`Dress: ${gig.dress_code}`);
+  if (gig.gig_type) descLines.push(`Type: ${gig.gig_type}`);
+  if (gig.day_of_contact) descLines.push(`Contact: ${gig.day_of_contact}`);
+  if (gig.parking_info) descLines.push(`Parking: ${gig.parking_info}`);
+  if (gig.notes) descLines.push(gig.notes);
+  descLines.push('');
+  descLines.push('(Synced from TrackMyGigs)');
+
+  // Date + times → RFC3339 strings. If no times, treat as all-day event.
+  const dateStr = gig.date instanceof Date
+    ? gig.date.toISOString().split('T')[0]
+    : String(gig.date).split('T')[0];
+
+  const event = {
+    summary: title,
+    description: descLines.join('\n'),
+    location: gig.venue_address || gig.venue_name || undefined,
+  };
+
+  if (gig.start_time) {
+    const start = `${dateStr}T${gig.start_time.length === 5 ? gig.start_time + ':00' : gig.start_time}`;
+    let end;
+    if (gig.end_time) {
+      end = `${dateStr}T${gig.end_time.length === 5 ? gig.end_time + ':00' : gig.end_time}`;
+    } else {
+      // Default 2hr duration if no end supplied
+      const startDt = new Date(start);
+      const endDt = new Date(startDt.getTime() + 2 * 3600000);
+      const pad = (n) => String(n).padStart(2, '0');
+      end = `${endDt.getFullYear()}-${pad(endDt.getMonth() + 1)}-${pad(endDt.getDate())}T${pad(endDt.getHours())}:${pad(endDt.getMinutes())}:00`;
+    }
+    event.start = { dateTime: start, timeZone: 'Europe/London' };
+    event.end = { dateTime: end, timeZone: 'Europe/London' };
+  } else {
+    // All-day
+    event.start = { date: dateStr };
+    // Google requires end.date to be the day AFTER for all-day events
+    const next = new Date(dateStr + 'T00:00:00');
+    next.setDate(next.getDate() + 1);
+    const pad = (n) => String(n).padStart(2, '0');
+    event.end = { date: `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}` };
+  }
+
+  return event;
+}
+
+async function pushGigToGoogle(userId, gig) {
+  try {
+    const auth = await getGoogleAuth(userId);
+    if (!auth) return null;
+    // Don't push gigs that came FROM Google in the first place (avoid round-trip)
+    if (gig.source && String(gig.source).startsWith('gcal:')) return null;
+
+    const calendar = google.calendar({ version: 'v3', auth });
+    const resource = buildEventResource(gig);
+
+    if (gig.google_event_id) {
+      // Update existing event
+      const resp = await calendar.events.update({
+        calendarId: 'primary',
+        eventId: gig.google_event_id,
+        requestBody: resource,
+      });
+      return resp.data.id || gig.google_event_id;
+    }
+
+    // Create new
+    const resp = await calendar.events.insert({
+      calendarId: 'primary',
+      requestBody: resource,
+    });
+    const newId = resp.data.id;
+    if (newId) {
+      await db.query('UPDATE gigs SET google_event_id = $1 WHERE id = $2 AND user_id = $3', [newId, gig.id, userId]);
+    }
+    return newId;
+  } catch (err) {
+    // If event was deleted on Google's side, wipe local id so next push re-creates
+    if (err && (err.code === 404 || err.code === 410)) {
+      try { await db.query('UPDATE gigs SET google_event_id = NULL WHERE id = $1 AND user_id = $2', [gig.id, userId]); } catch (_) {}
+    }
+    console.error('pushGigToGoogle error:', err.message || err);
+    return null;
+  }
+}
+
+async function removeGigFromGoogle(userId, gig) {
+  try {
+    if (!gig || !gig.google_event_id) return false;
+    const auth = await getGoogleAuth(userId);
+    if (!auth) return false;
+    const calendar = google.calendar({ version: 'v3', auth });
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: gig.google_event_id,
+    });
+    return true;
+  } catch (err) {
+    if (err && (err.code === 404 || err.code === 410)) return true; // already gone
+    console.error('removeGigFromGoogle error:', err.message || err);
+    return false;
+  }
+}
+
+// Explicit client-triggered sync: push a single gig (create or update)
+router.post('/push/:gigId', async (req, res) => {
+  try {
+    const gigResult = await db.query('SELECT * FROM gigs WHERE id = $1 AND user_id = $2', [req.params.gigId, req.user.id]);
+    if (gigResult.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
+    const eventId = await pushGigToGoogle(req.user.id, gigResult.rows[0]);
+    if (!eventId) return res.status(400).json({ error: 'Sync failed. Is your Google Calendar connected?' });
+    res.json({ success: true, google_event_id: eventId });
+  } catch (err) {
+    console.error('Manual push error:', err);
+    res.status(500).json({ error: 'Sync failed' });
+  }
+});
+
+// Push every local gig (that didn't originate from Google) to Google Calendar
+router.post('/push-all', async (req, res) => {
+  try {
+    const auth = await getGoogleAuth(req.user.id);
+    if (!auth) return res.status(400).json({ error: 'Calendar not connected' });
+    const gigs = await db.query(
+      "SELECT * FROM gigs WHERE user_id = $1 AND (source IS NULL OR source NOT LIKE 'gcal:%')",
+      [req.user.id]
+    );
+    let ok = 0, fail = 0;
+    for (const g of gigs.rows) {
+      const id = await pushGigToGoogle(req.user.id, g);
+      if (id) ok++; else fail++;
+    }
+    res.json({ success: true, pushed: ok, failed: fail, total: gigs.rows.length });
+  } catch (err) {
+    console.error('Push-all error:', err);
+    res.status(500).json({ error: 'Bulk sync failed' });
+  }
+});
+
+// Export helpers for fire-and-forget use in api.js
 module.exports = router;
+module.exports.pushGigToGoogle = pushGigToGoogle;
+module.exports.removeGigFromGoogle = removeGigFromGoogle;

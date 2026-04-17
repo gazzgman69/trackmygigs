@@ -9,6 +9,7 @@ const authRoutes = require('./routes/auth');
 const apiRoutes = require('./routes/api');
 const calendarRoutes = require('./routes/calendar');
 const chatRoutes = require('./routes/chat');
+const publicRoutes = require('./routes/public');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -49,6 +50,8 @@ app.use('/auth', authRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/chat', chatRoutes);
+// Public share and EPK routes (no auth) — mounted at /share and /epk via the same router
+app.use('/', publicRoutes);
 
 // Serve sw.js with BUILD_ID injected so the service worker cache name changes
 // on every server restart — forcing browsers to install the new worker and
@@ -130,6 +133,25 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS colour_theme VARCHAR(20) DEFAULT 'amber'`);
     // display_name: user's real name (separate from "name" which is often used for act/band)
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(255)`);
+    // Public share / EPK
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS public_slug VARCHAR(64)`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_public_slug_uniq ON users (public_slug) WHERE public_slug IS NOT NULL`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS epk_bio TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS epk_photo_url TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS epk_video_url TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS epk_audio_url TEXT`);
+    // Two-way Google Calendar sync: store the Google event id for each pushed gig
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255)`);
+    // Onboarding + feedback
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMP`);
+    await db.query(`CREATE TABLE IF NOT EXISTS nudge_feedback (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      nudge_type VARCHAR(64) NOT NULL,
+      gig_id INTEGER,
+      action VARCHAR(32) NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);
