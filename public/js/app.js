@@ -4755,6 +4755,14 @@ function chaseInvoicePayment(invoiceId) {
 
 async function acceptOffer(offerId) {
   try {
+    // Look up offer type before patch so we know whether to open the dep-accepted panel after
+    let offerType = null;
+    try {
+      const cached = Array.isArray(window._cachedOffers) ? window._cachedOffers : [];
+      const c = cached.find(o => o && o.id === offerId);
+      if (c && c.offer_type) offerType = c.offer_type;
+    } catch (_) {}
+
     const res = await fetch(`/api/offers/${offerId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -4763,6 +4771,11 @@ async function acceptOffer(offerId) {
     if (!res.ok) throw new Error('Failed to accept');
     recordNudgeFeedback('offer', 'accepted', offerId);
     await refreshOffersAndBadge();
+
+    // For dep offers: show the dep-accepted confirmation panel with gig pack
+    if (offerType === 'dep' && typeof showDepAccepted === 'function') {
+      showDepAccepted(offerId);
+    }
   } catch (err) {
     console.error('Accept offer error:', err);
     alert('Could not accept that offer, please try again');
@@ -4823,6 +4836,378 @@ async function refreshOffersAndBadge() {
     console.error('refreshOffersAndBadge error:', err);
   }
 }
+
+// ── Dep Flow: Gig Picker, Accepted, Cancel ─────────────────────────────────
+
+// Opens the "Which gig?" picker (step 1 of sending a dep offer).
+// Shows the user's upcoming confirmed gigs, plus an inline create-gig form
+// so they can set up a new gig and send a dep in one step.
+async function openDepPicker() {
+  openPanel('send-dep-picker');
+  const body = document.getElementById('sendDepPickerBody');
+  if (!body) return;
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading your gigs...</div>';
+  try {
+    // Use cached gigs or fetch
+    let gigs = window._cachedGigs;
+    if (!gigs) {
+      const resp = await fetch('/api/gigs');
+      gigs = await resp.json();
+      window._cachedGigs = gigs;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const upcoming = (gigs || [])
+      .filter(g => g.status !== 'cancelled' && (g.date || '').slice(0, 10) >= today)
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+      .slice(0, 10);
+
+    const gigRows = upcoming.length
+      ? upcoming.map(g => {
+          const d = new Date(g.date);
+          const dateLabel = isNaN(d) ? (g.date || '') : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+          const times = g.start_time ? `${(g.start_time || '').slice(0, 5)}${g.end_time ? '\u2013' + g.end_time.slice(0, 5) : ''}` : '';
+          const fee = g.fee ? `\u00A3${Math.round(g.fee)}` : '';
+          const bar = g.status === 'tentative' ? 'var(--warning)' : 'var(--success)';
+          return `
+            <div onclick="selectGigForDep('${g.id}')" style="padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:10px;">
+              <div style="width:3px;height:28px;border-radius:2px;background:${bar};flex-shrink:0;"></div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.band_name || g.venue_name || 'Gig')}</div>
+                <div style="font-size:10px;color:var(--text-2);">${escapeHtml(dateLabel)}${times ? ' \u00B7 ' + times : ''}${fee ? ' \u00B7 ' + fee : ''}</div>
+              </div>
+            </div>
+          `;
+        }).join('')
+      : '<div style="padding:20px;text-align:center;color:var(--text-2);font-size:12px;">No upcoming gigs yet. Create a new one below.</div>';
+
+    body.innerHTML = `
+      <div class="form-section-label" style="margin-bottom:8px;">Choose a gig to send a dep offer for</div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px;">
+        ${gigRows}
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;text-align:center;">\u2014 or \u2014</div>
+        <div id="depNewGigBtn" onclick="showDepNewGigForm()" style="background:var(--card);border:2px dashed var(--accent);border-radius:var(--radius);padding:14px;text-align:center;cursor:pointer;">
+          <div style="font-size:18px;margin-bottom:4px;">\uD83C\uDFB5</div>
+          <div style="font-size:14px;font-weight:700;color:var(--accent);">New gig, set up &amp; send dep</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:2px;">Enter the gig details, then pick who to send the dep offer to</div>
+        </div>
+      </div>
+
+      <div id="depNewGigForm" style="display:none;background:var(--card);border:1px solid var(--accent);border-radius:var(--radius);padding:16px;margin-bottom:12px;">
+        <div style="font-size:14px;font-weight:700;color:var(--accent);margin-bottom:12px;">\uD83C\uDFB5 Quick gig setup</div>
+        <div class="form-group"><div class="form-label">Band / client name</div><input class="form-input" id="depNewGigBand" placeholder="e.g. The Silverstone Band"></div>
+        <div class="form-group"><div class="form-label">Venue</div><input class="form-input" id="depNewGigVenue" placeholder="e.g. The Grand, Birmingham"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div class="form-group"><div class="form-label">Date</div><input class="form-input" id="depNewGigDate" type="date"></div>
+          <div class="form-group"><div class="form-label">Fee (\u00A3)</div><input class="form-input" id="depNewGigFee" type="number" placeholder="280"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div class="form-group"><div class="form-label">Start time</div><input class="form-input" id="depNewGigStart" type="time"></div>
+          <div class="form-group"><div class="form-label">End time</div><input class="form-input" id="depNewGigEnd" type="time"></div>
+        </div>
+        <div class="form-group"><div class="form-label">Instrument / role needed</div><input class="form-input" id="depNewGigRole" placeholder="e.g. Keys player"></div>
+        <div style="background:var(--info-dim);border:1px solid rgba(88,166,255,.2);border-radius:var(--radius);padding:8px 10px;margin-bottom:12px;">
+          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">\uD83D\uDCA1 This creates the gig in TrackMyGigs AND takes you straight to the dep offer \u2014 no double entry.</div>
+        </div>
+        <button class="btn-pill" onclick="createGigAndSendDep()">Save gig &amp; send dep offer \u2192</button>
+      </div>
+    `;
+  } catch (err) {
+    console.error('openDepPicker error:', err);
+    body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load gigs. Try again.</div>';
+  }
+}
+
+function showDepNewGigForm() {
+  const btn = document.getElementById('depNewGigBtn');
+  const form = document.getElementById('depNewGigForm');
+  if (btn) btn.style.display = 'none';
+  if (form) form.style.display = 'block';
+}
+
+function selectGigForDep(gigId) {
+  closePanel('send-dep-picker');
+  // Open the existing send-dep form with the gig pre-selected
+  openPanel('panel-dep');
+  // Populate the gig select if it exists
+  setTimeout(() => {
+    const sel = document.getElementById('depGigSelect');
+    if (sel) {
+      sel.value = gigId;
+      // Fire change so any listeners pick it up
+      sel.dispatchEvent(new Event('change'));
+    }
+  }, 50);
+}
+
+async function createGigAndSendDep() {
+  const band = document.getElementById('depNewGigBand')?.value?.trim();
+  const venue = document.getElementById('depNewGigVenue')?.value?.trim();
+  const date = document.getElementById('depNewGigDate')?.value;
+  const fee = document.getElementById('depNewGigFee')?.value;
+  const start = document.getElementById('depNewGigStart')?.value;
+  const end = document.getElementById('depNewGigEnd')?.value;
+  const role = document.getElementById('depNewGigRole')?.value?.trim();
+
+  if (!band && !venue) { toast('Add a band or venue name'); return; }
+  if (!date) { toast('Pick a date'); return; }
+
+  try {
+    const resp = await fetch('/api/gigs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        band_name: band || null,
+        venue_name: venue || null,
+        date,
+        fee: fee ? parseFloat(fee) : null,
+        start_time: start || null,
+        end_time: end || null,
+        status: 'confirmed',
+      }),
+    });
+    if (!resp.ok) throw new Error('Could not save gig');
+    const gig = await resp.json();
+    // Clear gig cache so next picker load refreshes
+    window._cachedGigs = null;
+    toast('Gig saved');
+    selectGigForDep(gig.id);
+    // Pre-fill the role on the send-dep form
+    setTimeout(() => {
+      const roleInput = document.getElementById('depRole');
+      if (roleInput && role) roleInput.value = role;
+    }, 100);
+  } catch (err) {
+    console.error('createGigAndSendDep error:', err);
+    toast('Could not save gig');
+  }
+}
+
+// Show the dep-accepted success panel after a user accepts a dep offer.
+// Pulls full offer+gig+sender details so we can render the gig pack, lineup etc.
+async function showDepAccepted(offerId) {
+  openPanel('dep-accepted');
+  const body = document.getElementById('depAcceptedBody');
+  if (!body) return;
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>';
+  try {
+    const resp = await fetch(`/api/offers/${offerId}/details`);
+    if (!resp.ok) throw new Error('Failed to load offer');
+    const o = await resp.json();
+
+    const d = o.gig_date ? new Date(o.gig_date) : null;
+    const dateLabel = d && !isNaN(d) ? d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '';
+    const times = o.start_time ? `${(o.start_time || '').slice(0, 5)}${o.end_time ? '\u2013' + o.end_time.slice(0, 5) : ''}` : '';
+    const loadIn = o.load_in_time ? ` \u00B7 Arrive ${o.load_in_time.slice(0, 5)}` : '';
+    const fee = o.fee ? `\u00A3${Math.round(o.fee)}` : '\u00A3 \u2014';
+    const senderName = o.sender_display_name || o.sender_name || 'the band';
+
+    const addressHtml = o.venue_address
+      ? `<span onclick="openDirections('${escapeHtml(o.venue_address).replace(/'/g, '&#39;')}')" style="color:var(--info);font-weight:500;cursor:pointer;">\uD83D\uDCCD Get directions</span>`
+      : '<span style="color:var(--text-3);">Not set</span>';
+
+    body.innerHTML = `
+      <div style="background:var(--surface);padding:16px 20px;border-bottom:1px solid var(--border);">
+        <button onclick="closePanel('dep-accepted')" style="display:flex;align-items:center;gap:6px;color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;margin-bottom:12px;background:none;border:none;">&#8249; Back to offers</button>
+        <div style="background:var(--success-dim);border:1px solid rgba(63,185,80,.3);border-radius:var(--radius);padding:16px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:8px;">\u2705</div>
+          <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px;">You're on the gig!</div>
+          <div style="font-size:13px;color:var(--text-2);">${escapeHtml(senderName)} has been notified. The gig is now in your calendar.</div>
+        </div>
+        <div style="background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);border-radius:var(--radius);padding:14px;margin-top:10px;">
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <div style="font-size:16px;flex-shrink:0;margin-top:1px;">\uD83D\uDCCB</div>
+            <div>
+              <div style="font-size:13px;font-weight:700;color:#A78BFA;margin-bottom:6px;">Ownership agreement</div>
+              <div style="font-size:12px;color:var(--text-2);line-height:1.5;">By accepting this dep, you agree to take full ownership of this gig. This includes arriving on time, meeting all requirements, and arranging your own replacement if you can no longer attend.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <div style="font-size:14px;font-weight:700;color:var(--text);">\uD83C\uDF92 Your Gig Pack</div>
+          <span style="font-size:10px;color:var(--success);background:var(--success-dim);border-radius:8px;padding:2px 8px;font-weight:600;">Auto-delivered</span>
+        </div>
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;">
+          <div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Date</span><span style="color:var(--text);font-weight:500;">${escapeHtml(dateLabel)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Times</span><span style="color:var(--text);font-weight:500;">${escapeHtml(times)}${loadIn}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Venue</span><span style="color:var(--text);font-weight:500;">${escapeHtml(o.venue_name || '')}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Address</span>${addressHtml}</div>
+          <div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Dress code</span><span style="color:var(--text);font-weight:500;">${escapeHtml(o.dress_code || 'Not set')}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Fee</span><span style="color:var(--success);font-weight:700;">${fee}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Band leader</span><span style="color:var(--text);font-weight:500;">${escapeHtml(senderName)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 14px;font-size:13px;"><span style="color:var(--text-2);">Day-of contact</span><span style="color:var(--text);font-weight:500;">${escapeHtml(o.day_of_contact || (o.sender_phone ? senderName + ' \u00B7 ' + o.sender_phone : 'Not set'))}</span></div>
+        </div>
+      </div>
+
+      <div style="padding:16px 20px;">
+        <button class="btn-pill" onclick="openGigChat('${o.gig_id}')" style="background:#A78BFA;color:#fff;border:none;margin-bottom:8px;">\uD83D\uDCAC Message ${escapeHtml(senderName)}</button>
+        <button class="btn-pill" onclick="openGigChat('${o.gig_id}')">\uD83D\uDCAC Message the band about this gig</button>
+        <div style="margin-top:12px;background:var(--info-dim);border:1px solid rgba(88,166,255,.2);border-radius:var(--radius);padding:10px 12px;">
+          <div style="font-size:12px;color:var(--text-2);line-height:1.5;">\uD83D\uDCC5 This gig has been added to your TrackMyGigs calendar and will sync to your connected calendars (Google, Outlook) automatically.</div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;">
+          <button class="btn-pill-outline" style="flex:1;" onclick="showCancelDep('${o.id}')">Can't make it anymore</button>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    console.error('showDepAccepted error:', err);
+    body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load offer details.</div>';
+  }
+}
+
+// Show the cancel-dep panel for an accepted dep offer.
+async function showCancelDep(offerId) {
+  // Close dep-accepted first if it's open
+  closePanel('dep-accepted');
+  openPanel('cancel-dep');
+  const body = document.getElementById('cancelDepBody');
+  if (!body) return;
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>';
+  try {
+    const resp = await fetch(`/api/offers/${offerId}/details`);
+    if (!resp.ok) throw new Error('Failed to load offer');
+    const o = await resp.json();
+
+    const d = o.gig_date ? new Date(o.gig_date) : null;
+    const dateLabel = d && !isNaN(d) ? d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+    const fee = o.fee ? `\u00A3${Math.round(o.fee)}` : '';
+    const senderName = o.sender_display_name || o.sender_name || 'the band';
+
+    // Fetch contacts (network) for suggest-replacement list
+    let contacts = [];
+    try {
+      const cRes = await fetch('/api/contacts');
+      contacts = await cRes.json();
+    } catch (_) { /* ignore */ }
+
+    const suggestRows = (contacts || []).slice(0, 5).map(c => {
+      const initial = (c.name || '?')[0].toUpperCase();
+      return `
+        <div onclick="selectReplacement('${c.id}', this)" data-replacement-id="${c.id}" style="padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);cursor:pointer;">
+          <div style="width:32px;height:32px;border-radius:16px;background:var(--info-dim);border:1px solid var(--info);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--info);">${escapeHtml(initial)}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(c.name || 'Contact')}</div>
+            <div style="font-size:11px;color:var(--text-2);">${escapeHtml((c.instruments || []).join(', ') || 'Network contact')}</div>
+          </div>
+          <span class="rep-btn" style="font-size:11px;color:var(--accent);font-weight:600;">Suggest \u2192</span>
+        </div>
+      `;
+    }).join('');
+
+    body.innerHTML = `
+      <div style="background:var(--surface);padding:16px 20px;border-bottom:1px solid var(--border);">
+        <button onclick="closePanel('cancel-dep')" style="display:flex;align-items:center;gap:6px;color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;margin-bottom:12px;background:none;border:none;">&#8249; Back</button>
+        <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px;">Cancel your commitment</div>
+        <div style="font-size:13px;color:var(--text-2);">${escapeHtml(o.band_name || o.venue_name || 'Gig')} \u00B7 ${escapeHtml(dateLabel)}${fee ? ' \u00B7 ' + fee : ''}</div>
+      </div>
+
+      <div style="padding:16px 20px;">
+        <div style="background:var(--warning-dim);border:1px solid rgba(240,165,0,.3);border-radius:var(--radius);padding:14px;margin-bottom:16px;">
+          <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px;">\u26A0\uFE0F This affects the whole lineup</div>
+          <div style="font-size:13px;color:var(--text-2);line-height:1.5;">${escapeHtml(senderName)} and the band are counting on you. If you can suggest a replacement, it makes this much easier for everyone.</div>
+        </div>
+
+        <div class="form-group">
+          <div class="form-label">Reason (optional)</div>
+          <input class="form-input" id="cancelDepReason" placeholder="e.g. double booked, illness, personal\u2026">
+        </div>
+
+        <div style="margin-top:12px;margin-bottom:16px;">
+          <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px;">\uD83D\uDD04 Suggest a replacement</div>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:10px;">Know someone who can cover? They'll get the offer directly and ${escapeHtml(senderName)} will be notified.</div>
+          ${suggestRows ? `
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:10px;">
+              <div style="padding:8px 14px;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--border);">From your network</div>
+              ${suggestRows}
+            </div>
+          ` : `
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;text-align:center;font-size:12px;color:var(--text-2);margin-bottom:10px;">No contacts in your network yet.</div>
+          `}
+        </div>
+
+        <button class="btn-pill" id="cancelDepSubmitBtn" style="background:var(--warning);margin-bottom:10px;" onclick="submitCancelDep('${o.id}')">Cancel without suggesting a replacement</button>
+
+        <div style="margin-top:12px;font-size:11px;color:var(--text-3);text-align:center;line-height:1.5;">
+          ${escapeHtml(senderName)} will be notified immediately. If you suggest a replacement,<br>they'll receive the offer with all the gig details automatically.
+        </div>
+      </div>
+    `;
+    window._cancelDepReplacementId = null;
+  } catch (err) {
+    console.error('showCancelDep error:', err);
+    body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load cancel form.</div>';
+  }
+}
+
+function selectReplacement(contactId, el) {
+  // Clear previous selection
+  document.querySelectorAll('[data-replacement-id]').forEach(row => {
+    row.style.background = '';
+    row.style.borderColor = '';
+    const btn = row.querySelector('.rep-btn');
+    if (btn) { btn.textContent = 'Suggest \u2192'; btn.style.color = 'var(--accent)'; }
+  });
+  // Mark new selection
+  if (el) {
+    el.style.background = 'var(--accent-dim)';
+    el.style.borderColor = 'var(--accent)';
+    const btn = el.querySelector('.rep-btn');
+    if (btn) { btn.textContent = '\u2713 Selected'; btn.style.color = 'var(--success)'; }
+  }
+  window._cancelDepReplacementId = contactId;
+  const btn = document.getElementById('cancelDepSubmitBtn');
+  const nameEl = el?.querySelector('div[style*="font-weight:600"]');
+  const name = nameEl?.textContent || 'this contact';
+  if (btn) {
+    btn.textContent = `Cancel gig & suggest ${name} as replacement`;
+    btn.style.background = 'var(--warning)';
+  }
+}
+
+async function submitCancelDep(offerId) {
+  const reasonEl = document.getElementById('cancelDepReason');
+  const reason = reasonEl?.value?.trim() || null;
+  const replacement_user_id = window._cancelDepReplacementId || null;
+  if (!confirm('Cancel this commitment? The band will be notified.')) return;
+  try {
+    const resp = await fetch(`/api/offers/${offerId}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason, replacement_user_id }),
+    });
+    if (!resp.ok) throw new Error('Failed to cancel');
+    toast(replacement_user_id ? 'Cancelled and replacement suggested' : 'Cancelled');
+    closePanel('cancel-dep');
+    await refreshOffersAndBadge();
+  } catch (err) {
+    console.error('submitCancelDep error:', err);
+    toast('Could not cancel. Try again.');
+  }
+}
+
+// Open directions to an address using the user's preferred nav app
+function openDirections(address) {
+  if (!address) return;
+  const encoded = encodeURIComponent(address);
+  window.open(`https://www.google.com/maps/dir/?api=1&destination=${encoded}`, '_blank');
+}
+
+// Expose dep flow helpers
+window.openDepPicker = openDepPicker;
+window.selectGigForDep = selectGigForDep;
+window.showDepNewGigForm = showDepNewGigForm;
+window.createGigAndSendDep = createGigAndSendDep;
+window.showDepAccepted = showDepAccepted;
+window.showCancelDep = showCancelDep;
+window.selectReplacement = selectReplacement;
+window.submitCancelDep = submitCancelDep;
+window.openDirections = openDirections;
 
 // ── Calendar Nudge (Gig Detection) ──────────────────────────────────────────
 

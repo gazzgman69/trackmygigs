@@ -331,6 +331,32 @@
     </div>
   </div>
 
+  <!-- Send Dep: Gig Picker (step 1) -->
+  <div class="panel-overlay" id="send-dep-picker">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('send-dep-picker')">&#8249; Back</button>
+      <div class="panel-title">Which gig?</div>
+      <div class="panel-action"></div>
+    </div>
+    <div class="panel-body" id="sendDepPickerBody" style="overflow-y:auto;padding:16px;">
+      <div style="padding:40px;text-align:center;color:var(--text-2);">Loading your gigs...</div>
+    </div>
+  </div>
+
+  <!-- Dep Accepted (confirmation panel) -->
+  <div class="panel-overlay" id="dep-accepted">
+    <div class="panel-body" id="depAcceptedBody" style="overflow-y:auto;">
+      <div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Cancel Dep -->
+  <div class="panel-overlay" id="cancel-dep">
+    <div class="panel-body" id="cancelDepBody" style="overflow-y:auto;">
+      <div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>
+    </div>
+  </div>
+
   <!-- Send Dep -->
   <div class="panel-overlay" id="panel-dep">
     <div class="panel-header">

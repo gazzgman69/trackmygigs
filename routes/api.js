@@ -241,6 +241,104 @@ router.patch('/offers/:id', async (req, res) => {
   }
 });
 
+// Full offer details for the dep-accepted / dep-detail panels.
+// Returns the offer joined with the gig and sender, plus lineup info.
+router.get('/offers/:id/details', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await db.query(
+      `SELECT
+         o.id, o.sender_id, o.recipient_id, o.gig_id, o.offer_type,
+         o.status, o.fee, o.deadline, o.created_at, o.responded_at,
+         g.band_name, g.venue_name, g.venue_address,
+         g.date as gig_date, g.start_time, g.end_time, g.load_in_time,
+         g.dress_code, g.day_of_contact, g.parking_info, g.set_times,
+         g.notes as gig_notes,
+         u.display_name as sender_display_name, u.name as sender_name,
+         u.email as sender_email, u.phone as sender_phone
+       FROM offers o
+       LEFT JOIN gigs g ON g.id = o.gig_id
+       LEFT JOIN users u ON u.id = o.sender_id
+       WHERE o.id = $1 AND (o.recipient_id = $2 OR o.sender_id = $2)`,
+      [id, req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Offer not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Get offer details error:', error);
+    res.status(500).json({ error: 'Failed to fetch offer details' });
+  }
+});
+
+// Cancel an accepted dep. Optionally suggests a replacement, which creates
+// a new pending dep offer on the same gig addressed to the replacement user.
+// Notifies the band leader (sender of the original dep offer) via a system
+// message in the gig thread so they know the dep has dropped out.
+router.post('/offers/:id/cancel', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason, replacement_user_id } = req.body || {};
+
+    const offerRes = await db.query(
+      `SELECT o.*, g.band_name, g.venue_name, g.date as gig_date
+         FROM offers o LEFT JOIN gigs g ON g.id = o.gig_id
+         WHERE o.id = $1 AND o.recipient_id = $2 AND o.status = 'accepted'`,
+      [id, req.user.id]
+    );
+    if (offerRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Accepted offer not found' });
+    }
+    const offer = offerRes.rows[0];
+
+    // Mark the original offer cancelled.
+    await db.query(
+      `UPDATE offers SET status = 'cancelled', responded_at = NOW() WHERE id = $1`,
+      [id]
+    );
+
+    // If a replacement was suggested, create a new pending dep offer for them.
+    let replacementOfferId = null;
+    if (replacement_user_id) {
+      const newOffer = await db.query(
+        `INSERT INTO offers (sender_id, recipient_id, gig_id, offer_type, status, fee)
+         VALUES ($1, $2, $3, 'dep', 'pending', $4)
+         RETURNING id`,
+        [offer.sender_id, replacement_user_id, offer.gig_id, offer.fee]
+      );
+      replacementOfferId = newOffer.rows[0].id;
+    }
+
+    // Notify band leader (original sender) by posting a system message into
+    // any existing gig thread. If no thread exists yet, skip silently.
+    try {
+      const threadRes = await db.query(
+        `SELECT id FROM threads WHERE gig_id = $1 AND participant_ids @> ARRAY[$2::uuid] LIMIT 1`,
+        [offer.gig_id, offer.sender_id]
+      );
+      if (threadRes.rows.length > 0) {
+        const tid = threadRes.rows[0].id;
+        const reasonText = reason ? ` Reason: ${reason}.` : '';
+        const replacementText = replacement_user_id
+          ? ` A replacement offer has been sent.`
+          : '';
+        await db.query(
+          `INSERT INTO messages (thread_id, sender_id, content) VALUES ($1, $2, $3)`,
+          [tid, req.user.id, `I can no longer make ${offer.band_name || 'this gig'}.${reasonText}${replacementText}`]
+        );
+      }
+    } catch (msgErr) {
+      console.error('Cancel-dep notify error (non-fatal):', msgErr.message);
+    }
+
+    res.json({ success: true, replacement_offer_id: replacementOfferId });
+  } catch (error) {
+    console.error('Cancel dep error:', error);
+    res.status(500).json({ error: 'Failed to cancel dep' });
+  }
+});
+
 router.get('/user/profile', async (req, res) => {
   try {
     res.json(req.user);
