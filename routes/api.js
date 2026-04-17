@@ -7,6 +7,20 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
+// Coerce a client-supplied value into a Postgres text[] compatible array.
+// Accepts an array (returned as-is), a comma-separated string (split on ,),
+// or null/undefined (returned as null so COALESCE preserves existing value).
+function toTextArray(v) {
+  if (v === null || v === undefined) return null;
+  if (Array.isArray(v)) return v.map(s => String(s).trim()).filter(Boolean);
+  if (typeof v === 'string') {
+    const trimmed = v.trim();
+    if (!trimmed) return null;
+    return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  return null;
+}
+
 // Fire-and-forget helper — never let sync failures break API responses.
 // The gig has already been saved locally; Google is a mirror.
 function syncGigSafely(action, userId, gig) {
@@ -167,19 +181,22 @@ router.get('/invoices', async (req, res) => {
 router.post('/invoices', async (req, res) => {
   try {
     const { gig_id, band_name, amount, status, invoice_number, payment_terms, due_date,
-            venue_address, venue_name, description, notes } = req.body;
+            venue_address, venue_name, description, notes, recipient_email } = req.body;
+
+    const effectiveStatus = status || 'draft';
+    const sentAt = effectiveStatus === 'sent' ? new Date() : null;
 
     const result = await db.query(
       `INSERT INTO invoices (user_id, gig_id, band_name, amount, status, invoice_number, payment_terms, due_date,
-                             venue_address, venue_name, description, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                             venue_address, venue_name, description, notes, recipient_email, sent_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING *`,
       [
         req.user.id,
         gig_id,
         band_name,
         amount,
-        status || 'draft',
+        effectiveStatus,
         invoice_number,
         payment_terms,
         due_date,
@@ -187,6 +204,8 @@ router.post('/invoices', async (req, res) => {
         venue_name || null,
         description || null,
         notes || null,
+        recipient_email || null,
+        sentAt,
       ]
     );
 
@@ -209,7 +228,7 @@ router.get('/offers', async (req, res) => {
        FROM offers o
        LEFT JOIN gigs g ON g.id = o.gig_id
        LEFT JOIN users u ON u.id = o.sender_id
-       WHERE o.recipient_id = $1
+       WHERE o.recipient_id = $1 AND o.sender_id != $1
        ORDER BY o.created_at DESC`,
       [req.user.id]
     );
@@ -465,9 +484,16 @@ router.post('/nudge-feedback', async (req, res) => {
 
 router.get('/expenses', async (req, res) => {
   try {
+    // S13-09: include gig_id so the client can show "linked to Red Lion gig"
+    // badges and so the Gig detail panel can surface receipts filed against it.
+    const gigFilter = req.query.gig_id ? ' AND gig_id = $2' : '';
+    const params = req.query.gig_id ? [req.user.id, req.query.gig_id] : [req.user.id];
     const result = await db.query(
-      'SELECT id, vendor AS description, amount, category, date FROM receipts WHERE user_id = $1 ORDER BY date DESC',
-      [req.user.id]
+      `SELECT id, vendor AS description, amount, category, date, gig_id
+         FROM receipts
+        WHERE user_id = $1${gigFilter}
+        ORDER BY date DESC`,
+      params
     );
     res.json({ expenses: result.rows });
   } catch (error) {
@@ -478,13 +504,19 @@ router.get('/expenses', async (req, res) => {
 
 router.post('/expenses', async (req, res) => {
   try {
-    const { amount, description, date, category } = req.body;
-    await db.query(
-      `INSERT INTO receipts (user_id, vendor, amount, category, date)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [req.user.id, description, amount, category || 'Other', date || new Date()]
+    const { amount, description, date, category, gig_id } = req.body;
+    // S13-09: persist the optional gig_id foreign key when the user logs an
+    // expense from inside a gig detail screen. Falls through to NULL when not set.
+    const gigIdValue = (gig_id === '' || gig_id === null || gig_id === undefined)
+      ? null
+      : gig_id;
+    const result = await db.query(
+      `INSERT INTO receipts (user_id, vendor, amount, category, date, gig_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, vendor AS description, amount, category, date, gig_id`,
+      [req.user.id, description, amount, category || 'Other', date || new Date(), gigIdValue]
     );
-    res.json({ success: true });
+    res.json({ success: true, expense: result.rows[0] });
   } catch (error) {
     console.error('Create expense error:', error);
     res.status(500).json({ error: 'Failed to save expense' });
@@ -495,13 +527,83 @@ router.post('/expenses', async (req, res) => {
 // Uses existing blocked_dates table; stores range start in date, reason, and
 // recurring_pattern for recurring/range modes
 
+// S13-02: expand recurring and range patterns server-side so every client gets
+// the same list of blocked dates without re-implementing the expansion.
+// Horizon is 18 months from today so calendar views one year out still work.
+function expandBlockedRow(row, horizonMonths = 18) {
+  const out = [];
+  const startStr = row.date instanceof Date
+    ? row.date.toISOString().slice(0, 10)
+    : String(row.date).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startStr)) return out;
+
+  const start = new Date(startStr + 'T00:00:00Z');
+  const horizon = new Date(start);
+  horizon.setUTCMonth(horizon.getUTCMonth() + horizonMonths);
+
+  const pattern = row.recurring_pattern || null;
+
+  // Single date
+  if (!pattern) {
+    out.push(startStr);
+    return out;
+  }
+
+  // Range: "range:YYYY-MM-DD"
+  if (pattern.startsWith('range:')) {
+    const endStr = pattern.slice(6);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(endStr)) { out.push(startStr); return out; }
+    const end = new Date(endStr + 'T00:00:00Z');
+    for (let d = new Date(start); d <= end && d <= horizon; d.setUTCDate(d.getUTCDate() + 1)) {
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  }
+
+  // Recurring: "recurring:mon,tue,..." or "recurring:0,1,..." (0=Sun)
+  if (pattern.startsWith('recurring:')) {
+    const raw = pattern.slice(10).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const map = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+    const dow = raw.map(x => {
+      if (map[x] !== undefined) return map[x];
+      const n = parseInt(x, 10);
+      return (!isNaN(n) && n >= 0 && n <= 6) ? n : null;
+    }).filter(n => n !== null);
+    if (dow.length === 0) { out.push(startStr); return out; }
+    for (let d = new Date(start); d <= horizon; d.setUTCDate(d.getUTCDate() + 1)) {
+      if (dow.includes(d.getUTCDay())) out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  }
+
+  out.push(startStr);
+  return out;
+}
+
 router.get('/blocked-dates', async (req, res) => {
   try {
     const result = await db.query(
       'SELECT * FROM blocked_dates WHERE user_id = $1 ORDER BY date ASC',
       [req.user.id]
     );
-    res.json(result.rows);
+    // Keep the response a flat array (back-compat with clients that expect
+    // Array.isArray(data) === true), but enrich each row with expanded_dates
+    // and normalized start_date/end_date fields so the calendar can render
+    // recurring and range blocks without re-implementing the expansion.
+    const rowsOut = result.rows.map(row => {
+      const dates = expandBlockedRow(row);
+      const startIso = row.date instanceof Date
+        ? row.date.toISOString().slice(0, 10)
+        : String(row.date).slice(0, 10);
+      const endIso = dates.length > 0 ? dates[dates.length - 1] : startIso;
+      return {
+        ...row,
+        start_date: startIso,
+        end_date: endIso,
+        expanded_dates: dates,
+      };
+    });
+    res.json(rowsOut);
   } catch (error) {
     console.error('Get blocked dates error:', error);
     res.status(500).json({ error: 'Failed to fetch blocked dates' });
@@ -516,7 +618,8 @@ router.post('/blocked-dates', async (req, res) => {
                     mode === 'range' && to ? `range:${to}` : null;
     await db.query(
       `INSERT INTO blocked_dates (user_id, date, reason, recurring_pattern)
-       VALUES ($1, $2, $3, $4)`,
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT DO NOTHING`,
       [req.user.id, dateValue, reason || null, pattern]
     );
     res.json({ success: true });
@@ -526,19 +629,169 @@ router.post('/blocked-dates', async (req, res) => {
   }
 });
 
+// S13-03: Bulk block multiple dates in a single transaction. Accepts
+// { dates: ['2026-05-01', '2026-05-02', ...], reason? } and inserts all rows
+// atomically so partial failures don't leave the calendar in a mixed state.
+router.post('/blocked-dates/bulk', async (req, res) => {
+  try {
+    const { dates, reason } = req.body || {};
+    if (!Array.isArray(dates) || dates.length === 0) {
+      return res.status(400).json({ error: 'dates (non-empty array) is required' });
+    }
+    // Validate the shape so bad payloads can't poison the table.
+    const iso = /^\d{4}-\d{2}-\d{2}$/;
+    const clean = Array.from(new Set(dates.map(d => String(d).slice(0, 10)).filter(d => iso.test(d))));
+    if (clean.length === 0) {
+      return res.status(400).json({ error: 'No valid ISO dates supplied' });
+    }
+
+    const client = await db.getClient ? db.getClient() : null;
+    let inserted = 0;
+    if (client) {
+      // Prefer explicit transaction if the db adapter exposes getClient.
+      try {
+        await client.query('BEGIN');
+        for (const d of clean) {
+          const r = await client.query(
+            `INSERT INTO blocked_dates (user_id, date, reason, recurring_pattern)
+             VALUES ($1, $2, $3, NULL)
+             ON CONFLICT DO NOTHING`,
+            [req.user.id, d, reason || null]
+          );
+          inserted += r.rowCount || 0;
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        if (client.release) client.release();
+      }
+    } else {
+      // Fallback: multi-row INSERT via a VALUES list — still one round-trip.
+      const values = [];
+      const params = [req.user.id, reason || null];
+      clean.forEach((d, i) => {
+        values.push(`($1, $${i + 3}, $2, NULL)`);
+        params.push(d);
+      });
+      const r = await db.query(
+        `INSERT INTO blocked_dates (user_id, date, reason, recurring_pattern)
+         VALUES ${values.join(', ')}
+         ON CONFLICT DO NOTHING`,
+        params
+      );
+      inserted = r.rowCount || 0;
+    }
+
+    res.json({ success: true, inserted, attempted: clean.length });
+  } catch (error) {
+    console.error('Bulk block error:', error);
+    res.status(500).json({ error: 'Failed to block dates' });
+  }
+});
+
+// S13-05: DELETE a single blocked date by id. Required so users can unblock
+// dates they added by mistake — previously they had to edit the DB directly.
+router.delete('/blocked-dates/:id', async (req, res) => {
+  try {
+    const r = await db.query(
+      'DELETE FROM blocked_dates WHERE id = $1 AND user_id = $2 RETURNING id',
+      [req.params.id, req.user.id]
+    );
+    if (r.rowCount === 0) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Unblock date error:', error);
+    res.status(500).json({ error: 'Failed to unblock date' });
+  }
+});
+
 // ── Dep Offers ───────────────────────────────────────────────────────────────
 // Uses the existing offers table (offer_type='dep', status='pending')
 
 router.post('/dep-offers', async (req, res) => {
   try {
-    const { gig_id, role, message, mode } = req.body;
-    // Store dep offer using offers table; sender=recipient=self until network exists
-    await db.query(
-      `INSERT INTO offers (sender_id, recipient_id, gig_id, offer_type, status, fee)
-       VALUES ($1, $1, $2, 'dep', 'pending', (SELECT fee FROM gigs WHERE id=$2 AND user_id=$1))`,
-      [req.user.id, gig_id]
-    );
-    res.json({ success: true });
+    const { gig_id, role, message, mode, contact_ids } = req.body;
+    if (!gig_id) return res.status(400).json({ error: 'Gig is required' });
+
+    // Load candidate contacts for this user
+    let contactRows = [];
+    if (mode === 'pick' && Array.isArray(contact_ids) && contact_ids.length > 0) {
+      const { rows } = await db.query(
+        `SELECT id, contact_user_id, email, phone, instruments
+           FROM contacts
+          WHERE owner_id = $1 AND id = ANY($2::uuid[])`,
+        [req.user.id, contact_ids]
+      );
+      contactRows = rows;
+    } else if (mode === 'all') {
+      // Broadcast to favourite contacts, optionally filtered by role keyword
+      const { rows } = await db.query(
+        `SELECT id, contact_user_id, email, phone, instruments
+           FROM contacts
+          WHERE owner_id = $1
+            AND (is_favourite = true OR $2::text IS NULL
+                 OR EXISTS (SELECT 1 FROM unnest(instruments) inst WHERE inst ILIKE '%' || $2 || '%'))`,
+        [req.user.id, role || null]
+      );
+      contactRows = rows;
+    } else {
+      return res.status(400).json({ error: 'Select contacts or choose broadcast mode' });
+    }
+
+    if (contactRows.length === 0) {
+      return res.status(400).json({ error: 'No matching contacts found' });
+    }
+
+    let sent = 0;
+    let unresolved = 0;
+    for (const c of contactRows) {
+      // Resolve to a users.id
+      let recipientId = c.contact_user_id;
+      if (!recipientId && c.email) {
+        const { rows } = await db.query(
+          'SELECT id FROM users WHERE lower(email) = lower($1) LIMIT 1',
+          [c.email]
+        );
+        if (rows[0]) {
+          recipientId = rows[0].id;
+          await db.query(
+            'UPDATE contacts SET contact_user_id = $1 WHERE id = $2 AND owner_id = $3',
+            [recipientId, c.id, req.user.id]
+          );
+        }
+      }
+      if (!recipientId && c.phone) {
+        const normalised = String(c.phone).replace(/[^\d+]/g, '');
+        const { rows } = await db.query(
+          'SELECT id FROM users WHERE regexp_replace(coalesce(phone,$2), $1, $2, $3) = $4 LIMIT 1',
+          ['[^0-9+]', '', 'g', normalised]
+        );
+        if (rows[0]) {
+          recipientId = rows[0].id;
+          await db.query(
+            'UPDATE contacts SET contact_user_id = $1 WHERE id = $2 AND owner_id = $3',
+            [recipientId, c.id, req.user.id]
+          );
+        }
+      }
+      if (!recipientId || recipientId === req.user.id) {
+        unresolved++;
+        continue;
+      }
+      await db.query(
+        `INSERT INTO offers (sender_id, recipient_id, gig_id, offer_type, status, fee)
+         VALUES ($1, $2, $3, 'dep', 'pending',
+                 (SELECT fee FROM gigs WHERE id = $3 AND user_id = $1))`,
+        [req.user.id, recipientId, gig_id]
+      );
+      sent++;
+    }
+
+    res.json({ success: true, sent, unresolved, total: contactRows.length });
   } catch (error) {
     console.error('Create dep offer error:', error);
     res.status(500).json({ error: 'Failed to send dep offer' });
@@ -650,6 +903,11 @@ router.get('/stats', async (req, res) => {
       unreadResult,
       offersResult,
       activeDepResult,
+      monthlyBreakdownResult,
+      recentMessagesResult,
+      networkOffersResult,
+      overdueCountResult,
+      draftCountResult,
     ] = await Promise.all([
       // Next gig
       db.query(
@@ -707,6 +965,55 @@ router.get('/stats', async (req, res) => {
          ORDER BY g.date ASC LIMIT 1`,
         [userId, today]
       ),
+      // Monthly breakdown for Home forecast chart (past 6 months + next 6 months)
+      db.query(
+        `SELECT TO_CHAR(DATE_TRUNC('month', date), 'Mon YY') AS month_label,
+                DATE_TRUNC('month', date)::date AS month_start,
+                COALESCE(SUM(fee) FILTER (WHERE status = 'confirmed'), 0) AS earnings,
+                COUNT(*) AS gigs
+         FROM gigs
+         WHERE user_id = $1
+           AND date >= DATE_TRUNC('month', NOW()) - INTERVAL '6 months'
+           AND date <  DATE_TRUNC('month', NOW()) + INTERVAL '6 months'
+         GROUP BY month_start
+         ORDER BY month_start ASC`,
+        [userId]
+      ),
+      // Recent messages preview (last 3 messages in threads the user participates in,
+      // excluding messages the user sent themselves)
+      db.query(
+        `SELECT m.id, m.content, m.created_at, m.thread_id,
+                u.name AS sender_name, u.avatar_url AS sender_avatar,
+                t.gig_id, g.band_name
+         FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+         JOIN users u ON u.id = m.sender_id
+         LEFT JOIN gigs g ON g.id = t.gig_id
+         WHERE $1 = ANY(t.participant_ids)
+           AND m.sender_id <> $1
+         ORDER BY m.created_at DESC
+         LIMIT 3`,
+        [userId]
+      ),
+      // Network offers (pending dep offers sent to the user - same as offer_count,
+      // but kept separately so the UI chip can read the expected key)
+      db.query(
+        `SELECT COUNT(*) as count FROM offers
+         WHERE recipient_id = $1 AND status = 'pending' AND offer_type = 'dep'`,
+        [userId]
+      ),
+      // Real overdue invoice count (not the LIMIT-1 proxy)
+      db.query(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total FROM invoices
+         WHERE user_id = $1 AND status = 'sent' AND due_date < $2`,
+        [userId, today]
+      ),
+      // Real draft invoice count (not the LIMIT-1 proxy)
+      db.query(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total FROM invoices
+         WHERE user_id = $1 AND status = 'draft'`,
+        [userId]
+      ),
     ]);
 
     const overdueInvoice = overdueResult.rows[0] || null;
@@ -732,6 +1039,24 @@ router.get('/stats', async (req, res) => {
       };
     }
 
+    const monthlyBreakdown = (monthlyBreakdownResult.rows || []).map((r) => ({
+      month_label: r.month_label,
+      month_start: r.month_start,
+      earnings: parseFloat(r.earnings || 0),
+      gigs: parseInt(r.gigs || 0),
+    }));
+
+    const recentMessages = (recentMessagesResult.rows || []).map((r) => ({
+      id: r.id,
+      thread_id: r.thread_id,
+      sender_name: r.sender_name,
+      sender_avatar: r.sender_avatar,
+      preview: (r.content || '').slice(0, 120),
+      created_at: r.created_at,
+      gig_id: r.gig_id,
+      band_name: r.band_name,
+    }));
+
     res.json({
       next_gig: nextGigResult.rows[0] || null,
       // Field names matching frontend expectations
@@ -739,13 +1064,18 @@ router.get('/stats', async (req, res) => {
       month_gigs: parseInt(thisMonthResult.rows[0]?.count || 0),
       year_earnings: parseFloat(taxYearResult.rows[0]?.earnings || 0),
       year_gigs: parseInt(taxYearResult.rows[0]?.count || 0),
-      overdue_invoices: overdueInvoice ? 1 : 0,
-      overdue_total: overdueInvoice ? parseFloat(overdueInvoice.amount || 0) : 0,
-      draft_invoices: draftInvoice ? 1 : 0,
-      draft_total: draftInvoice ? parseFloat(draftInvoice.amount || 0) : 0,
+      overdue_invoices: parseInt(overdueCountResult.rows[0]?.count || 0),
+      overdue_total: parseFloat(overdueCountResult.rows[0]?.total || 0),
+      draft_invoices: parseInt(draftCountResult.rows[0]?.count || 0),
+      draft_total: parseFloat(draftCountResult.rows[0]?.total || 0),
+      overdue_invoice_preview: overdueInvoice || null,
+      draft_invoice_preview: draftInvoice || null,
       unread_notifications: parseInt(unreadResult.rows[0]?.count || 0),
       unread_messages: parseInt(unreadResult.rows[0]?.count || 0),
       offer_count: parseInt(offersResult.rows[0]?.count || 0),
+      network_offers: parseInt(networkOffersResult.rows[0]?.count || 0),
+      monthly_breakdown: monthlyBreakdown,
+      recent_messages: recentMessages,
       active_dep_request: activeDepRequest,
     });
   } catch (error) {
@@ -1020,14 +1350,29 @@ router.get('/contacts', async (req, res) => {
   }
 });
 
+router.get('/contacts/:id', async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM contacts WHERE id = $1 AND owner_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Get contact error:', error);
+    res.status(500).json({ error: 'Failed to fetch contact' });
+  }
+});
+
 router.post('/contacts', async (req, res) => {
   try {
-    const { name, email, phone, instruments, notes } = req.body;
+    const { name, email, phone, instruments, notes, location, is_favourite } = req.body;
+    const instrumentsArr = toTextArray(instruments);
     const result = await db.query(
-      `INSERT INTO contacts (owner_id, name, email, phone, instruments, notes)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO contacts (owner_id, name, email, phone, instruments, notes, location, is_favourite)
+       VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8)
        RETURNING *`,
-      [req.user.id, name, email, phone, instruments || null, notes || null]
+      [req.user.id, name, email || null, phone || null, instrumentsArr, notes || null, location || null, !!is_favourite]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -1038,16 +1383,19 @@ router.post('/contacts', async (req, res) => {
 
 router.patch('/contacts/:id', async (req, res) => {
   try {
-    const { name, email, phone, instruments, notes } = req.body;
+    const { name, email, phone, instruments, notes, location, is_favourite } = req.body;
+    const instrumentsArr = instruments === undefined ? null : toTextArray(instruments);
     const result = await db.query(
       `UPDATE contacts SET
          name = COALESCE($1, name),
          email = COALESCE($2, email),
          phone = COALESCE($3, phone),
-         instruments = COALESCE($4, instruments),
-         notes = COALESCE($5, notes)
-       WHERE id = $6 AND owner_id = $7 RETURNING *`,
-      [name, email, phone, instruments, notes, req.params.id, req.user.id]
+         instruments = COALESCE($4::text[], instruments),
+         notes = COALESCE($5, notes),
+         location = COALESCE($6, location),
+         is_favourite = COALESCE($7, is_favourite)
+       WHERE id = $8 AND owner_id = $9 RETURNING *`,
+      [name || null, email || null, phone || null, instrumentsArr, notes || null, location || null, typeof is_favourite === 'boolean' ? is_favourite : null, req.params.id, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
     res.json(result.rows[0]);
@@ -1127,7 +1475,7 @@ router.post('/songs/bulk', async (req, res) => {
       if (!s || !s.title) continue;
       const r = await db.query(
         `INSERT INTO songs (user_id, title, artist, key, tempo, duration, genre, tags, lyrics, chords)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::text[],$9,$10) RETURNING *`,
         [
           req.user.id,
           String(s.title).slice(0, 200),
@@ -1136,7 +1484,7 @@ router.post('/songs/bulk', async (req, res) => {
           s.tempo || null,
           s.duration || null,
           s.genre || null,
-          s.tags || null,
+          toTextArray(s.tags),
           s.lyrics || null,
           s.chords || null,
         ]
@@ -1153,9 +1501,10 @@ router.post('/songs/bulk', async (req, res) => {
 router.post('/songs', async (req, res) => {
   try {
     const { title, artist, key, tempo, duration, genre, tags, lyrics, chords } = req.body;
+    const tagsArr = toTextArray(tags);
     const result = await db.query(
       `INSERT INTO songs (user_id, title, artist, key, tempo, duration, genre, tags, lyrics, chords)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, $10)
        RETURNING *`,
       [
         req.user.id,
@@ -1165,7 +1514,7 @@ router.post('/songs', async (req, res) => {
         tempo || null,
         duration || null,
         genre || null,
-        tags || null,
+        tagsArr,
         lyrics || null,
         chords || null,
       ]
@@ -1180,6 +1529,7 @@ router.post('/songs', async (req, res) => {
 router.patch('/songs/:id', async (req, res) => {
   try {
     const { title, artist, key, tempo, duration, genre, tags, lyrics, chords } = req.body;
+    const tagsArr = tags === undefined ? null : toTextArray(tags);
     const result = await db.query(
       `UPDATE songs SET
          title = COALESCE($1, title),
@@ -1188,11 +1538,11 @@ router.patch('/songs/:id', async (req, res) => {
          tempo = COALESCE($4, tempo),
          duration = COALESCE($5, duration),
          genre = COALESCE($6, genre),
-         tags = COALESCE($7, tags),
+         tags = COALESCE($7::text[], tags),
          lyrics = COALESCE($8, lyrics),
          chords = COALESCE($9, chords)
        WHERE id = $10 AND user_id = $11 RETURNING *`,
-      [title, artist, key, tempo, duration, genre, tags, lyrics, chords, req.params.id, req.user.id]
+      [title, artist, key, tempo, duration, genre, tagsArr, lyrics, chords, req.params.id, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Song not found' });
     res.json(result.rows[0]);
@@ -1423,20 +1773,46 @@ router.get('/invoices/:id', async (req, res) => {
 
 router.patch('/invoices/:id', async (req, res) => {
   try {
-    const { status, sent_at, paid_at } = req.body;
+    const { status, sent_at, paid_at, recipient_email } = req.body;
+
+    // Auto-set transition timestamps so the client never has to remember.
+    // If the client explicitly sends a value we keep it; otherwise we stamp NOW()
+    // on the first transition into 'sent' or 'paid'.
+    const effectiveSentAt = sent_at || (status === 'sent' ? new Date().toISOString() : null);
+    const effectivePaidAt = paid_at || (status === 'paid' ? new Date().toISOString() : null);
+
     const result = await db.query(
       `UPDATE invoices SET
          status = COALESCE($1, status),
          sent_at = COALESCE($2, sent_at),
-         paid_at = COALESCE($3, paid_at)
-       WHERE id = $4 AND user_id = $5 RETURNING *`,
-      [status, sent_at, paid_at, req.params.id, req.user.id]
+         paid_at = COALESCE($3, paid_at),
+         recipient_email = COALESCE($4, recipient_email)
+       WHERE id = $5 AND user_id = $6 RETURNING *`,
+      [status, effectiveSentAt, effectivePaidAt, recipient_email || null, req.params.id, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Update invoice error:', error);
     res.status(500).json({ error: 'Failed to update invoice' });
+  }
+});
+
+// Record a chase attempt: increment chase_count, set last_chase_at.
+router.post('/invoices/:id/chase', async (req, res) => {
+  try {
+    const result = await db.query(
+      `UPDATE invoices SET
+         chase_count = COALESCE(chase_count, 0) + 1,
+         last_chase_at = NOW()
+       WHERE id = $1 AND user_id = $2 RETURNING *`,
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Chase invoice error:', error);
+    res.status(500).json({ error: 'Failed to record chase' });
   }
 });
 

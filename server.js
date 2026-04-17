@@ -174,6 +174,15 @@ async function runMigrations() {
     // Invoice metadata: business address and VAT number printed on invoice PDFs.
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS business_address TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS vat_number VARCHAR(64)`);
+    // Invoice lifecycle timestamps and dunning tracking
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS chase_count INTEGER DEFAULT 0`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS last_chase_at TIMESTAMP`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_email VARCHAR(255)`);
+    // S13-09: link receipts to gigs so "expenses for this gig" and per-gig P&L work.
+    await db.query(`ALTER TABLE receipts ADD COLUMN IF NOT EXISTS gig_id INTEGER`);
+    await db.query(`CREATE INDEX IF NOT EXISTS receipts_gig_id_idx ON receipts (gig_id)`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);

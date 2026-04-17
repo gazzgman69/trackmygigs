@@ -9,6 +9,32 @@ const router = express.Router();
 
 const generateToken = () => crypto.randomBytes(32).toString('hex');
 
+// ── In-memory rate limit for /auth/request (S10-01) ──────────────────────────
+// Production apps would use Redis or a proper rate-limiter, but for a single
+// Replit instance an LRU-ish map suffices. Keyed by ip + lowercased email;
+// 3 requests per 15 minutes.
+const REQUEST_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const REQUEST_LIMIT_MAX = 3;
+const _requestBuckets = new Map();
+function rateLimitOk(key) {
+  const now = Date.now();
+  const bucket = _requestBuckets.get(key) || [];
+  const fresh = bucket.filter(t => now - t < REQUEST_LIMIT_WINDOW_MS);
+  if (fresh.length >= REQUEST_LIMIT_MAX) {
+    _requestBuckets.set(key, fresh);
+    return false;
+  }
+  fresh.push(now);
+  _requestBuckets.set(key, fresh);
+  // Soft eviction: keep the Map from growing without bound.
+  if (_requestBuckets.size > 10000) {
+    for (const [k, v] of _requestBuckets) {
+      if (v.every(t => now - t >= REQUEST_LIMIT_WINDOW_MS)) _requestBuckets.delete(k);
+    }
+  }
+  return true;
+}
+
 // Gmail transporter
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -98,12 +124,25 @@ router.post('/request', async (req, res) => {
       return res.status(400).json({ error: 'Email is required' });
     }
 
+    const normalizedEmail = String(email).trim().toLowerCase();
+    // Basic email sanity so bots can't pollute the bucket with garbage values.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ error: 'Invalid email' });
+    }
+
+    // S10-01: rate-limit per ip + email to prevent abuse / mail-bombing.
+    const ip = (req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0].trim();
+    const key = `${ip}|${normalizedEmail}`;
+    if (!rateLimitOk(key)) {
+      return res.status(429).json({ error: 'Too many requests. Please wait a few minutes and try again.' });
+    }
+
     const token = generateToken();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     await db.query(
       'INSERT INTO magic_links (email, token, expires_at) VALUES ($1, $2, $3)',
-      [email, token, expiresAt]
+      [normalizedEmail, token, expiresAt]
     );
 
     const magicLink = `${process.env.APP_URL}/auth/verify/${token}`;
@@ -111,7 +150,7 @@ router.post('/request', async (req, res) => {
     // Send email via Gmail
     await transporter.sendMail({
       from: `"TrackMyGigs" <${process.env.GMAIL_USER}>`,
-      to: email,
+      to: normalizedEmail,
       subject: 'Your TrackMyGigs sign-in link',
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
@@ -134,7 +173,7 @@ router.post('/request', async (req, res) => {
       `,
     });
 
-    console.log(`Magic link sent to ${email}`);
+    console.log(`Magic link sent to ${normalizedEmail}`);
     res.json({ success: true, message: 'Magic link sent to email' });
   } catch (error) {
     console.error('Magic link request error:', error);
@@ -308,10 +347,25 @@ async function getGoogleAuthForUser(userId) {
 router.getGoogleAuthForUser = getGoogleAuthForUser;
 
 // ---- DEV LOGIN (for testing without email/Google) ----
+// S10-03: Gate dev-login. To disable in production, set DISABLE_DEV_LOGIN=true
+// in the environment. Also enforces an allow-list of emails when ALLOW_DEV_LOGIN_EMAILS
+// is set (comma-separated). This means an attacker with knowledge of the route
+// can't enumerate / create arbitrary accounts at will.
 router.get('/dev-login', async (req, res) => {
+  if (process.env.DISABLE_DEV_LOGIN === 'true') {
+    return res.status(404).json({ error: 'Not found' });
+  }
   try {
-    const email = req.query.email || 'gareth@trackmygigs.app';
+    const email = String(req.query.email || 'gareth@trackmygigs.app').trim().toLowerCase();
     const name = req.query.name || 'Gareth';
+
+    // Optional allow-list to stop random email injection through this route.
+    const allowList = (process.env.ALLOW_DEV_LOGIN_EMAILS || '')
+      .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    if (allowList.length > 0 && !allowList.includes(email)) {
+      return res.status(403).json({ error: 'Dev login not allowed for this email' });
+    }
+
     const user = await findOrCreateUser(email, name, null, null);
     await createSession(res, user.id);
     res.redirect('/');

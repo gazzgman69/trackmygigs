@@ -3,9 +3,15 @@
 const CACHE_VERSION = self.CACHE_VERSION || 'v-' + Date.now();
 const CACHE_NAME = 'trackmygigs-' + CACHE_VERSION;
 
-// Only cache genuinely static assets (no HTML — HTML must always come from network)
+// Pre-cache the shell so the app still opens with no network.
+// Index HTML is NOT cached here — fresh HTML always comes from network, and the
+// offline.html fallback covers navigation when the network is unreachable.
 const STATIC_ASSETS = [
   '/manifest.json',
+  '/offline.html',
+  '/icons/icon-192.svg',
+  '/icons/icon-512.svg',
+  '/config.js',
 ];
 
 self.addEventListener('install', (event) => {
@@ -39,10 +45,21 @@ self.addEventListener('fetch', (event) => {
   // Never intercept API or auth calls — always hit the network
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) return;
 
-  // Navigation requests (HTML pages): network-first, NO cache fallback
-  // This ensures a fresh page is always loaded on normal reload
+  // Navigation requests (HTML pages): network-first with offline.html fallback.
+  // Fresh HTML is served whenever the network is reachable; if the fetch fails
+  // (offline, flaky signal, Replit cold start), serve the precached offline shell
+  // so the user gets a branded "you are offline" screen instead of Chrome's dino.
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request));
+    event.respondWith(
+      fetch(request).catch(() =>
+        caches.match('/offline.html').then((cached) =>
+          cached || new Response(
+            '<!DOCTYPE html><title>Offline</title><h1>Offline</h1><p>Check your connection.</p>',
+            { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+          )
+        )
+      )
+    );
     return;
   }
 

@@ -213,29 +213,9 @@
     </div>
   </div>
 
-  <!-- Finance panel -->
-  <div class="panel-overlay" id="finance-panel">
-    <div class="panel-header">
-      <button class="panel-back" onclick="closePanel('finance-panel')">‹ Back</button>
-      <div class="panel-title">Finance</div>
-      <div class="panel-action"></div>
-    </div>
-    <div class="panel-body" id="financePanelBody" style="overflow-y:auto;">
-      <div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading finance...</div>
-    </div>
-  </div>
+  <!-- Legacy #finance-panel overlay removed; Finance Dashboard lives in #panel-finance below -->
 
-  <!-- Chat inbox -->
-  <div class="panel-overlay" id="chat-inbox">
-    <div class="panel-header">
-      <button class="panel-back" onclick="closePanel('chat-inbox')">‹ Back</button>
-      <div class="panel-title">Messages</div>
-      <div class="panel-action"></div>
-    </div>
-    <div class="panel-body" id="chatInboxBody" style="overflow-y:auto;">
-      <div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading messages...</div>
-    </div>
-  </div>
+  <!-- Legacy #chat-inbox overlay removed; Chat inbox lives in #panel-chat-inbox below -->
 
   <!-- New Invoice -->
   <div class="panel-overlay" id="panel-invoice">
@@ -748,6 +728,68 @@
   <div class="panel-overlay" id="panel-edit-profile">
     <div class="panel-body" id="editProfileBody" style="overflow-y:auto;">
       <div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Add Contact Panel -->
+  <div class="panel-overlay" id="panel-add-contact">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-add-contact')">&#8249; Back</button>
+      <div class="panel-title">Add Contact</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div class="panel-body" id="addContactBody">
+      <div style="padding:0 16px 20px;">
+        <div class="form-group"><label class="fl">Name</label><input type="text" class="fi" id="contactName" placeholder="Full name" /></div>
+        <div class="form-group"><label class="fl">Instruments</label><input type="text" class="fi" id="contactInstruments" placeholder="guitar, bass, vocals" /></div>
+        <div class="form-group"><label class="fl">Phone</label><input type="tel" class="fi" id="contactPhone" placeholder="Phone number" /></div>
+        <div class="form-group"><label class="fl">Email</label><input type="email" class="fi" id="contactEmail" placeholder="Email address" /></div>
+        <div class="form-group"><label class="fl">Location</label><input type="text" class="fi" id="contactLocation" placeholder="City / region" /></div>
+        <div class="form-group"><label class="fl">Notes</label><textarea class="fi" id="contactNotes" style="resize:vertical;height:80px;" placeholder="Optional notes"></textarea></div>
+        <label style="display:flex;align-items:center;gap:8px;padding:10px 0;font-size:13px;color:var(--text);"><input type="checkbox" id="contactFavourite" /> Mark as favourite</label>
+        <button onclick="saveNewContact()" class="pill">Save Contact</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Setlist Panel -->
+  <div class="panel-overlay" id="panel-create-setlist">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-create-setlist')">&#8249; Back</button>
+      <div class="panel-title">Create Setlist</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div class="panel-body" id="createSetlistBody">
+      <div style="padding:0 16px 20px;">
+        <div class="form-group"><label class="fl">Setlist name</label><input type="text" class="fi" id="setlistName" placeholder="e.g. Summer wedding 2026" /></div>
+        <div class="form-group"><label class="fl">Duration (mins, optional)</label><input type="number" class="fi" id="setlistDuration" placeholder="45" /></div>
+        <div class="form-group"><label class="fl">Notes (optional)</label><textarea class="fi" id="setlistNotes" style="resize:vertical;height:80px;" placeholder="Breakdown, encore songs, etc."></textarea></div>
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:12px;">Add songs to the setlist after creating it.</div>
+        <button onclick="saveNewSetlist()" class="pill">Create Setlist</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Settings Panel -->
+  <div class="panel-overlay" id="panel-notifications-settings">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-notifications-settings')">&#8249; Back</button>
+      <div class="panel-title">Notification Settings</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div class="panel-body" id="notificationsSettingsBody">
+      <div style="padding:0 16px 20px;">
+        <div style="font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px;">In-app alerts</div>
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">New dep offers<input type="checkbox" id="notifyDepOffers" checked /></label>
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">Chat messages<input type="checkbox" id="notifyChat" checked /></label>
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">Gig reminders<input type="checkbox" id="notifyGigReminders" checked /></label>
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">Invoice updates<input type="checkbox" id="notifyInvoices" checked /></label>
+        <div style="font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px;">Email</div>
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">Weekly summary<input type="checkbox" id="notifyWeekly" /></label>
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">Important updates<input type="checkbox" id="notifyEmailImportant" checked /></label>
+        <button onclick="saveNotificationSettings()" class="pill" style="margin-top:16px;">Save preferences</button>
+        <div id="notifSettingsStatus" style="font-size:11px;color:var(--text-2);text-align:center;margin-top:8px;"></div>
+      </div>
     </div>
   </div>
 

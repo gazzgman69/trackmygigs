@@ -169,13 +169,48 @@ router.get('/gig/:gigId', async (req, res) => {
     );
 
     if (thread.rows.length === 0) {
-      // Auto-create a thread for this gig with just the current user
+      // Resolve all relevant participants for this gig:
+      //   - gig creator (typically the band leader)
+      //   - anyone on an accepted / pending offer for this gig (deps who were invited)
+      //   - the current user
+      const gigRow = await db.query('SELECT user_id FROM gigs WHERE id = $1', [req.params.gigId]);
+      if (gigRow.rows.length === 0) {
+        return res.status(404).json({ error: 'Gig not found' });
+      }
+      const creatorId = gigRow.rows[0].user_id;
+      const offerRows = await db.query(
+        `SELECT DISTINCT sender_id, recipient_id FROM offers
+         WHERE gig_id = $1 AND status IN ('accepted','pending')`,
+        [req.params.gigId]
+      );
+      const participantSet = new Set();
+      participantSet.add(req.user.id);
+      if (creatorId) participantSet.add(creatorId);
+      for (const r of offerRows.rows) {
+        if (r.sender_id) participantSet.add(r.sender_id);
+        if (r.recipient_id) participantSet.add(r.recipient_id);
+      }
+      const participantIds = Array.from(participantSet);
+
+      // Auto-create a thread for this gig with all resolved participants
       thread = await db.query(
         `INSERT INTO threads (gig_id, thread_type, participant_ids)
-         VALUES ($1, 'gig', ARRAY[$2])
+         VALUES ($1, 'gig', $2::uuid[])
          RETURNING *`,
-        [req.params.gigId, req.user.id]
+        [req.params.gigId, participantIds]
       );
+    } else {
+      // Ensure the current user is listed; some legacy threads were created with
+      // only the original creator.
+      const existing = thread.rows[0];
+      if (!existing.participant_ids.includes(req.user.id)) {
+        const updated = await db.query(
+          `UPDATE threads SET participant_ids = array_append(participant_ids, $1)
+           WHERE id = $2 RETURNING *`,
+          [req.user.id, existing.id]
+        );
+        thread = updated;
+      }
     }
 
     const threadData = thread.rows[0];

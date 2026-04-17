@@ -270,6 +270,10 @@ function showScreen(screenName) {
   } else if (screenName === 'gigs') {
     renderGigsScreen();
   } else if (screenName === 'calendar') {
+    // Reset to today when navigating to calendar from elsewhere, so user
+    // always lands on the current month (not a stale stored date).
+    window._calDate = new Date();
+    window._calViewMode = window._calViewMode || 'month';
     renderCalendarScreen();
   } else if (screenName === 'invoices') {
     renderInvoicesScreen();
@@ -391,7 +395,7 @@ function buildHomeHTML(content, stats) {
 
     if (stats.overdue_invoices > 0) {
       html += `
-      <div onclick="openPanel('invoices-panel')" style="flex:1;background:var(--danger-dim);border:1px solid rgba(248,81,73,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
+      <div onclick="showScreen('invoices')" style="flex:1;background:var(--danger-dim);border:1px solid rgba(248,81,73,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
         <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📄 Invoice</div>
         <div style="font-size:11px;font-weight:600;color:var(--danger);">£${stats.overdue_total} overdue</div>
         <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.overdue_invoices} invoice${stats.overdue_invoices === 1 ? '' : 's'}</div>
@@ -400,7 +404,7 @@ function buildHomeHTML(content, stats) {
 
     if (stats.draft_invoices > 0) {
       html += `
-      <div onclick="openPanel('invoices-panel')" style="flex:1;background:var(--info-dim);border:1px solid rgba(88,166,255,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
+      <div onclick="showScreen('invoices')" style="flex:1;background:var(--info-dim);border:1px solid rgba(88,166,255,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
         <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📄 Invoice</div>
         <div style="font-size:11px;font-weight:600;color:var(--info);">£${stats.draft_total} draft</div>
         <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.draft_invoices} ready</div>
@@ -418,7 +422,7 @@ function buildHomeHTML(content, stats) {
     // Gig messages card
     if (stats.unread_messages > 0) {
       html += `
-      <div onclick="openPanel('chat-inbox')" style="margin:0 16px 6px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;cursor:pointer;">
+      <div onclick="openPanel('panel-chat-inbox'); renderChatInbox();" style="margin:0 16px 6px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;cursor:pointer;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
           <div style="display:flex;align-items:center;gap:8px;">
             <span style="font-size:14px;">💬</span>
@@ -1115,8 +1119,10 @@ async function loadGoogleCalendarPins() {
     const data = await resp.json();
     if (!data.connected) {
       window._googlePins = [];
+      window._googleConnected = false;
       return;
     }
+    window._googleConnected = true;
     window._googlePins = data.pins || [];
     window._googlePinsKey = cacheKey;
     window._googlePinsTime = Date.now();
@@ -1159,6 +1165,9 @@ function buildCalendarView(content, gigsData, blockedData) {
           <span style="font-size:13px;color:var(--text);">${label}</span>
         </label>
       `).join('')}
+      ${window._googleConnected === false ? `
+        <a href="/auth/google/calendar" style="display:block;margin-top:10px;padding:10px 12px;background:#4285F4;color:#fff;border-radius:8px;font-size:13px;font-weight:600;text-align:center;text-decoration:none;">Connect Google Calendar</a>
+      ` : ''}
     </div>
     <div id="calendarMenu" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px;z-index:10;">
       <div onclick="handleCalendarAction('add-gig')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;">Add gig</div>
@@ -1209,6 +1218,17 @@ function getCalendarLayers() {
 function toggleCalendarLayers() {
   const el = document.getElementById('calendarLayers');
   if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  // Probe Google connection status so we can show a Connect CTA when disconnected.
+  if (window._googleConnected === undefined) {
+    fetch('/api/calendar/status')
+      .then(r => r.ok ? r.json() : { connected: false })
+      .then(d => {
+        const was = window._googleConnected;
+        window._googleConnected = !!d.connected;
+        if (was !== window._googleConnected) renderCalendarScreen();
+      })
+      .catch(() => { window._googleConnected = false; });
+  }
 }
 
 function toggleCalendarLayer(id, checked) {
@@ -1228,7 +1248,7 @@ function handleCalendarAction(action) {
   } else if (action === 'add-event') {
     // TODO: implement add-event panel
   } else if (action === 'block-dates') {
-    openPanel('block-dates-panel');
+    openPanel('panel-block');
   }
   toggleCalendarMenu();
 }
@@ -1531,8 +1551,52 @@ function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
 
 function selectCalendarDate(dateStr) {
   window._calDate = new Date(dateStr);
+  window._calSelectedDate = dateStr;
+  // Check if this day has any content (gig, blocked, google pin). If not, offer actions.
+  const gigs = Array.isArray(window._cachedGigs) ? window._cachedGigs : [];
+  const blocked = Array.isArray(window._cachedBlocked) ? window._cachedBlocked : [];
+  const googlePins = Array.isArray(window._googlePins) ? window._googlePins : [];
+  const hasGig = gigs.some(g => (g.date || '').slice(0, 10) === dateStr);
+  const hasBlock = blocked.some(b => {
+    const s = (b.start_date || '').slice(0, 10);
+    const e = (b.end_date || s).slice(0, 10);
+    return dateStr >= s && dateStr <= e;
+  });
+  const hasPin = googlePins.some(p => p.date === dateStr);
+  if (!hasGig && !hasBlock && !hasPin) {
+    openDayActionSheet(dateStr);
+    return;
+  }
   renderCalendarScreen();
 }
+
+function openDayActionSheet(dateStr) {
+  // Remove any existing sheet first.
+  const existing = document.getElementById('dayActionSheet');
+  if (existing) existing.remove();
+  const display = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  const sheet = document.createElement('div');
+  sheet.id = 'dayActionSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.innerHTML = `
+    <div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
+      <div style="font-size:14px;font-weight:700;color:var(--text);text-align:center;margin-bottom:4px;">${escapeHtml(display)}</div>
+      <div style="font-size:12px;color:var(--text-2);text-align:center;margin-bottom:16px;">Nothing on this day</div>
+      <button onclick="closeDayActionSheet();window._prefillGigDate='${dateStr}';openGigWizard();" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:10px;">Add gig</button>
+      <button onclick="closeDayActionSheet();window._prefillBlockDate='${dateStr}';openPanel('panel-block');" style="width:100%;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:10px;">Block date</button>
+      <button onclick="closeDayActionSheet()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Cancel</button>
+    </div>`;
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) closeDayActionSheet(); });
+  document.body.appendChild(sheet);
+}
+
+function closeDayActionSheet() {
+  const el = document.getElementById('dayActionSheet');
+  if (el) el.remove();
+}
+window.closeDayActionSheet = closeDayActionSheet;
+window.openDayActionSheet = openDayActionSheet;
 
 function prevCalendarMonth() {
   const d = new Date(window._calDate);
@@ -1664,7 +1728,7 @@ function buildInvoicesHTML(content, invoices) {
 
     html += `</div>
       <div style="padding:0 16px;margin-top:12px;">
-        <button onclick="openPanel('create-standalone-invoice')" class="pill-g">Create standalone invoice</button>
+        <button onclick="openStandaloneInvoice()" class="pill-g">Create standalone invoice</button>
       </div>`;
 
     content.innerHTML = html;
@@ -1677,23 +1741,26 @@ function filterInvoicesByStatus(status) {
 }
 
 async function openInvoiceDetail(invoiceId) {
-  const panel = document.getElementById('invoice-detail');
+  const panel = document.getElementById('invoiceDetailBody');
   if (!panel) return;
 
   panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading invoice...</div>';
-  openPanel('invoice-detail');
+  openPanel('panel-invoice-detail');
 
   try {
     const res = await fetch(`/api/invoices/${invoiceId}`);
     if (!res.ok) throw new Error('Failed to fetch invoice');
     const invoice = await res.json();
 
+    const invNumForHeader = invoice.invoice_number || ('INV-' + String(invoice.id).slice(0, 6));
+    const headerSub = invoice.venue_name ? escapeHtml(invoice.venue_name) : escapeHtml(invoice.band_name || '');
     let html = `
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('invoice-detail')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
+        <button onclick="closePanel('panel-invoice-detail')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
         <div style="flex:1;text-align:center;">
-          <div style="font-size:16px;font-weight:700;color:var(--text);">${escapeHtml(invoice.band_name)}</div>
-          <span style="font-size:11px;background:${invoice.status === 'paid' ? 'var(--success-dim);color:var(--success)' : invoice.status === 'overdue' ? 'var(--danger-dim);color:var(--danger)' : 'var(--info-dim);color:var(--info)'};padding:2px 8px;border-radius:12px;text-transform:capitalize;font-weight:600;">${invoice.status}</span>
+          <div style="font-size:16px;font-weight:700;color:var(--text);">${escapeHtml(invNumForHeader)}</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${headerSub}</div>
+          <span style="font-size:11px;background:${invoice.status === 'paid' ? 'var(--success-dim);color:var(--success)' : invoice.status === 'overdue' ? 'var(--danger-dim);color:var(--danger)' : 'var(--info-dim);color:var(--info)'};padding:2px 8px;border-radius:12px;text-transform:capitalize;font-weight:600;display:inline-block;margin-top:4px;">${invoice.status}</span>
         </div>
         <div style="width:32px;"></div>
       </div>
@@ -1743,11 +1810,12 @@ async function openInvoiceDetail(invoiceId) {
           <span style="font-size:20px;font-weight:700;color:var(--success);">£${parseFloat(invoice.amount).toFixed(0)}</span>
         </div>
       </div>
-      <div style="padding:0 16px;display:flex;flex-direction:column;gap:8px;">
-        ${invoice.status === 'draft' ? `<button onclick="openPanel('send-invoice')" class="pill">Send invoice</button>` : ''}
+      <div style="padding:0 16px 12px;display:flex;flex-direction:column;gap:8px;">
+        ${invoice.status === 'draft' ? `<button onclick="openSendInvoice('${invoice.id}')" class="pill">Send invoice</button>` : ''}
         ${invoice.status !== 'paid' ? `<button onclick="markInvoiceAsPaid('${invoice.id}')" class="pill-o">Mark as paid</button>` : ''}
         <button onclick="downloadInvoicePDF('${invoice.id}')" class="pill-g">Download PDF</button>
         ${invoice.status === 'sent' ? `<button onclick="chaseInvoicePayment('${invoice.id}')" class="pill-g">Chase payment</button>` : ''}
+        <button onclick="deleteInvoice('${invoice.id}')" style="background:none;border:1px solid var(--danger);color:var(--danger);padding:10px;border-radius:var(--r);font-weight:600;font-size:13px;cursor:pointer;margin-top:4px;">Delete invoice</button>
       </div>`;
 
     panel.innerHTML = html;
@@ -2193,11 +2261,11 @@ function buildProfileHTML(content, profile) {
         <div id="docs-section" style="display:none;background:var(--card);padding:8px 14px;border-bottom:1px solid var(--border);">
           <div style="font-size:12px;color:var(--text-2);padding:6px 0;">DBS Check · Public Liability Insurance · Risk Assessment</div>
         </div>
-        <div onclick="openPanel('finance-panel')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+        <div onclick="openPanel('panel-finance'); if (typeof renderFinancePanel === 'function') renderFinancePanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span style="color:var(--text);font-size:14px;">Earnings & tax summary</span>
           <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
-        <div onclick="openPanel('notifications-settings')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+        <div onclick="openPanel('panel-notifications-settings')" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span style="color:var(--text);font-size:14px;">Notification settings</span>
           <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
@@ -3098,13 +3166,17 @@ function handleQuickAction(action) {
 // ── Panel open / close ────────────────────────────────────────────────────────
 
 function openPanel(id) {
-  document.getElementById(id).classList.add('open');
+  const el = document.getElementById(id);
+  if (!el) { console.warn('openPanel: panel not found', id); return; }
+  el.classList.add('open');
   // Trigger render for panels that need dynamic content
-  if (id === 'profile-panel') renderProfileScreen();
-  if (id === 'panel-notifications') renderNotificationsPanel();
-  if (id === 'pub-cal-share') renderPubCalShare();
-  if (id === 'finance-panel') renderFinancePanel();
-  if (id === 'chat-inbox') renderChatInbox();
+  if (id === 'profile-panel') { if (typeof renderProfileScreen === 'function') renderProfileScreen(); }
+  if (id === 'panel-notifications') { if (typeof renderNotificationsPanel === 'function') renderNotificationsPanel(); }
+  if (id === 'pub-cal-share' || id === 'panel-pub-cal-share') { if (typeof renderPubCalShare === 'function') renderPubCalShare(); }
+  if (id === 'panel-finance') { if (typeof renderFinancePanel === 'function') renderFinancePanel(); }
+  if (id === 'panel-chat-inbox') { if (typeof renderChatInbox === 'function') renderChatInbox(); }
+  if (id === 'panel-notifications-settings') { if (typeof loadNotificationSettings === 'function') loadNotificationSettings(); }
+  if (id === 'panel-dep') { if (typeof initDepPanel === 'function') initDepPanel(); }
 }
 
 // ── Notifications Panel ─────────────────────────────────────────────────────
@@ -3357,78 +3429,179 @@ window.toast = toast;
 
 // ── Finance Panel ───────────────────────────────────────────────────────────
 async function renderFinancePanel() {
-  const body = document.getElementById('financePanelBody');
+  // Target the panel body inside #panel-finance (the Finance Dashboard panel
+  // that actually opens from Settings). Kept the legacy #financePanelBody
+  // selector as a fallback so both mountings work until index.html is cleaned.
+  const body = document.getElementById('financeBody') || document.getElementById('financePanelBody');
   if (!body) return;
+
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading finance...</div>';
 
   try {
     const resp = await fetch('/api/earnings?period=year');
+    if (!resp.ok) throw new Error('Failed to fetch earnings');
     const data = await resp.json();
+
+    const paidTot = Number(data.paid_total) || 0;
+    const unpaidTot = Number(data.unpaid_total) || 0;
+    const overdueTot = Number(data.overdue_total) || 0;
+    const expensesTot = Number(data.expenses_total) || Number(data.total_expenses) || 0;
+    const grossTot = paidTot + unpaidTot + overdueTot;
+    const hasAnyActivity = grossTot + expensesTot > 0;
+
     const taxYear = data.tax_year || '2026/27';
-    const earnings = data.total_earnings || 0;
-    const gigs = data.total_gigs || 0;
-    const expenses = data.total_expenses || 0;
-    const net = earnings - expenses;
+    const earnings = Number(data.total_earnings) || 0;
+    const gigs = Number(data.total_gigs) || 0;
+    const net = earnings - expensesTot;
     const monthly = data.monthly_breakdown || [];
     const taxEstimate = estimateTax(net);
-    const yoyPct = data.year_over_year_pct || null;
+    const yoyPct = data.year_over_year_pct !== undefined && data.year_over_year_pct !== null
+      ? data.year_over_year_pct : null;
 
-    body.innerHTML = `
-      <div style="padding:14px;">
-        <!-- Hero tax year -->
-        <div style="background:linear-gradient(135deg,rgba(63,185,80,.1),rgba(63,185,80,.02));border:1px solid rgba(63,185,80,.3);border-radius:var(--r);padding:16px;margin-bottom:12px;">
-          <div style="font-size:10px;font-weight:600;color:var(--success);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Tax year ${taxYear}</div>
-          <div style="font-size:28px;font-weight:800;color:var(--text);">&pound;${earnings.toLocaleString()}</div>
-          <div style="font-size:12px;color:var(--text-2);margin-top:4px;">${gigs} gig${gigs === 1 ? '' : 's'}${yoyPct !== null ? ` &middot; ${yoyPct >= 0 ? '+' : ''}${yoyPct}% YoY` : ''}</div>
-        </div>
+    const fmtGBP = (n) => '£' + Math.round(Number(n) || 0).toLocaleString('en-GB');
+    const fmtBar = (n) => {
+      const v = Math.round(Number(n) || 0);
+      if (v >= 1000) return '£' + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
+      return '£' + v;
+    };
 
-        <!-- Row: expenses + net -->
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <div onclick="renderExpenseBreakdown()" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:12px;cursor:pointer;">
-            <div style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Expenses</div>
-            <div style="font-size:16px;font-weight:700;color:var(--danger);">&pound;${expenses.toLocaleString()}</div>
-            <div style="font-size:10px;color:var(--text-3);margin-top:2px;">deductible</div>
+    // Empty state
+    if (!hasAnyActivity) {
+      body.innerHTML = `
+        <div style="padding:32px 24px;text-align:center;">
+          <div style="font-size:48px;margin-bottom:12px;">&#x1F4B0;</div>
+          <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px;">No earnings yet</div>
+          <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:20px;">
+            Add a gig with a fee, or log an expense, and you'll see your income, tax profile and monthly breakdown appear here.
           </div>
-          <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:12px;">
-            <div style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Net</div>
-            <div style="font-size:16px;font-weight:700;color:var(--success);">&pound;${net.toLocaleString()}</div>
-            <div style="font-size:10px;color:var(--text-3);margin-top:2px;">earnings &minus; expenses</div>
+          <div style="display:flex;flex-direction:column;gap:8px;max-width:240px;margin:0 auto;">
+            <button onclick="closePanel('panel-finance'); openGigWizard();" class="pill-g">Log a gig</button>
+            <button onclick="closePanel('panel-finance'); openPanel('panel-receipt'); setTimeout(()=>showReceiptForm('manual'),150); loadReceipts();" class="pill-o">Log an expense</button>
+          </div>
+        </div>`;
+      return;
+    }
+
+    const pct = (v) => grossTot > 0 ? Math.max(0, Math.min(100, (v / grossTot) * 100)) : 0;
+    const pctPaid = pct(paidTot);
+    const pctOverdue = pct(overdueTot);
+    const pctUnpaid = Math.max(0, 100 - pctPaid - pctOverdue);
+
+    let html = `
+      <!-- Hero: total invoiced + paid/unpaid/overdue split -->
+      <div style="padding:12px 16px 16px;text-align:center;">
+        <div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Tax year ${escapeHtml(taxYear)} &middot; Total invoiced</div>
+        <div style="font-size:28px;font-weight:800;color:var(--text);line-height:1.1;">${fmtGBP(grossTot)}</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:4px;">${fmtGBP(paidTot)} paid &middot; ${fmtGBP(unpaidTot)} pending &middot; ${fmtGBP(overdueTot)} overdue${yoyPct !== null ? ` &middot; ${yoyPct >= 0 ? '+' : ''}${yoyPct}% YoY` : ''}</div>
+        <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--bg,#0D1117);margin-top:10px;border:1px solid var(--border);">
+          <div title="Paid ${fmtGBP(paidTot)}" style="width:${pctPaid.toFixed(2)}%;background:var(--success);"></div>
+          <div title="Pending ${fmtGBP(unpaidTot)}" style="width:${pctUnpaid.toFixed(2)}%;background:var(--warning);"></div>
+          <div title="Overdue ${fmtGBP(overdueTot)}" style="width:${pctOverdue.toFixed(2)}%;background:var(--danger);"></div>
+        </div>
+        <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:10px;color:var(--text-2);">
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;"></span>Paid</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--warning);border-radius:2px;"></span>Pending</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--danger);border-radius:2px;"></span>Overdue</span>
+        </div>
+        <div style="font-size:10px;color:var(--text-3);margin-top:4px;">${gigs} gig${gigs === 1 ? '' : 's'}</div>
+      </div>
+
+      <!-- Monthly breakdown with &pound; labels on bars -->
+      <div style="padding:0 16px 16px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+          <span>Monthly breakdown</span>
+          <span style="font-weight:500;text-transform:none;letter-spacing:0;font-size:10px;color:var(--text-3);">Last 12 months</span>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:4px;height:110px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px 8px 22px;position:relative;">
+          ${monthly.length > 0 ? monthly.map(m => {
+            const max = Math.max(...monthly.map(x => Number(x.earnings) || 0));
+            const val = Number(m.earnings) || 0;
+            const height = Math.min(100, (val / (max || 1)) * 100);
+            const isForecast = m.status === 'forecast';
+            const label = m.label || m.month_label || m.month || '';
+            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end;">
+              <div style="font-size:9px;color:var(--text-2);line-height:1;white-space:nowrap;">${val > 0 ? fmtBar(val) : ''}</div>
+              <div style="width:100%;background:var(--success);border-radius:2px;height:${Math.max(4, height)}%;opacity:${isForecast ? 0.4 : 1};" title="${escapeHtml(label)}: &pound;${val}"></div>
+              <div style="font-size:8px;color:var(--text-3);line-height:1;">${escapeHtml((label || '').slice(0, 3))}</div>
+            </div>`;
+          }).join('') : '<div style="flex:1;text-align:center;color:var(--text-3);font-size:11px;align-self:center;">No data</div>'}
+        </div>
+        <div style="display:flex;justify-content:center;gap:14px;margin-top:6px;font-size:10px;color:var(--text-2);">
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;opacity:1;"></span>Confirmed</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;opacity:0.4;"></span>Forecast</span>
+        </div>
+      </div>
+
+      <!-- Quick tiles: paid / unpaid / overdue / expenses -->
+      <div style="padding:0 16px 16px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Paid</div>
+            <div style="font-size:14px;font-weight:700;color:var(--success);">${fmtGBP(paidTot)}</div>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Unpaid</div>
+            <div style="font-size:14px;font-weight:700;color:var(--warning);">${fmtGBP(unpaidTot)}</div>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Overdue</div>
+            <div style="font-size:14px;font-weight:700;color:var(--danger);">${fmtGBP(overdueTot)}</div>
+          </div>
+          <div onclick="renderExpenseBreakdown()" style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;cursor:pointer;">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Expenses</div>
+            <div style="font-size:14px;font-weight:700;color:var(--text);">${fmtGBP(expensesTot)}</div>
           </div>
         </div>
+      </div>
 
-        <!-- Tax estimate -->
-        <div style="background:var(--warning-dim);border:1px solid rgba(240,165,0,.3);border-radius:var(--r);padding:14px;margin-bottom:12px;">
+      <!-- Tax year overview -->
+      <div style="padding:0 16px 16px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Tax year overview</div>
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;">
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
+            <span style="color:var(--text-2);">Income</span>
+            <span style="color:var(--text);font-weight:600;">${fmtGBP(data.year_income || earnings)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
+            <span style="color:var(--text-2);">Expenses</span>
+            <span style="color:var(--text);font-weight:600;">${fmtGBP(data.year_expenses || expensesTot)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:12px;font-weight:600;">
+            <span style="color:var(--text);">Taxable profit</span>
+            <span style="color:var(--success);">${fmtGBP((data.year_income || earnings) - (data.year_expenses || expensesTot))}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tax estimate -->
+      <div style="padding:0 16px 16px;">
+        <div style="background:var(--warning-dim);border:1px solid rgba(240,165,0,.3);border-radius:var(--r);padding:14px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
             <span style="font-size:14px;">&#x1F4DD;</span>
             <span style="font-size:11px;font-weight:700;color:var(--warning);text-transform:uppercase;letter-spacing:.5px;">Tax estimate</span>
           </div>
-          <div style="font-size:20px;font-weight:800;color:var(--text);">&pound;${taxEstimate.toLocaleString()}</div>
+          <div style="font-size:20px;font-weight:800;color:var(--text);">${fmtGBP(taxEstimate)}</div>
           <div style="font-size:11px;color:var(--text-2);margin-top:4px;">Rough estimate for self-employed sole trader. Talk to an accountant before filing.</div>
         </div>
+      </div>
 
-        <!-- Mileage -->
-        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
+      <!-- Mileage -->
+      <div style="padding:0 16px 16px;">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
             <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">Mileage</div>
             <div style="font-size:10px;color:var(--text-3);">45p/mile HMRC rate</div>
           </div>
           <div style="font-size:18px;font-weight:700;color:var(--text);">${(data.total_miles || 0).toLocaleString()} mi</div>
-          <div style="font-size:12px;color:var(--success);margin-top:2px;">&pound;${((data.total_miles || 0) * 0.45).toFixed(0)} claimable</div>
+          <div style="font-size:12px;color:var(--success);margin-top:2px;">${fmtGBP((data.total_miles || 0) * 0.45)} claimable</div>
         </div>
+      </div>
 
-        <!-- Monthly chart -->
-        ${monthly.length > 0 ? `
-        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
-          <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Monthly breakdown</div>
-          <div style="display:flex;align-items:flex-end;gap:3px;height:60px;">
-            ${monthly.map((m) => {
-              const max = Math.max(...monthly.map(x => x.earnings || 0)) || 1;
-              const h = Math.max(4, ((m.earnings || 0) / max) * 100);
-              return `<div title="${m.month_label || ''}: &pound;${m.earnings || 0}" style="flex:1;background:var(--success);opacity:.8;border-radius:2px 2px 0 0;height:${h}%;"></div>`;
-            }).join('')}
-          </div>
-        </div>` : ''}
+      <!-- HMRC category breakdown (rendered async below) -->
+      <div id="financeCategoryBreakdown" style="padding:0 16px 16px;"></div>
 
-        <!-- Export -->
+      <!-- Export -->
+      <div style="padding:0 16px 24px;">
         <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Export</div>
         <div style="display:flex;flex-direction:column;gap:6px;">
           <button class="pill-g" onclick="exportGigsCSV()">Export gigs (CSV)</button>
@@ -3437,6 +3610,9 @@ async function renderFinancePanel() {
           <button class="pill-o" onclick="exportFinancePDF()">Export finance summary (PDF)</button>
         </div>
       </div>`;
+
+    body.innerHTML = html;
+    if (typeof renderFinanceCategoryBreakdown === 'function') renderFinanceCategoryBreakdown();
   } catch (err) {
     console.error('Finance panel error:', err);
     body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load finance data.</div>`;
@@ -3461,61 +3637,18 @@ function estimateTax(net) {
 window.renderFinancePanel = renderFinancePanel;
 
 // ── Chat Inbox Panel ────────────────────────────────────────────────────────
+// Thin delegate: real implementation lives in openChatInbox() further down.
 async function renderChatInbox() {
-  const body = document.getElementById('chatInboxBody');
-  if (!body) return;
-
-  try {
-    const resp = await fetch('/api/threads');
-    const threads = await resp.json();
-    const list = Array.isArray(threads) ? threads : [];
-
-    // Split: dep threads vs gig-band threads
-    const depThreads = list.filter(t => t.kind === 'dep');
-    const gigThreads = list.filter(t => t.kind !== 'dep');
-
-    const renderThread = (t) => `
-      <div onclick="openChatThread('${t.id}')" style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;">
-        <div style="width:36px;height:36px;border-radius:18px;background:${t.kind === 'dep' ? 'rgba(136,87,255,.15)' : 'var(--info-dim)'};display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:${t.kind === 'dep' ? '#A78BFA' : 'var(--info)'};flex-shrink:0;">${(t.title || 'G')[0]}</div>
-        <div style="flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title || 'Untitled')}</span>
-            ${t.unread > 0 ? `<span style="background:var(--accent);color:#000;font-size:9px;font-weight:800;min-width:16px;height:16px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;">${t.unread}</span>` : ''}
-          </div>
-          <div style="font-size:11px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">${escapeHtml(t.last_message || '')}</div>
-        </div>
-        <span style="font-size:10px;color:var(--text-3);flex-shrink:0;">${t.time_ago || ''}</span>
-      </div>`;
-
-    body.innerHTML = `
-      ${depThreads.length > 0 ? `
-      <div style="padding:12px 14px 6px;font-size:11px;font-weight:700;color:#A78BFA;text-transform:uppercase;letter-spacing:1px;">Active deps</div>
-      ${depThreads.map(renderThread).join('')}` : ''}
-      ${gigThreads.length > 0 ? `
-      <div style="padding:12px 14px 6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Gig bands</div>
-      ${gigThreads.map(renderThread).join('')}` : ''}
-      ${list.length === 0 ? `
-      <div style="padding:60px 24px;text-align:center;">
-        <div style="font-size:32px;margin-bottom:12px;">&#x1F4AC;</div>
-        <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px;">No messages yet</div>
-        <div style="font-size:13px;color:var(--text-2);">Chat threads with bandleaders and deps will show up here.</div>
-      </div>` : ''}`;
-  } catch (err) {
-    console.error('Chat inbox error:', err);
-    body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load messages.</div>`;
-  }
+  if (typeof openChatInbox === 'function') return openChatInbox();
 }
-
-function openChatThread(id) {
-  // Placeholder; thread view comes in Batch 4
-  toast('Thread view coming soon');
-}
-
 window.renderChatInbox = renderChatInbox;
-window.openChatThread = openChatThread;
 
 function closePanel(id) {
   document.getElementById(id).classList.remove('open');
+  // S12-06: stop chat polling whenever the chat thread panel closes.
+  if (id === 'panel-chat-thread' && typeof stopChatThreadPolling === 'function') {
+    stopChatThreadPolling();
+  }
 }
 
 // Make panel helpers accessible from inline HTML onclick
@@ -4591,7 +4724,7 @@ async function openNetworkPanel() {
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
         <button onclick="closePanel('panel-network')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">&#8249;</button>
         <div style="font-size:16px;font-weight:700;color:var(--text);">My Network</div>
-        <button onclick="openPanel('add-contact')" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
+        <button onclick="openPanel('panel-add-contact')" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
       </div>
       <div style="padding:0 16px 8px;">
         <input type="text" class="fi" placeholder="Search contacts..." id="contactSearch" oninput="filterContacts()" />
@@ -4612,11 +4745,11 @@ async function openNetworkPanel() {
 }
 
 async function openContactDetail(contactId) {
-  const panel = document.getElementById('contact-detail-panel');
-  if (!panel) return;
+  const body = document.getElementById('contactDetailBody');
+  if (!body) return;
 
-  panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading contact...</div>';
-  openPanel('contact-detail-panel');
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading contact...</div>';
+  openPanel('panel-contact-detail');
 
   try {
     const res = await fetch(`/api/contacts/${contactId}`);
@@ -4624,18 +4757,16 @@ async function openContactDetail(contactId) {
     const contact = await res.json();
 
     const initial = (contact.name || 'U')[0].toUpperCase();
+    const instrumentsText = Array.isArray(contact.instruments)
+      ? contact.instruments.join(', ')
+      : (contact.instruments || '');
 
     let html = `
-      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('contact-detail-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
-        <div style="font-size:16px;font-weight:700;color:var(--text);">Contact</div>
-        <div style="width:32px;"></div>
-      </div>
       <div style="padding:0 16px;text-align:center;margin-bottom:12px;">
         <div style="width:48px;height:48px;margin:0 auto 12px;border-radius:24px;background:var(--accent-dim);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--accent);">${initial}</div>
         <div style="font-size:16px;font-weight:700;color:var(--text);">${escapeHtml(contact.name)}</div>
-        <div style="font-size:12px;color:var(--text-2);margin-top:2px;">${escapeHtml(contact.instruments || 'No instruments')}</div>
-        ${contact.location ? `<div style="font-size:12px;color:var(--text-2);">📍 ${escapeHtml(contact.location)}</div>` : ''}
+        <div style="font-size:12px;color:var(--text-2);margin-top:2px;">${escapeHtml(instrumentsText || 'No instruments')}</div>
+        ${contact.location ? `<div style="font-size:12px;color:var(--text-2);">&#x1F4CD; ${escapeHtml(contact.location)}</div>` : ''}
       </div>
       <div style="padding:0 16px;margin-bottom:12px;">
         ${contact.phone ? `<div style="padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Phone</span><br/><span style="color:var(--text);font-weight:600;">${escapeHtml(contact.phone)}</span></div>` : ''}
@@ -4647,16 +4778,18 @@ async function openContactDetail(contactId) {
         <button onclick="sendDepOffer('${contact.id}')" class="pill-o">Send dep offer</button>
         <button onclick="messageContact('${contact.id}')" class="pill-o">Message</button>
         <button onclick="callContact('${contact.id}')" class="pill-g">Call</button>
+        <button onclick="editContact('${contact.id}')" class="pill-g">Edit contact</button>
+        <button onclick="deleteContact('${contact.id}')" class="pill-g" style="background:var(--danger-dim);color:var(--danger);border-color:var(--danger);">Delete contact</button>
       </div>
-      ${contact.notes ? `<div style="padding:0 16px;margin-bottom:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;">
+      ${contact.notes ? `<div style="padding:0 16px;margin-bottom:12px;"><div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;">
         <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Notes</div>
         <div style="font-size:13px;color:var(--text);">${escapeHtml(contact.notes)}</div>
-      </div>` : ''}`;
+      </div></div>` : ''}`;
 
-    panel.innerHTML = html;
+    body.innerHTML = html;
   } catch (err) {
     console.error('Contact detail error:', err);
-    panel.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load contact</div>';
+    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load contact</div>';
   }
 }
 
@@ -4686,22 +4819,23 @@ async function openRepertoirePanel() {
       </div>
       <div id="repertoireContent" style="padding:0 16px;">`;
 
+    // Cache for filterSongs()
+    window._cachedSongs = songs;
+
     // Songs tab
     html += `<div id="songsTab">
       <div style="padding:8px 0;">
         <input type="text" class="fi" placeholder="Search songs..." id="songSearch" oninput="filterSongs()" />
       </div>
-      <button onclick="openPanel('song-form')" class="pill" style="margin-bottom:12px;">+ Add Song</button>
-      ${songs.map(song => `
-      <div onclick="openSongForm('${song.id}')" style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
-        <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(song.title)}</div>
-        <div style="font-size:11px;color:var(--text-2);">${escapeHtml(song.artist)} · Key: ${song.key || 'N/A'} · ${song.tempo || '?'} BPM</div>
-      </div>`).join('')}
+      <button onclick="openSongForm()" class="pill" style="margin-bottom:12px;">+ Add Song</button>
+      <div id="songList">
+        ${songs.map(song => renderSongRow(song)).join('')}
+      </div>
     </div>`;
 
     // Setlists tab
     html += `<div id="setlistsTab" style="display:none;">
-      <button onclick="openPanel('create-setlist')" class="pill" style="margin-bottom:12px;">+ Create Setlist</button>
+      <button onclick="openPanel('panel-create-setlist')" class="pill" style="margin-bottom:12px;">+ Create Setlist</button>
       ${setlists.map(setlist => `
       <div style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
         <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(setlist.name)}</div>
@@ -4733,7 +4867,7 @@ async function openRepertoirePanel() {
 }
 
 async function openSongForm(songId) {
-  const panel = document.getElementById('song-form-panel');
+  const panel = document.getElementById('songFormBody');
   if (!panel) return;
 
   if (songId) {
@@ -4744,11 +4878,6 @@ async function openSongForm(songId) {
       const song = await res.json();
 
       panel.innerHTML = `
-        <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-          <button onclick="closePanel('song-form-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
-          <div style="font-size:16px;font-weight:700;color:var(--text);">Edit Song</div>
-          <div style="width:32px;"></div>
-        </div>
         <div style="padding:0 16px 20px;">
           <div class="form-group">
             <label class="fl">Title</label>
@@ -4778,7 +4907,7 @@ async function openSongForm(songId) {
           </div>
           <div class="form-group">
             <label class="fl">Tags</label>
-            <input type="text" class="fi" id="songTags" value="${escapeHtml(song.tags || '')}" placeholder="comma separated" />
+            <input type="text" class="fi" id="songTags" value="${escapeHtml(Array.isArray(song.tags) ? song.tags.join(', ') : (song.tags || ''))}" placeholder="comma separated" />
           </div>
           <div class="form-group">
             <label class="fl">Lyrics</label>
@@ -4792,11 +4921,6 @@ async function openSongForm(songId) {
     }
   } else {
     panel.innerHTML = `
-      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('song-form-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
-        <div style="font-size:16px;font-weight:700;color:var(--text);">Add Song</div>
-        <div style="width:32px;"></div>
-      </div>
       <div style="padding:0 16px 20px;">
         <div class="form-group">
           <label class="fl">Title</label>
@@ -4836,7 +4960,212 @@ async function openSongForm(songId) {
       </div>`;
   }
 
-  openPanel('song-form-panel');
+  openPanel('panel-song-form');
+}
+
+async function openStandaloneInvoice() {
+  // Reset the create-invoice form and open panel-invoice
+  const fields = ['invInvoiceNumber','invBillTo','invDesc','invAmount','invDueDate','invNotes'];
+  fields.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const linked = document.getElementById('invLinkedGig');
+  if (linked) linked.value = '';
+  openPanel('panel-invoice');
+}
+
+async function openSendInvoice(invoiceId) {
+  const body = document.getElementById('sendInvoiceBody');
+  if (!body) return;
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading...</div>';
+  openPanel('panel-send-invoice');
+  try {
+    const res = await fetch(`/api/invoices/${invoiceId}`);
+    if (!res.ok) throw new Error('Failed to fetch invoice');
+    const invoice = await res.json();
+    body.innerHTML = `
+      <div style="padding:0 16px 20px;">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-2);">Invoice</div>
+          <div style="font-size:16px;font-weight:700;color:var(--text);">${escapeHtml(invoice.invoice_number || ('INV-' + String(invoice.id).slice(0,6)))}</div>
+          <div style="font-size:12px;color:var(--text-2);margin-top:4px;">To: ${escapeHtml(invoice.band_name || '')}</div>
+          <div style="font-size:13px;font-weight:700;color:var(--success);margin-top:6px;">&pound;${parseFloat(invoice.amount || 0).toFixed(2)}</div>
+        </div>
+        <div class="form-group"><label class="fl">Recipient email</label><input type="email" class="fi" id="sendInvoiceEmail" value="${escapeHtml(invoice.recipient_email || '')}" placeholder="client@example.com" /></div>
+        <div class="form-group"><label class="fl">Message (optional)</label><textarea class="fi" id="sendInvoiceMessage" style="resize:vertical;height:100px;">Hi, please find attached invoice ${escapeHtml(invoice.invoice_number || '')} for recent work. Thanks!</textarea></div>
+        <button onclick="confirmSendInvoice('${invoice.id}')" class="pill">Send now</button>
+        <div id="sendInvoiceStatus" style="font-size:11px;color:var(--text-2);text-align:center;margin-top:10px;"></div>
+      </div>`;
+  } catch (err) {
+    console.error('Send invoice panel error:', err);
+    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load invoice</div>';
+  }
+}
+
+async function confirmSendInvoice(invoiceId) {
+  const emailEl = document.getElementById('sendInvoiceEmail');
+  const status = document.getElementById('sendInvoiceStatus');
+  if (!emailEl || !emailEl.value.trim()) { if (status) status.textContent = 'Email is required.'; return; }
+  try {
+    // Flip the invoice to 'sent' and persist the recipient email so Chase can
+    // reuse it without re-prompting. The server now auto-stamps sent_at.
+    const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'sent', recipient_email: emailEl.value.trim() })
+    });
+    if (!res.ok) throw new Error('Send failed');
+    // Invalidate and refresh the list so totals + status badges update
+    window._cachedInvoices = null;
+    window._cachedInvoicesTime = 0;
+    if (typeof renderInvoicesScreen === 'function') {
+      try { await renderInvoicesScreen(); } catch (_) {}
+    }
+    if (status) status.textContent = 'Invoice sent.';
+    if (typeof showToast === 'function') showToast('Invoice sent');
+    setTimeout(() => {
+      closePanel('panel-send-invoice');
+      // Re-open the detail panel so the user sees the new status chip
+      openInvoiceDetail(invoiceId).catch(() => {});
+    }, 500);
+  } catch (err) {
+    console.error('Send invoice error:', err);
+    if (status) status.textContent = 'Could not send invoice. Try again.';
+  }
+}
+
+async function saveNewContact() {
+  const name = (document.getElementById('contactName')||{}).value || '';
+  if (!name.trim()) { if (typeof showToast === 'function') showToast('Name is required'); return; }
+  const payload = {
+    name: name.trim(),
+    instruments: ((document.getElementById('contactInstruments')||{}).value || '').split(',').map(s => s.trim()).filter(Boolean),
+    phone: ((document.getElementById('contactPhone')||{}).value || '').trim() || null,
+    email: ((document.getElementById('contactEmail')||{}).value || '').trim() || null,
+    location: ((document.getElementById('contactLocation')||{}).value || '').trim() || null,
+    notes: ((document.getElementById('contactNotes')||{}).value || '').trim() || null,
+    is_favourite: !!(document.getElementById('contactFavourite') || {}).checked
+  };
+  try {
+    const res = await fetch('/api/contacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error('Create failed');
+    // Reset fields
+    ['contactName','contactInstruments','contactPhone','contactEmail','contactLocation','contactNotes'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    const fav = document.getElementById('contactFavourite'); if (fav) fav.checked = false;
+    if (typeof showToast === 'function') showToast('Contact saved');
+    closePanel('panel-add-contact');
+    if (typeof openNetworkPanel === 'function') openNetworkPanel();
+  } catch (err) {
+    console.error('Save contact error:', err);
+    if (typeof showToast === 'function') showToast('Could not save contact');
+  }
+}
+
+async function saveNewSetlist() {
+  const name = ((document.getElementById('setlistName')||{}).value || '').trim();
+  if (!name) { if (typeof showToast === 'function') showToast('Setlist name is required'); return; }
+  const duration = ((document.getElementById('setlistDuration')||{}).value || '').trim();
+  const notes = ((document.getElementById('setlistNotes')||{}).value || '').trim();
+  try {
+    const res = await fetch('/api/setlists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, duration: duration ? parseInt(duration, 10) : null, notes: notes || null })
+    });
+    if (!res.ok) throw new Error('Create failed');
+    ['setlistName','setlistDuration','setlistNotes'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    if (typeof showToast === 'function') showToast('Setlist created');
+    closePanel('panel-create-setlist');
+    if (typeof openRepertoirePanel === 'function') openRepertoirePanel();
+  } catch (err) {
+    console.error('Save setlist error:', err);
+    if (typeof showToast === 'function') showToast('Could not create setlist');
+  }
+}
+
+async function saveNotificationSettings() {
+  const status = document.getElementById('notifSettingsStatus');
+  const prefs = {
+    dep_offers: !!(document.getElementById('notifyDepOffers') || {}).checked,
+    chat: !!(document.getElementById('notifyChat') || {}).checked,
+    gig_reminders: !!(document.getElementById('notifyGigReminders') || {}).checked,
+    invoices: !!(document.getElementById('notifyInvoices') || {}).checked,
+    weekly: !!(document.getElementById('notifyWeekly') || {}).checked,
+    email_important: !!(document.getElementById('notifyEmailImportant') || {}).checked
+  };
+  try {
+    const res = await fetch('/api/user/notification-preferences', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(prefs)
+    });
+    if (!res.ok) throw new Error('Save failed');
+    if (status) status.textContent = 'Preferences saved.';
+    if (typeof showToast === 'function') showToast('Preferences saved');
+  } catch (err) {
+    console.error('Save notif prefs error:', err);
+    if (status) status.textContent = 'Could not save preferences.';
+  }
+}
+
+async function editContact(contactId) {
+  // Reuse add-contact panel pre-filled
+  try {
+    const res = await fetch(`/api/contacts/${contactId}`);
+    if (!res.ok) throw new Error('Failed to fetch contact');
+    const c = await res.json();
+    openPanel('panel-add-contact');
+    const instrumentsText = Array.isArray(c.instruments) ? c.instruments.join(', ') : (c.instruments || '');
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+    set('contactName', c.name);
+    set('contactInstruments', instrumentsText);
+    set('contactPhone', c.phone);
+    set('contactEmail', c.email);
+    set('contactLocation', c.location);
+    set('contactNotes', c.notes);
+    const fav = document.getElementById('contactFavourite'); if (fav) fav.checked = !!c.is_favourite;
+    // Override save button to PATCH instead of POST
+    const body = document.getElementById('addContactBody');
+    const btn = body && body.querySelector('button.pill');
+    if (btn) btn.setAttribute('onclick', `updateContact('${c.id}')`);
+  } catch (err) {
+    console.error('Edit contact error:', err);
+    if (typeof showToast === 'function') showToast('Could not load contact');
+  }
+}
+
+async function updateContact(contactId) {
+  const payload = {
+    name: ((document.getElementById('contactName')||{}).value || '').trim(),
+    instruments: ((document.getElementById('contactInstruments')||{}).value || '').split(',').map(s => s.trim()).filter(Boolean),
+    phone: ((document.getElementById('contactPhone')||{}).value || '').trim() || null,
+    email: ((document.getElementById('contactEmail')||{}).value || '').trim() || null,
+    location: ((document.getElementById('contactLocation')||{}).value || '').trim() || null,
+    notes: ((document.getElementById('contactNotes')||{}).value || '').trim() || null,
+    is_favourite: !!(document.getElementById('contactFavourite') || {}).checked
+  };
+  try {
+    const res = await fetch(`/api/contacts/${contactId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error('Update failed');
+    if (typeof showToast === 'function') showToast('Contact updated');
+    closePanel('panel-add-contact');
+    if (typeof openNetworkPanel === 'function') openNetworkPanel();
+  } catch (err) {
+    console.error('Update contact error:', err);
+    if (typeof showToast === 'function') showToast('Could not update contact');
+  }
+}
+
+async function deleteContact(contactId) {
+  if (!confirm('Delete this contact? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`/api/contacts/${contactId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Delete failed');
+    if (typeof showToast === 'function') showToast('Contact deleted');
+    closePanel('panel-contact-detail');
+    if (typeof openNetworkPanel === 'function') openNetworkPanel();
+  } catch (err) {
+    console.error('Delete contact error:', err);
+    if (typeof showToast === 'function') showToast('Could not delete contact');
+  }
 }
 
 async function openEpkPanel() {
@@ -4868,153 +5197,21 @@ async function openEpkPanel() {
     </div>`;
 }
 
-async function openFinancePanel() {
-  const body = document.getElementById('financeBody');
-  if (!body) return;
+// Legacy openFinancePanel() removed — renderFinancePanel() now handles the
+// unified Finance Dashboard inside #panel-finance. The orphan #finance-panel
+// overlay in index.html (with #financePanelBody) is also unused; left in place
+// as a dormant fallback target for renderFinancePanel so nothing breaks at runtime.
 
-  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading earnings...</div>';
-
-  try {
-    const res = await fetch('/api/earnings');
-    if (!res.ok) throw new Error('Failed to fetch earnings');
-    const earnings = await res.json();
-
-    const hasAnyActivity = (earnings.paid_total || 0) + (earnings.unpaid_total || 0)
-      + (earnings.overdue_total || 0) + (earnings.expenses_total || 0) > 0;
-
-    // Empty state: no paid/unpaid/overdue/expenses yet
-    if (!hasAnyActivity) {
-      body.innerHTML = `
-        <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-          <button onclick="closePanel('finance-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
-          <div style="font-size:16px;font-weight:700;color:var(--text);">Earnings & Tax</div>
-          <div style="width:32px;"></div>
-        </div>
-        <div style="padding:32px 24px;text-align:center;">
-          <div style="font-size:48px;margin-bottom:12px;">💰</div>
-          <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px;">No earnings yet</div>
-          <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:20px;">
-            Add a gig with a fee, or log an expense, and you'll see your income, tax profile and monthly breakdown appear here.
-          </div>
-          <div style="display:flex;flex-direction:column;gap:8px;max-width:240px;margin:0 auto;">
-            <button onclick="closePanel('finance-panel'); openGigWizard();" class="pill-g">Log a gig</button>
-            <button onclick="closePanel('finance-panel'); openPanel('panel-receipt'); setTimeout(()=>showReceiptForm('manual'),150); loadReceipts();" class="pill-o">Log an expense</button>
-          </div>
-        </div>`;
-      return;
-    }
-
-    const paidTot = Number(earnings.paid_total) || 0;
-    const unpaidTot = Number(earnings.unpaid_total) || 0;
-    const overdueTot = Number(earnings.overdue_total) || 0;
-    const grossTot = paidTot + unpaidTot + overdueTot;
-    const pct = (v) => grossTot > 0 ? Math.max(0, Math.min(100, (v / grossTot) * 100)) : 0;
-    const pctPaid = pct(paidTot);
-    const pctOverdue = pct(overdueTot);
-    const pctUnpaid = Math.max(0, 100 - pctPaid - pctOverdue);
-    const fmtGBP = (n) => '£' + Math.round(Number(n) || 0).toLocaleString('en-GB');
-    const fmtBar = (n) => {
-      const v = Math.round(Number(n) || 0);
-      if (v >= 1000) return '£' + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
-      return '£' + v;
-    };
-
-    let html = `
-      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('finance-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
-        <div style="font-size:16px;font-weight:700;color:var(--text);">Earnings & Tax</div>
-        <div style="width:32px;"></div>
-      </div>
-      <div style="padding:4px 16px 16px;text-align:center;">
-        <div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Total invoiced</div>
-        <div style="font-size:28px;font-weight:800;color:var(--text);line-height:1.1;">${fmtGBP(grossTot)}</div>
-        <div style="font-size:11px;color:var(--text-2);margin-top:4px;">${fmtGBP(paidTot)} paid · ${fmtGBP(unpaidTot)} pending · ${fmtGBP(overdueTot)} overdue</div>
-        <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--bg,#0D1117);margin-top:10px;border:1px solid var(--border);">
-          <div title="Paid ${fmtGBP(paidTot)}" style="width:${pctPaid.toFixed(2)}%;background:var(--success);"></div>
-          <div title="Pending ${fmtGBP(unpaidTot)}" style="width:${pctUnpaid.toFixed(2)}%;background:var(--warning);"></div>
-          <div title="Overdue ${fmtGBP(overdueTot)}" style="width:${pctOverdue.toFixed(2)}%;background:var(--danger);"></div>
-        </div>
-        <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:10px;color:var(--text-2);">
-          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;"></span>Paid</span>
-          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--warning);border-radius:2px;"></span>Pending</span>
-          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--danger);border-radius:2px;"></span>Overdue</span>
-        </div>
-      </div>
-      <div style="padding:0 16px 16px;">
-        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
-          <span>Monthly breakdown</span>
-          <span style="font-weight:500;text-transform:none;letter-spacing:0;font-size:10px;color:var(--text-3);">Last 12 months</span>
-        </div>
-        <div style="display:flex;align-items:flex-end;gap:4px;height:110px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px 8px 22px;position:relative;">
-          ${(earnings.monthly_breakdown || []).map(m => {
-            const max = Math.max(...(earnings.monthly_breakdown || []).map(x => Number(x.earnings) || 0));
-            const val = Number(m.earnings) || 0;
-            const height = Math.min(100, (val / (max || 1)) * 100);
-            const isForecast = m.status === 'forecast';
-            const label = m.label || m.month || '';
-            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end;">
-              <div style="font-size:9px;color:var(--text-2);line-height:1;white-space:nowrap;">${val > 0 ? fmtBar(val) : ''}</div>
-              <div style="width:100%;background:var(--success);border-radius:2px;height:${Math.max(4, height)}%;opacity:${isForecast ? 0.4 : 1};" title="${escapeHtml(label)}: £${val}"></div>
-              <div style="font-size:8px;color:var(--text-3);line-height:1;">${escapeHtml((label || '').slice(0, 3))}</div>
-            </div>`;
-          }).join('')}
-        </div>
-        <div style="display:flex;justify-content:center;gap:14px;margin-top:6px;font-size:10px;color:var(--text-2);">
-          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;opacity:1;"></span>Confirmed</span>
-          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;opacity:0.4;"></span>Forecast</span>
-        </div>
-      </div>
-      <div style="padding:0 16px 16px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Paid</div>
-            <div style="font-size:14px;font-weight:700;color:var(--success);">£${earnings.paid_total || 0}</div>
-          </div>
-          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Unpaid</div>
-            <div style="font-size:14px;font-weight:700;color:var(--warning);">£${earnings.unpaid_total || 0}</div>
-          </div>
-          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Overdue</div>
-            <div style="font-size:14px;font-weight:700;color:var(--danger);">£${earnings.overdue_total || 0}</div>
-          </div>
-          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">Expenses</div>
-            <div style="font-size:14px;font-weight:700;color:var(--text);">£${earnings.expenses_total || 0}</div>
-          </div>
-        </div>
-      </div>
-      <div style="padding:0 16px 16px;">
-        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Tax year overview</div>
-        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;">
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
-            <span style="color:var(--text-2);">Income</span>
-            <span style="color:var(--text);font-weight:600;">£${earnings.year_income || 0}</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
-            <span style="color:var(--text-2);">Expenses</span>
-            <span style="color:var(--text);font-weight:600;">£${earnings.year_expenses || 0}</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:12px;font-weight:600;">
-            <span style="color:var(--text);">Taxable profit</span>
-            <span style="color:var(--success);">£${(earnings.year_income || 0) - (earnings.year_expenses || 0)}</span>
-          </div>
-        </div>
-      </div>
-      <div id="financeCategoryBreakdown" style="padding:0 16px 16px;"></div>
-      <div style="padding:0 16px;display:flex;flex-direction:column;gap:6px;">
-        <button class="pill-g" onclick="exportGigsCSV()">Export gigs (CSV)</button>
-        <button class="pill-g" onclick="exportExpensesCSV()">Export expenses (CSV)</button>
-        <button class="pill-o" onclick="exportGigsPDF()">Export gigs (PDF)</button>
-        <button class="pill-o" onclick="exportFinancePDF()">Export finance summary (PDF)</button>
-      </div>`;
-
-    body.innerHTML = html;
-    renderFinanceCategoryBreakdown();
-  } catch (err) {
-    console.error('Finance panel error:', err);
-    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load earnings</div>';
+// Toggle the expense breakdown: show category rows the first time, hide on next tap
+function renderExpenseBreakdown() {
+  const container = document.getElementById('financeCategoryBreakdown');
+  if (!container) return;
+  if (container.innerHTML && container.innerHTML.trim() !== '') {
+    container.innerHTML = '';
+    return;
   }
+  container.innerHTML = '<div style="padding:10px;text-align:center;color:var(--text-3);font-size:11px;">Loading breakdown...</div>';
+  renderFinanceCategoryBreakdown();
 }
 
 async function renderFinanceCategoryBreakdown() {
@@ -5109,8 +5306,9 @@ async function saveSong(songId) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Save failed');
     }
-    closePanel('song-form-panel');
+    closePanel('panel-song-form');
     if (typeof openRepertoirePanel === 'function') openRepertoirePanel();
+    else if (typeof renderRepertoireList === 'function') renderRepertoireList();
   } catch (e) {
     console.error('Save song error:', e);
     alert('Could not save song: ' + (e.message || 'unknown error'));
@@ -5125,12 +5323,13 @@ function renderContactsList() {
   let contacts = window._cachedContacts || [];
   const filterType = window._contactFilterType || 'all';
 
-  // Text search across name and instruments
+  // Text search across name and instruments (instruments is text[] in DB)
   if (searchQuery) {
-    contacts = contacts.filter(c =>
-      (c.name || '').toLowerCase().includes(searchQuery) ||
-      (c.instruments || '').toLowerCase().includes(searchQuery)
-    );
+    contacts = contacts.filter(c => {
+      const instrStr = Array.isArray(c.instruments) ? c.instruments.join(', ') : (c.instruments || '');
+      return (c.name || '').toLowerCase().includes(searchQuery) ||
+        instrStr.toLowerCase().includes(searchQuery);
+    });
   }
 
   // Filter by type
@@ -5150,7 +5349,9 @@ function renderContactsList() {
   if (filterType === 'instrument') {
     const groups = {};
     contacts.forEach(c => {
-      const instr = (c.instruments || '').split(',').map(s => s.trim()).filter(Boolean);
+      const instr = Array.isArray(c.instruments)
+        ? c.instruments.map(s => String(s).trim()).filter(Boolean)
+        : String(c.instruments || '').split(',').map(s => s.trim()).filter(Boolean);
       if (instr.length === 0) instr.push('No instrument listed');
       instr.forEach(inst => {
         if (!groups[inst]) groups[inst] = [];
@@ -5187,7 +5388,7 @@ function renderContactRow(contact) {
       <div style="width:40px;height:40px;border-radius:20px;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--accent);flex-shrink:0;">${initial}</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(contact.name)}</div>
-        <div style="font-size:11px;color:var(--text-2);">${escapeHtml(contact.instruments || 'No instruments')}</div>
+        <div style="font-size:11px;color:var(--text-2);">${escapeHtml(Array.isArray(contact.instruments) ? (contact.instruments.join(', ') || 'No instruments') : (contact.instruments || 'No instruments'))}</div>
         <div style="font-size:10px;color:var(--text-3);">Last gig: ${contact.last_gig_date ? formatDateShort(contact.last_gig_date) : 'Never'}</div>
       </div>
       <span style="font-size:14px;cursor:pointer;" onclick="toggleFavourite('${contact.id}', event)">${contact.is_favourite ? '\u2B50' : '\u2606'}</span>
@@ -5228,10 +5429,9 @@ async function toggleFavourite(contactId, e) {
 
 function sendDepOffer(contactId) {
   // Remember which contact the user started from so the dep picker can
-  // prefill them once a gig is chosen. For now we just open the picker —
-  // the deeper prefill happens inside selectGigForDep.
+  // prefill them once a gig is chosen.
   window._depPrefillContactId = contactId;
-  closePanel('contact-detail-panel');
+  closePanel('panel-contact-detail');
   openDepPicker();
 }
 
@@ -5272,8 +5472,29 @@ async function callContact(contactId) {
   }
 }
 
+function renderSongRow(song) {
+  return `<div onclick="openSongForm('${song.id}')" style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
+    <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(song.title || '')}</div>
+    <div style="font-size:11px;color:var(--text-2);">${escapeHtml(song.artist || '')} · Key: ${escapeHtml(song.key || 'N/A')} · ${song.tempo || '?'} BPM</div>
+  </div>`;
+}
+
 function filterSongs() {
-  // TODO: implement song filtering
+  const input = document.getElementById('songSearch');
+  const list = document.getElementById('songList');
+  if (!input || !list) return;
+  const q = (input.value || '').trim().toLowerCase();
+  const all = Array.isArray(window._cachedSongs) ? window._cachedSongs : [];
+  const filtered = !q ? all : all.filter(s => {
+    const title = (s.title || '').toLowerCase();
+    const artist = (s.artist || '').toLowerCase();
+    const tags = Array.isArray(s.tags) ? s.tags.join(' ').toLowerCase() : String(s.tags || '').toLowerCase();
+    const key = (s.song_key || s.key || '').toLowerCase();
+    return title.includes(q) || artist.includes(q) || tags.includes(q) || key.includes(q);
+  });
+  list.innerHTML = filtered.length === 0
+    ? '<div style="padding:20px;text-align:center;color:var(--text-2);font-size:13px;">No matching songs.</div>'
+    : filtered.map(s => renderSongRow(s)).join('');
 }
 
 function switchRepertoireTab(tab) {
@@ -5443,9 +5664,12 @@ async function markInvoiceAsPaid(invoiceId) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to update invoice');
     }
-    // Invalidate cache so the invoices list reflects the change next render
+    // Invalidate cache and re-render the list so row status + totals are fresh
     window._cachedInvoices = null;
     window._cachedInvoicesTime = 0;
+    if (typeof renderInvoicesScreen === 'function') {
+      try { await renderInvoicesScreen(); } catch (_) {}
+    }
     // Re-open the invoice detail so the status chip and buttons update
     await openInvoiceDetail(invoiceId);
   } catch (e) {
@@ -5453,6 +5677,29 @@ async function markInvoiceAsPaid(invoiceId) {
     alert('Could not mark invoice as paid: ' + (e.message || 'unknown error'));
   }
 }
+
+async function deleteInvoice(invoiceId) {
+  if (!confirm('Delete this invoice? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to delete invoice');
+    }
+    // Refresh list and close the detail panel
+    window._cachedInvoices = null;
+    window._cachedInvoicesTime = 0;
+    if (typeof renderInvoicesScreen === 'function') {
+      try { await renderInvoicesScreen(); } catch (_) {}
+    }
+    closePanel('panel-invoice-detail');
+    showToast('Invoice deleted');
+  } catch (e) {
+    console.error('Delete invoice error:', e);
+    alert('Could not delete invoice: ' + (e.message || 'unknown error'));
+  }
+}
+window.deleteInvoice = deleteInvoice;
 
 function downloadInvoicePDF(invoiceId) {
   // Open the server-rendered printable invoice in a new tab; it auto-triggers
@@ -5468,18 +5715,46 @@ async function chaseInvoicePayment(invoiceId) {
     const invNum = invoice.invoice_number || `INV-${String(invoice.id).slice(0, 6)}`;
     const amount = parseFloat(invoice.amount || 0).toFixed(2);
     const due = invoice.due_date ? formatDateShort(invoice.due_date) : '';
-    const band = invoice.band_name || 'your booking';
-    const subject = `Payment reminder: ${invNum}`;
+    const venue = invoice.venue_name || invoice.band_name || 'your booking';
+
+    // Prefer the recipient_email we captured on Send; fall back to prompting.
+    let toAddr = invoice.recipient_email || '';
+    if (!toAddr) {
+      toAddr = prompt('Send reminder to which email address?') || '';
+      if (!toAddr) return;
+      // Persist it back so next chase is one click
+      try {
+        await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recipient_email: toAddr }),
+        });
+      } catch (_) {}
+    }
+
+    const chaseOrdinal = (invoice.chase_count || 0) + 1;
+    const subject = `Payment reminder ${chaseOrdinal > 1 ? `(#${chaseOrdinal}) ` : ''}: ${invNum}`;
     const bodyLines = [
       `Hi,`,
       ``,
-      `Just a friendly reminder that invoice ${invNum} for £${amount} (${band}) is outstanding${due ? ` and was due on ${due}` : ''}.`,
+      `Just a friendly reminder that invoice ${invNum} for £${amount} is outstanding${due ? ` and was due on ${due}` : ''}. For your reference this invoice relates to ${venue}.`,
       ``,
-      `If you have already arranged payment, please ignore this note. Otherwise a quick reply with an expected payment date would be much appreciated.`,
+      `The invoice PDF can be downloaded again at any time from the TrackMyGigs link I sent when the invoice was first raised. If you have already arranged payment please ignore this note, otherwise a quick reply with an expected payment date would be much appreciated.`,
       ``,
       `Thanks,`,
     ];
-    const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+
+    // Record the chase server-side so chase_count / last_chase_at update
+    try {
+      await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}/chase`, { method: 'POST' });
+      window._cachedInvoices = null;
+      window._cachedInvoicesTime = 0;
+    } catch (_) {
+      // Fire and forget: if recording the chase fails we still open the email
+      // so the user can hit send.
+    }
+
+    const mailto = `mailto:${encodeURIComponent(toAddr)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
     window.location.href = mailto;
   } catch (e) {
     console.error('Chase invoice error:', e);
@@ -6308,6 +6583,7 @@ async function openChatThread(threadId) {
     body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load messages.</div>';
   }
 }
+window.openChatThread = openChatThread;
 
 async function openGigChat(gigId) {
   const body = document.getElementById('chatThreadBody');
@@ -6407,6 +6683,74 @@ function renderChatThread(thread, messages, participants) {
   // Scroll to bottom
   const area = document.getElementById('chatMessagesArea');
   if (area) area.scrollTop = area.scrollHeight;
+
+  // S12-06: start a background poller so new messages from other participants
+  // show up without the user having to reopen the thread. Intentionally light:
+  // 6s interval, only while panel is open, and only refreshes when the message
+  // count or last-timestamp changes so we don't blow away user scroll position.
+  startChatThreadPolling(thread && thread.id ? thread.id : _currentThreadId, messages);
+}
+
+let _chatPollTimer = null;
+let _chatPollLastCount = 0;
+let _chatPollLastStamp = 0;
+
+function stopChatThreadPolling() {
+  if (_chatPollTimer) {
+    clearInterval(_chatPollTimer);
+    _chatPollTimer = null;
+  }
+}
+
+function startChatThreadPolling(threadId, initialMessages) {
+  stopChatThreadPolling();
+  if (!threadId) return;
+  _chatPollLastCount = Array.isArray(initialMessages) ? initialMessages.length : 0;
+  _chatPollLastStamp = _chatPollLastCount > 0
+    ? new Date(initialMessages[initialMessages.length - 1].created_at).getTime() || 0
+    : 0;
+
+  _chatPollTimer = setInterval(async () => {
+    // Stop if the panel is no longer open (defensive; closePanel clears this anyway).
+    const panel = document.getElementById('panel-chat-thread');
+    if (!panel || !panel.classList.contains('open')) {
+      stopChatThreadPolling();
+      return;
+    }
+    if (!_currentThreadId || _currentThreadId !== threadId) {
+      stopChatThreadPolling();
+      return;
+    }
+    try {
+      const resp = await fetch(`/api/chat/threads/${threadId}/messages`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const msgs = Array.isArray(data.messages) ? data.messages : [];
+      const lastStamp = msgs.length > 0
+        ? new Date(msgs[msgs.length - 1].created_at).getTime() || 0
+        : 0;
+      // Only re-render if something actually changed, to preserve scroll
+      // position during idle polls.
+      if (msgs.length !== _chatPollLastCount || lastStamp !== _chatPollLastStamp) {
+        _chatPollLastCount = msgs.length;
+        _chatPollLastStamp = lastStamp;
+        // Preserve scroll-at-bottom behaviour: if user was at bottom, keep them there;
+        // otherwise leave scroll alone so they can read older messages in peace.
+        const area = document.getElementById('chatMessagesArea');
+        const wasAtBottom = area
+          ? (area.scrollHeight - area.scrollTop - area.clientHeight) < 40
+          : true;
+        renderChatThread(data.thread, msgs);
+        const newArea = document.getElementById('chatMessagesArea');
+        if (newArea && !wasAtBottom) {
+          // Try to keep the user approximately where they were.
+          newArea.scrollTop = 0;
+        }
+      }
+    } catch (err) {
+      // Swallow; the next poll will try again.
+    }
+  }, 6000);
 }
 
 async function sendChatMessage() {
@@ -6530,9 +6874,13 @@ function onGigSelected() {
   const gig = gigs.find((g) => g.id === gigId);
   if (!gig) return;
 
-  // Auto-fill fields from the linked gig
-  if (gig.band_name) {
-    document.getElementById('invBillTo').value = gig.band_name;
+  // Auto-fill fields from the linked gig.
+  // "Bill to" is the party owing the money (venue/booker), NOT the band
+  // performing. We prefer venue_name and only fall back to band_name if no
+  // venue has been captured yet.
+  const billToEl = document.getElementById('invBillTo');
+  if (billToEl && !billToEl.value) {
+    billToEl.value = gig.venue_name || gig.band_name || '';
   }
   if (gig.fee) {
     document.getElementById('invAmount').value = parseFloat(gig.fee).toFixed(2);
@@ -6732,6 +7080,10 @@ async function submitInvoice() {
         if (window._cachedProfile) window._cachedProfile.invoice_next_number = nextNum;
         if (window._currentUser) window._currentUser.invoice_next_number = nextNum;
       }).catch(() => {});
+      // Re-render the invoices list so the new row and totals are current
+      if (typeof renderInvoicesScreen === 'function') {
+        try { await renderInvoicesScreen(); } catch (_) {}
+      }
       closePanel('panel-invoice');
       showToast('Invoice sent!');
     } else {
@@ -6743,10 +7095,64 @@ async function submitInvoice() {
   }
 }
 
-function saveInvoiceDraft() {
-  showToast('Draft saved');
-  closePanel('panel-invoice');
+async function saveInvoiceDraft() {
+  const billTo = document.getElementById('invBillTo').value.trim();
+  const amountVal = parseFloat(document.getElementById('invAmount').value);
+  if (!billTo && !amountVal) {
+    // Let users close a blank form without hassle
+    closePanel('panel-invoice');
+    return;
+  }
+
+  // Pull the same set of fields submitInvoice sends, but stamp status='draft'
+  const gigId = document.getElementById('invLinkedGig').value || null;
+  let venueName = null;
+  let venueAddress = null;
+  if (gigId) {
+    const gigs = window._cachedGigs || [];
+    const gig = gigs.find((g) => g.id === gigId);
+    if (gig) {
+      venueName = gig.venue_name || null;
+      venueAddress = gig.venue_address || null;
+    }
+  }
+  const invoiceNumber = document.getElementById('invInvoiceNumber')?.value?.trim() || null;
+
+  try {
+    const res = await fetch('/api/invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        band_name: billTo,
+        gig_id: gigId,
+        description: document.getElementById('invDesc').value,
+        amount: isNaN(amountVal) ? 0 : amountVal,
+        due_date: document.getElementById('invDueDate').value || null,
+        notes: document.getElementById('invNotes').value,
+        invoice_number: invoiceNumber,
+        venue_name: venueName,
+        venue_address: venueAddress,
+        status: 'draft',
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to save draft');
+    }
+    // Invalidate the invoices cache and re-render the list so the draft shows up
+    window._cachedInvoices = null;
+    window._cachedInvoicesTime = 0;
+    if (typeof renderInvoicesScreen === 'function') {
+      try { await renderInvoicesScreen(); } catch (_) {}
+    }
+    closePanel('panel-invoice');
+    showToast('Draft saved');
+  } catch (e) {
+    console.error('Save draft error:', e);
+    showToast('Could not save draft');
+  }
 }
+window.saveInvoiceDraft = saveInvoiceDraft;
 
 // ── Block Dates Panel ─────────────────────────────────────────────────────────
 
@@ -6906,18 +7312,108 @@ window.submitBlockDate = submitBlockDate;
 
 async function initDepPanel() {
   // Populate gig selector from cached or fresh gigs
-  const gigs = window._cachedGigs || [];
+  let gigs = window._cachedGigs || [];
+  if (!gigs.length) {
+    try {
+      const r = await fetch('/api/gigs');
+      if (r.ok) {
+        const data = await r.json();
+        gigs = data.gigs || data || [];
+        window._cachedGigs = gigs;
+      }
+    } catch {}
+  }
   const sel = document.getElementById('depGigSelect');
-  sel.innerHTML = '<option value="">Select a gig...</option>';
-  gigs.forEach((g) => {
-    const opt = document.createElement('option');
-    opt.value = g.id;
-    opt.textContent = `${g.band_name} · ${formatDate(g.date)}`;
-    sel.appendChild(opt);
-  });
+  if (sel) {
+    sel.innerHTML = '<option value="">Select a gig...</option>';
+    gigs.forEach((g) => {
+      const opt = document.createElement('option');
+      opt.value = g.id;
+      opt.textContent = `${g.band_name || g.title || 'Gig'} \u00B7 ${formatDate(g.date)}`;
+      sel.appendChild(opt);
+    });
+  }
 
-  document.getElementById('sendDepBtn').onclick = submitDepOffer;
+  // Reset selected contacts
+  window._depSelectedContacts = new Set();
+
+  // Wire musician search
+  const searchEl = document.getElementById('depMusicianSearch');
+  const resultsEl = document.getElementById('depMusicianResults');
+  if (searchEl && resultsEl) {
+    searchEl.value = '';
+    resultsEl.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--text-3);">Type to search your contacts...</div>';
+    searchEl.oninput = async () => {
+      const q = (searchEl.value || '').trim().toLowerCase();
+      let contacts = window._cachedContacts || [];
+      if (!contacts.length) {
+        try {
+          const r = await fetch('/api/contacts');
+          if (r.ok) contacts = await r.json();
+          window._cachedContacts = contacts;
+        } catch {}
+      }
+      const matched = contacts.filter(c => {
+        if (!q) return false;
+        const instrStr = Array.isArray(c.instruments) ? c.instruments.join(', ') : (c.instruments || '');
+        return (c.name || '').toLowerCase().includes(q) || instrStr.toLowerCase().includes(q);
+      }).slice(0, 10);
+      if (!matched.length) {
+        resultsEl.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--text-3);">No contacts match.</div>';
+        return;
+      }
+      resultsEl.innerHTML = matched.map(c => {
+        const sel = window._depSelectedContacts.has(c.id);
+        const instrStr = Array.isArray(c.instruments) ? c.instruments.join(', ') : (c.instruments || '');
+        return `<div onclick="toggleDepContact('${c.id}')" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'};border-radius:10px;margin-bottom:6px;cursor:pointer;background:${sel ? 'var(--accent-dim)' : 'transparent'};">
+          <div style="width:32px;height:32px;border-radius:16px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--accent);">${escapeHtml((c.name || 'U')[0].toUpperCase())}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(c.name || '')}</div>
+            <div style="font-size:11px;color:var(--text-2);">${escapeHtml(instrStr || 'No instruments')}</div>
+          </div>
+          <span style="font-size:16px;">${sel ? '\u2713' : '+'}</span>
+        </div>`;
+      }).join('');
+    };
+  }
+
+  const btn = document.getElementById('sendDepBtn');
+  if (btn) btn.onclick = submitDepOffer;
+
+  // Consume contact prefill if the user arrived here from a Contact Detail panel.
+  if (window._depPrefillContactId) {
+    const prefillId = window._depPrefillContactId;
+    window._depPrefillContactId = null;
+    try {
+      let contacts = window._cachedContacts || [];
+      if (!contacts.length) {
+        const r = await fetch('/api/contacts');
+        if (r.ok) contacts = await r.json();
+        window._cachedContacts = contacts;
+      }
+      const contact = contacts.find(c => c.id === prefillId);
+      if (contact) {
+        setDepMode('pick');
+        window._depSelectedContacts.add(prefillId);
+        if (searchEl) {
+          searchEl.value = contact.name || '';
+          if (typeof searchEl.oninput === 'function') await searchEl.oninput();
+        }
+      }
+    } catch (e) {
+      console.error('Dep prefill error:', e);
+    }
+  }
 }
+
+function toggleDepContact(contactId) {
+  if (!window._depSelectedContacts) window._depSelectedContacts = new Set();
+  if (window._depSelectedContacts.has(contactId)) window._depSelectedContacts.delete(contactId);
+  else window._depSelectedContacts.add(contactId);
+  const searchEl = document.getElementById('depMusicianSearch');
+  if (searchEl && typeof searchEl.oninput === 'function') searchEl.oninput();
+}
+window.toggleDepContact = toggleDepContact;
 
 function setDepMode(mode) {
   document.getElementById('dep-mode-pick').classList.toggle('active', mode === 'pick');
@@ -6931,21 +7427,34 @@ async function submitDepOffer() {
   const role = document.getElementById('depRole').value.trim();
   const message = document.getElementById('depMessage').value;
   const mode = document.getElementById('dep-mode-pick').classList.contains('active') ? 'pick' : 'all';
+  const contactIds = Array.from(window._depSelectedContacts || []);
 
   if (!gigId) { showToast('Select a gig'); return; }
   if (!role) { showToast('Enter the role needed'); return; }
+  if (mode === 'pick' && contactIds.length === 0) { showToast('Select at least one contact'); return; }
 
   try {
     const res = await fetch('/api/dep-offers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gig_id: gigId, role, message, mode }),
+      body: JSON.stringify({ gig_id: gigId, role, message, mode, contact_ids: contactIds }),
     });
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
       closePanel('panel-dep');
-      showToast('Dep offer sent!');
+      const sent = data.sent || 0;
+      const unresolved = data.unresolved || 0;
+      if (sent > 0 && unresolved > 0) {
+        showToast(`Sent to ${sent}, ${unresolved} without a TrackMyGigs account`);
+      } else if (sent > 0) {
+        showToast(`Dep offer sent to ${sent} ${sent === 1 ? 'person' : 'people'}`);
+      } else if (unresolved > 0) {
+        showToast(`${unresolved} contacts are not on TrackMyGigs yet`);
+      } else {
+        showToast('Dep offer sent!');
+      }
     } else {
-      showToast('Failed to send dep offer');
+      showToast(data.error || 'Failed to send dep offer');
     }
   } catch {
     showToast('Failed to send dep offer');

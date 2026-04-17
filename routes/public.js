@@ -73,18 +73,17 @@ function pageHtml(title, bodyHtml) {
 </html>`;
 }
 
-// Find a user by their public_slug (or id fallback for direct links)
+// Find a user by their public_slug only. S9-01/S9-10: the previous numeric-id
+// fallback allowed user enumeration (`/share/1`, `/share/2`, ...) and bypassed
+// the ICS-toggle opt-in. Users must explicitly set a public_slug to expose
+// their availability or EPK. If they haven't, this returns null and the page
+// 404s — closing the enumeration hole.
 async function findUserBySlug(slug) {
   if (!slug) return null;
-  // Try public_slug first
-  let r = await db.query('SELECT * FROM users WHERE public_slug = $1', [slug]);
-  if (r.rows.length) return r.rows[0];
-  // Fallback: numeric id allows direct-link sharing without setting a slug
-  if (/^\d+$/.test(slug)) {
-    r = await db.query('SELECT * FROM users WHERE id = $1', [parseInt(slug, 10)]);
-    if (r.rows.length) return r.rows[0];
-  }
-  return null;
+  // Only honour non-numeric slugs to prevent `/share/<id>` enumeration.
+  if (/^\d+$/.test(slug)) return null;
+  const r = await db.query('SELECT * FROM users WHERE public_slug = $1', [slug]);
+  return r.rows.length ? r.rows[0] : null;
 }
 
 // ── Public availability calendar ────────────────────────────────────────────
