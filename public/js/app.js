@@ -8705,11 +8705,18 @@ const ONBOARDING_STEPS = [
 
 function maybeStartOnboarding() {
   try {
-    // Skip if already done, or local flag set (avoids showing twice in same session)
+    // BUG-AUDIT-02: Server-side onboarded_at is the canonical truth.
+    // The old localStorage 'tmg_onboarded' guard suppressed the tour for
+    // fresh users who signed in on a browser that had previously hosted
+    // a different TMG session (shared computer, demo user then real user,
+    // etc.). window._onboardingShown already dedups within a single page
+    // session, so localStorage is redundant AND causes false negatives
+    // across users. Drop the localStorage gate entirely and trust the
+    // server. If a cached stale profile is present, still defer so we
+    // don't race a pending /api/user/profile fetch.
     if (window._onboardingShown) return;
     const profile = window._cachedProfile || {};
     if (profile.onboarded_at) return;
-    if (localStorage.getItem('tmg_onboarded') === '1') return;
     window._onboardingShown = true;
     showOnboardingStep(0);
   } catch (err) {

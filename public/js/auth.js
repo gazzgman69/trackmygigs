@@ -169,6 +169,21 @@ async function logout() {
     window._cachedBlockedTime = 0;
     window._invoicesFullList = null;
     window._invoicesInitialFilter = null;
+    // BUG-AUDIT-02: clear per-user localStorage keys on logout so the next
+    // user signing in on this browser doesn't inherit them. The onboarded
+    // flag is the critical one (a stale "1" suppresses the tour for a
+    // genuine new user). Also clear snoozes, dismissed notifications, and
+    // calendar layer prefs for the same reason.
+    try {
+      localStorage.removeItem('tmg_onboarded');
+      localStorage.removeItem('snoozedOffers');
+      localStorage.removeItem('globalSnoozeUntil');
+      localStorage.removeItem('globalSnoozedAt');
+      localStorage.removeItem('lastSnoozeEndedAt');
+      localStorage.removeItem('showWhileAway');
+      localStorage.removeItem('dismissedNotifications');
+      localStorage.removeItem('calendarLayers');
+    } catch (_) { /* storage may be unavailable, not fatal */ }
     location.reload();
   } catch (error) {
     console.error('Logout error:', error);
