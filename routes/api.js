@@ -200,7 +200,17 @@ router.post('/invoices', async (req, res) => {
 router.get('/offers', async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT * FROM offers WHERE recipient_id = $1 ORDER BY created_at DESC',
+      `SELECT
+         o.id, o.sender_id, o.recipient_id, o.gig_id, o.offer_type,
+         o.status, o.fee, o.deadline, o.created_at, o.responded_at,
+         g.band_name, g.venue_name, g.venue_address,
+         g.date as gig_date, g.start_time, g.end_time, g.dress_code,
+         u.display_name as sender_display_name, u.name as sender_name
+       FROM offers o
+       LEFT JOIN gigs g ON g.id = o.gig_id
+       LEFT JOIN users u ON u.id = o.sender_id
+       WHERE o.recipient_id = $1
+       ORDER BY o.created_at DESC`,
       [req.user.id]
     );
     res.json(result.rows);

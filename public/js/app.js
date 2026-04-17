@@ -1595,61 +1595,296 @@ async function renderOffersScreen() {
 }
 
 function buildOffersHTML(content, offers) {
-  const accepted = offers.filter(o => o.status === 'accepted').length;
+  const pending = offers.filter(o => o.status === 'pending');
+  const acceptedN = offers.filter(o => o.status === 'accepted').length;
+  const declinedN = offers.filter(o => o.status === 'declined' || o.status === 'expired').length;
+
+  // Ecosystem-offers state: none of MT/CF is connected yet — always show upsell for now
+  // Future: read from user profile (mt_connected, cf_connected flags) and surface real offers
+  const ecoState = 'upsell';
+
+  // Global snooze state from localStorage
+  const snoozeState = getGlobalSnoozeState();
+  const snoozedNow = snoozeState.snoozed;
+  const missed = getMissedWhileSnoozed(offers);
+
+  // Filter for the active tab (Marketplace is a premium teaser)
+  const activeTab = window._offersTab || 'received';
+  const visibleOffers = activeTab === 'received' ? pending : [];
 
   let html = `
-    <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <button onclick="showScreen('home')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
-        <div>
-          <div style="font-size:24px;font-weight:700;color:var(--text);">Offers</div>
+    <div class="ph" style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button onclick="showScreen('home')" style="color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;background:none;border:none;">‹ Back</button>
+        <div class="pht" style="font-size:22px;font-weight:700;color:var(--text);">Offers</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <div onclick="showAcceptedOffers()" title="Accepted offers" style="display:flex;align-items:center;gap:4px;background:var(--success-dim);border:1px solid rgba(63,185,80,.3);border-radius:12px;padding:5px 10px;cursor:pointer;">
+          <span style="font-size:12px;font-weight:700;color:var(--success);">${acceptedN}</span>
+          <span style="font-size:10px;color:var(--success);">&#x2713;</span>
+        </div>
+        <div onclick="showDeclinedOffers()" title="Declined or expired" style="display:flex;align-items:center;gap:4px;background:var(--danger-dim);border:1px solid rgba(248,81,73,.3);border-radius:12px;padding:5px 10px;cursor:pointer;">
+          <span style="font-size:12px;font-weight:700;color:var(--danger);">${declinedN}</span>
+          <span style="font-size:10px;color:var(--danger);">&#x2715;</span>
+        </div>
+        <button onclick="openPanel('send-dep-picker')" style="background:var(--accent);color:#000;border:none;border-radius:20px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">Send dep</button>
+      </div>
+    </div>
+
+    <div class="tbar" style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;">
+      <div class="tb ${activeTab === 'received' ? 'ac' : ''}" onclick="switchOffersTab('received')">My Offers (${pending.length})</div>
+      <div class="tb ${activeTab === 'marketplace' ? 'ac' : ''}" onclick="switchOffersTab('marketplace')">Marketplace &#x1F512;</div>
+    </div>
+
+    <!-- Global snooze toggle -->
+    <div style="margin:8px 16px 0;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:18px;">&#x1F4A4;</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text);">Snooze all offers</div>
+            <div style="font-size:11px;color:var(--text-3);margin-top:2px;">${snoozedNow ? 'Snoozed until ' + formatSnoozeEnd(snoozeState.until) : "You're receiving offers as normal"}</div>
+          </div>
+        </div>
+        <div onclick="toggleGlobalSnooze()" style="width:44px;height:26px;border-radius:13px;background:${snoozedNow ? 'var(--accent)' : 'var(--border)'};cursor:pointer;position:relative;transition:background .2s;">
+          <div style="width:22px;height:22px;border-radius:11px;background:#fff;position:absolute;top:2px;left:${snoozedNow ? '20px' : '2px'};transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.3);"></div>
         </div>
       </div>
-      <span style="background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:24px;height:24px;border-radius:12px;display:flex;align-items:center;justify-content:center;padding:0 6px;">${accepted}</span>
+      ${snoozedNow ? '' : `
+      <div id="snoozeOptions" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+        <div style="font-size:12px;color:var(--text-2);margin-bottom:8px;">Snooze for:</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+          <button class="snz-opt" onclick="setGlobalSnooze('2h')">2 hours</button>
+          <button class="snz-opt" onclick="setGlobalSnooze('tonight')">Until tonight</button>
+          <button class="snz-opt" onclick="setGlobalSnooze('tomorrow')">Until tomorrow</button>
+          <button class="snz-opt" onclick="setGlobalSnooze('week')">1 week</button>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:8px 12px;">
+          <div style="font-size:11px;color:var(--text-2);line-height:1.5;">&#x1F4A1; You'll still get up to 2 nudge notifications per snooze if someone sends you a dep offer. After that, total silence until you un-snooze.</div>
+        </div>
+      </div>`}
     </div>
-    <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;">
-      <div class="tb ac" onclick="switchOffersTab('incoming')">Incoming</div>
-      <div class="tb" onclick="switchOffersTab('my-deps')">My deps</div>
-    </div>
-    <div id="offersListContent" style="padding:0 16px;">`;
 
-  offers.forEach(offer => {
-    const deadline = new Date(offer.deadline);
-    const now = new Date();
-    const hoursLeft = Math.ceil((deadline - now) / (1000 * 60 * 60));
-    const daysLeft = Math.ceil(hoursLeft / 24);
+    ${missed && !snoozedNow ? `
+    <div style="margin:8px 16px 0;background:var(--danger-dim);border:1px solid rgba(248,81,73,.3);border-radius:var(--r);padding:12px 14px;display:flex;align-items:center;gap:10px;">
+      <div style="font-size:18px;">&#x1F62C;</div>
+      <div style="flex:1;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px;">While you were snoozed&hellip;</div>
+        <div style="font-size:12px;color:var(--text-2);line-height:1.4;">${missed.expired} offer${missed.expired === 1 ? '' : 's'} expired and ${missed.new} new ${missed.new === 1 ? 'is' : 'are'} waiting below.</div>
+      </div>
+      <button onclick="dismissWhileSnoozed()" style="color:var(--text-3);background:none;border:none;font-size:14px;cursor:pointer;">&times;</button>
+    </div>` : ''}
 
+    <div id="offersListContent" style="padding:8px 16px 24px;">`;
+
+  if (activeTab === 'marketplace') {
     html += `
-    <div class="oc">
-      <div class="o-act">${offer.source || 'OFFER'}</div>
-      <div class="o-title">${escapeHtml(offer.band_name)}</div>
-      <div class="o-det">📍 ${escapeHtml(offer.venue_name)}</div>
-      <div class="o-det">📅 ${formatDateLong(offer.gig_date)}</div>
-      <div class="o-det">💷 £${parseFloat(offer.fee).toFixed(0)}</div>
-      <div class="o-timer">
-        ⏳ Expires in ${daysLeft > 0 ? daysLeft + 'd' : hoursLeft + 'h'}
+      <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:var(--r);padding:18px 16px;text-align:center;margin-top:8px;">
+        <div style="font-size:32px;margin-bottom:8px;">&#x1F3AF;</div>
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">Marketplace is premium</div>
+        <div style="font-size:12px;color:var(--text-2);max-width:280px;margin:0 auto 14px;line-height:1.5;">Get featured in a pool of working deps. Band leaders pick you by instrument, distance, and past gigs together.</div>
+        <button onclick="toast('Premium coming soon')" style="background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;">Learn more</button>
+      </div>`;
+    html += `</div>`;
+    content.innerHTML = html;
+    return;
+  }
+
+  // Ecosystem offers section
+  if (ecoState === 'upsell') {
+    html += `
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+        <div style="height:1px;flex:1;background:linear-gradient(90deg,transparent,rgba(240,165,0,.4));"></div>
+        <span style="font-size:10px;font-weight:700;letter-spacing:1px;color:var(--accent);text-transform:uppercase;white-space:nowrap;">Unlock network offers</span>
+        <div style="height:1px;flex:1;background:linear-gradient(270deg,transparent,rgba(240,165,0,.4));"></div>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:10px;">
-        <button onclick="acceptOffer('${offer.id}')" class="o-acc">Accept</button>
-        <button onclick="declineOffer('${offer.id}')" class="o-dec">Decline</button>
-      </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;">
-        <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 1)">1h</button>
-        <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 24)">1d</button>
-        <button class="snz-opt" onclick="snoozeOffer('${offer.id}', 168)">1w</button>
-      </div>
+      <div style="background:linear-gradient(135deg,rgba(240,165,0,.08) 0%,rgba(240,165,0,.03) 100%);border:1px solid rgba(240,165,0,.25);border-radius:var(--r);padding:18px 16px;margin-bottom:14px;text-align:center;">
+        <div style="font-size:28px;margin-bottom:8px;">&#x1F517;</div>
+        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">Get gig offers from your network</div>
+        <div style="font-size:12px;color:var(--text-2);line-height:1.5;max-width:280px;margin:0 auto 14px;">Connect ClientFlow or Musician Tracker and receive offers directly from agencies and band leaders you already work with &mdash; pre-filled with every detail.</div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-width:240px;margin:0 auto;">
+          <button onclick="toast('Coming soon')" style="background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:12px;font-weight:700;cursor:pointer;">Connect ClientFlow</button>
+          <button onclick="toast('Coming soon')" style="background:var(--card);color:var(--text);border:1px solid var(--accent);border-radius:8px;padding:10px;font-size:12px;font-weight:600;cursor:pointer;">Connect Musician Tracker</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-3);margin-top:10px;">Musicians with network connections accept gigs 3&times; faster</div>
+      </div>`;
+  }
+
+  // Other offers divider
+  html += `
+    <div style="display:flex;align-items:center;gap:6px;margin:8px 0;">
+      <div style="height:1px;flex:1;background:var(--border);"></div>
+      <span style="font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;white-space:nowrap;">Other offers</span>
+      <div style="height:1px;flex:1;background:var(--border);"></div>
     </div>`;
-  });
+
+  if (visibleOffers.length === 0) {
+    html += `
+      <div style="padding:40px 16px;text-align:center;color:var(--text-2);">
+        <div style="font-size:32px;margin-bottom:8px;">&#x1F4EC;</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;">No pending offers</div>
+        <div style="font-size:12px;color:var(--text-3);">New dep requests and lineup callouts will land here.</div>
+      </div>`;
+  } else {
+    visibleOffers.forEach(offer => {
+      const deadline = offer.deadline ? new Date(offer.deadline) : null;
+      const now = new Date();
+      const hoursLeft = deadline ? Math.ceil((deadline - now) / (1000 * 60 * 60)) : null;
+      const daysLeft = hoursLeft ? Math.ceil(hoursLeft / 24) : null;
+      const urgent = hoursLeft !== null && hoursLeft <= 24;
+      const senderName = offer.sender_display_name || offer.sender_name || 'Musician';
+      const badge = offer.offer_type === 'dep' ? 'Dep request' : 'Lineup callout';
+      const badgeColor = offer.offer_type === 'dep' ? 'var(--warning)' : 'var(--info)';
+      const badgeBg = offer.offer_type === 'dep' ? 'var(--warning-dim)' : 'var(--info-dim)';
+
+      html += `
+      <div class="oc" style="${urgent ? 'border-color:rgba(248,81,73,.4);' : ''}">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div class="o-act" style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">${escapeHtml(offer.band_name || 'Gig')}</div>
+          <span style="font-size:10px;color:${badgeColor};background:${badgeBg};border-radius:8px;padding:2px 8px;font-weight:600;">${badge}</span>
+        </div>
+        <div style="display:flex;gap:10px;">
+          <div style="flex:1;">
+            <div class="o-title" style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(offer.venue_name || 'Venue TBC')}</div>
+            <div class="o-det" style="font-size:12px;color:var(--text-2);margin-bottom:2px;">&#x1F4C5; ${formatDateLong(offer.gig_date)}</div>
+            ${offer.start_time ? `<div class="o-det" style="font-size:12px;color:var(--text-2);margin-bottom:2px;">&#x1F550; ${offer.start_time.slice(0,5)}${offer.end_time ? '&ndash;' + offer.end_time.slice(0,5) : ''}</div>` : ''}
+            ${offer.dress_code ? `<div class="o-det" style="font-size:12px;color:var(--text-2);margin-bottom:2px;">&#x1F454; ${escapeHtml(offer.dress_code)}</div>` : ''}
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--success);">&pound;${parseFloat(offer.fee || 0).toFixed(0)}</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;margin:10px 0;display:flex;align-items:center;gap:10px;">
+          <div style="width:36px;height:36px;border-radius:18px;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--accent);">${escapeHtml(senderName[0] || 'M')}</div>
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(senderName)}</div>
+            <div style="font-size:11px;color:var(--text-2);">${offer.offer_type === 'dep' ? 'Dep request' : 'Band leader'}</div>
+          </div>
+        </div>
+        ${deadline ? `
+        <div class="o-timer" style="background:${urgent ? 'var(--danger-dim)' : 'var(--warning-dim)'};border-radius:var(--rs);padding:8px 10px;display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+          <span style="font-size:14px;">${urgent ? '&#x23F3;' : '&#x23F1;'}</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:${urgent ? 'var(--danger)' : 'var(--warning)'};">Respond by ${formatSnoozeEnd(offer.deadline)}</div>
+            <div style="font-size:11px;color:${urgent ? 'var(--danger)' : 'var(--warning)'};margin-top:2px;opacity:.8;">${daysLeft > 1 ? daysLeft + ' days remaining' : hoursLeft + 'h remaining'}</div>
+          </div>
+        </div>` : ''}
+        <div class="o-acts" style="display:flex;gap:8px;">
+          <button onclick="acceptOffer('${offer.id}')" class="o-acc" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">&#x2713; Accept</button>
+          <button onclick="declineOffer('${offer.id}')" class="o-dec" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">&#x2715; Decline</button>
+        </div>
+      </div>`;
+    });
+  }
 
   html += `</div>`;
   content.innerHTML = html;
 }
 
 function switchOffersTab(tab) {
-  document.querySelectorAll('#offersScreen .tb').forEach(t => t.classList.remove('ac'));
-  event.target.classList.add('ac');
-  // TODO: filter offers by tab
+  window._offersTab = tab;
+  if (window._cachedOffers) {
+    buildOffersHTML(document.getElementById('offersScreen'), window._cachedOffers);
+  }
 }
+
+function showAcceptedOffers() {
+  const offers = (window._cachedOffers || []).filter(o => o.status === 'accepted');
+  if (!offers.length) return toast('No accepted offers yet');
+  const summary = offers.slice(0, 8).map(o => `\u2713 ${o.band_name || o.venue_name || 'Gig'} \u2014 ${formatDateLong(o.gig_date)}`).join('\n');
+  alert('Accepted offers:\n\n' + summary);
+}
+
+function showDeclinedOffers() {
+  const offers = (window._cachedOffers || []).filter(o => o.status === 'declined' || o.status === 'expired');
+  if (!offers.length) return toast('No declined or expired offers');
+  const summary = offers.slice(0, 8).map(o => `\u2715 ${o.band_name || o.venue_name || 'Gig'} \u2014 ${formatDateLong(o.gig_date)}`).join('\n');
+  alert('Declined / Missed:\n\n' + summary);
+}
+
+// ── Global snooze helpers ──────────────────────────────────────────────────
+function getGlobalSnoozeState() {
+  try {
+    const raw = localStorage.getItem('globalSnoozeUntil');
+    if (!raw) return { snoozed: false, until: null };
+    const until = parseInt(raw, 10);
+    if (!until || Date.now() > until) {
+      // Auto-clear expired snooze
+      localStorage.removeItem('globalSnoozeUntil');
+      return { snoozed: false, until: null };
+    }
+    return { snoozed: true, until };
+  } catch { return { snoozed: false, until: null }; }
+}
+
+function setGlobalSnooze(preset) {
+  const now = new Date();
+  let until;
+  if (preset === '2h') until = now.getTime() + 2 * 3600_000;
+  else if (preset === 'tonight') {
+    const end = new Date(now); end.setHours(22, 0, 0, 0);
+    until = end.getTime();
+  } else if (preset === 'tomorrow') {
+    const end = new Date(now); end.setDate(end.getDate() + 1); end.setHours(9, 0, 0, 0);
+    until = end.getTime();
+  } else if (preset === 'week') until = now.getTime() + 7 * 24 * 3600_000;
+  else until = now.getTime() + 2 * 3600_000;
+  localStorage.setItem('globalSnoozeUntil', String(until));
+  localStorage.setItem('globalSnoozedAt', String(now.getTime()));
+  toast('Snoozed');
+  renderOffersScreen();
+}
+
+function toggleGlobalSnooze() {
+  const state = getGlobalSnoozeState();
+  if (state.snoozed) {
+    // Un-snooze: stash the snooze window so we can show "while-you-were-away"
+    localStorage.setItem('lastSnoozeEndedAt', String(Date.now()));
+    localStorage.removeItem('globalSnoozeUntil');
+    localStorage.setItem('showWhileAway', '1');
+    renderOffersScreen();
+    return;
+  }
+  // Toggle inline options panel
+  const el = document.getElementById('snoozeOptions');
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function getMissedWhileSnoozed(offers) {
+  try {
+    if (localStorage.getItem('showWhileAway') !== '1') return null;
+    const start = parseInt(localStorage.getItem('globalSnoozedAt') || '0', 10);
+    const end = parseInt(localStorage.getItem('lastSnoozeEndedAt') || '0', 10);
+    if (!start || !end) return null;
+    const expired = offers.filter(o => o.status === 'expired' && o.created_at && new Date(o.created_at).getTime() >= start && new Date(o.created_at).getTime() <= end).length;
+    const fresh = offers.filter(o => o.status === 'pending' && o.created_at && new Date(o.created_at).getTime() >= start).length;
+    if (expired === 0 && fresh === 0) return null;
+    return { expired, new: fresh };
+  } catch { return null; }
+}
+
+function dismissWhileSnoozed() {
+  localStorage.removeItem('showWhileAway');
+  renderOffersScreen();
+}
+
+function formatSnoozeEnd(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+  const isTomorrow = d.toDateString() === tomorrow.toDateString();
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (sameDay) return `today ${time}`;
+  if (isTomorrow) return `tomorrow ${time}`;
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+window.switchOffersTab = switchOffersTab;
+window.showAcceptedOffers = showAcceptedOffers;
+window.showDeclinedOffers = showDeclinedOffers;
+window.setGlobalSnooze = setGlobalSnooze;
+window.toggleGlobalSnooze = toggleGlobalSnooze;
+window.dismissWhileSnoozed = dismissWhileSnoozed;
 
 async function renderProfileScreen() {
   // Render into the panel overlay body (profile-panel), falling back to the screen
