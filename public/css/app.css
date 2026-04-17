@@ -433,6 +433,34 @@ body {
   cursor: not-allowed;
 }
 
+/* Filter badges - small dark-themed chips used in list headers
+   (e.g. Invoices and Contacts filter rows) */
+.filter-badge {
+  background: var(--card, #1E2329);
+  color: var(--text-2, #9DA7B3);
+  border: 1px solid var(--border, #30363D);
+  border-radius: 16px;
+  padding: 6px 12px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.filter-badge:hover {
+  background: rgba(240, 165, 0, 0.08);
+  border-color: rgba(240, 165, 0, 0.35);
+  color: var(--text, #E6EDF3);
+}
+.filter-badge.ac {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+}
+
 /* Invoice preview */
 .invoice-preview {
   background: var(--surface);

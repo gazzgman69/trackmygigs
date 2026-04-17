@@ -521,10 +521,20 @@
           <div><div class="form-label">Date</div><input type="date" class="form-input" id="receiptSnapDate"></div>
         </div>
         <div class="form-group"><div class="form-label">Description</div><input type="text" class="form-input" id="receiptSnapDesc" placeholder="e.g. Shell petrol M6"></div>
-        <div class="form-group"><div class="form-label">Category</div>
+        <div class="form-group"><div class="form-label">HMRC category</div>
           <select class="form-input" id="receiptSnapCategory">
-            <option>Travel</option><option>Equipment</option><option>Accommodation</option>
-            <option>Food &amp; Drink</option><option>Marketing</option><option>Other</option>
+            <option>Travel &amp; vehicle</option>
+            <option>Equipment &amp; instruments</option>
+            <option>Equipment repairs</option>
+            <option>Accommodation</option>
+            <option>Subsistence (overnight)</option>
+            <option>Phone &amp; office</option>
+            <option>Advertising &amp; promotion</option>
+            <option>Professional fees</option>
+            <option>Subscriptions &amp; dues</option>
+            <option>Stage clothing</option>
+            <option>Training &amp; CPD</option>
+            <option>Other</option>
           </select>
         </div>
         <div style="background:linear-gradient(135deg,rgba(240,165,0,.08),transparent);border:1px solid rgba(240,165,0,.3);border-radius:var(--radius-s,10px);padding:10px 12px;margin-bottom:12px;">
@@ -544,11 +554,24 @@
           <div><div class="form-label">Date</div><input type="date" class="form-input" id="receiptDate"></div>
         </div>
         <div class="form-group"><div class="form-label">Description</div><input type="text" class="form-input" id="receiptDesc" placeholder="e.g. Shell petrol M6"></div>
-        <div class="form-group"><div class="form-label">Category</div>
+        <div class="form-group"><div class="form-label">HMRC category</div>
           <select class="form-input" id="receiptCategory">
-            <option>Travel</option><option>Equipment</option><option>Accommodation</option>
-            <option>Food &amp; Drink</option><option>Marketing</option><option>Other</option>
+            <option>Travel &amp; vehicle</option>
+            <option>Equipment &amp; instruments</option>
+            <option>Equipment repairs</option>
+            <option>Accommodation</option>
+            <option>Subsistence (overnight)</option>
+            <option>Phone &amp; office</option>
+            <option>Advertising &amp; promotion</option>
+            <option>Professional fees</option>
+            <option>Subscriptions &amp; dues</option>
+            <option>Stage clothing</option>
+            <option>Training &amp; CPD</option>
+            <option>Other</option>
           </select>
+          <div style="font-size:11px;color:var(--text-3);margin-top:6px;line-height:1.4;">
+            Aligned with HMRC Self Assessment (SA103) so year-end totals map straight into your tax return.
+          </div>
         </div>
         <div style="display:flex;gap:8px;margin-top:4px;">
           <button onclick="hideReceiptForm('manual')" class="btn-pill-outline" style="flex:1;">Cancel</button>

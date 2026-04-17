@@ -1070,6 +1070,8 @@ async function renderCalendarScreen() {
     }
 
     buildCalendarView(content, window._cachedGigs || [], window._cachedBlocked || []);
+    // Fire-and-forget pin fetch; when it returns, re-render so pins show up.
+    loadGoogleCalendarPins().catch(() => {});
   } catch (err) {
     console.error('Calendar error:', err);
     content.innerHTML = `
@@ -1078,6 +1080,48 @@ async function renderCalendarScreen() {
         <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load calendar</div>
         <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
       </div>`;
+  }
+}
+
+async function loadGoogleCalendarPins() {
+  const layers = getCalendarLayers();
+  if (!layers.google) {
+    window._googlePins = [];
+    return;
+  }
+  try {
+    const base = window._calDate || new Date();
+    const year = base.getFullYear();
+    const month = base.getMonth();
+    // Fetch a buffer around the visible month (prev 14 days .. +60 days)
+    const start = new Date(year, month, 1);
+    start.setDate(start.getDate() - 14);
+    const end = new Date(year, month + 1, 0);
+    end.setDate(end.getDate() + 14);
+    const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const cacheKey = `${toYMD(start)}_${toYMD(end)}`;
+    if (window._googlePinsKey === cacheKey && window._googlePins && (Date.now() - (window._googlePinsTime || 0)) < 60000) {
+      return;
+    }
+
+    const resp = await fetch(`/api/calendar/pins?start=${toYMD(start)}&end=${toYMD(end)}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (!data.connected) {
+      window._googlePins = [];
+      return;
+    }
+    window._googlePins = data.pins || [];
+    window._googlePinsKey = cacheKey;
+    window._googlePinsTime = Date.now();
+    // Re-render with pins
+    const content = document.getElementById('calendarScreen');
+    if (content && window._cachedGigs && window._cachedBlocked) {
+      buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+    }
+  } catch (e) {
+    // silent fail
   }
 }
 
@@ -1122,12 +1166,13 @@ function buildCalendarView(content, gigsData, blockedData) {
       <div class="tb ${view === 'month' ? 'ac' : ''}" onclick="switchCalendarView('month')">Month</div>
     </div>`;
 
+  const googlePins = (layers.google && Array.isArray(window._googlePins)) ? window._googlePins : [];
   if (view === 'month') {
-    html += renderCalendarMonth(currentDate, gigsData, blockedData);
+    html += renderCalendarMonth(currentDate, gigsData, blockedData, googlePins);
   } else if (view === 'week') {
-    html += renderCalendarWeek(currentDate, gigsData, blockedData);
+    html += renderCalendarWeek(currentDate, gigsData, blockedData, googlePins);
   } else if (view === 'day') {
-    html += renderCalendarDay(currentDate, gigsData, blockedData);
+    html += renderCalendarDay(currentDate, gigsData, blockedData, googlePins);
   }
 
   content.innerHTML = html;
@@ -1165,6 +1210,10 @@ function toggleCalendarLayer(id, checked) {
   const layers = getCalendarLayers();
   layers[id] = !!checked;
   localStorage.setItem('calendarLayers', JSON.stringify(layers));
+  // Force refresh of pins when Google layer flips on
+  if (id === 'google' && checked) {
+    window._googlePinsKey = null;
+  }
   renderCalendarScreen();
 }
 
@@ -1184,7 +1233,7 @@ function switchCalendarView(view) {
   renderCalendarScreen();
 }
 
-function renderCalendarMonth(currentDate, gigs, blocked) {
+function renderCalendarMonth(currentDate, gigs, blocked, googlePins = []) {
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   // JS getDay(): 0=Sun..6=Sat. We render Mon-first, so shift: Mon=0..Sun=6.
@@ -1216,13 +1265,16 @@ function renderCalendarMonth(currentDate, gigs, blocked) {
 
     const gigsOnDay = gigs.filter(g => (g.date || '').slice(0, 10) === dateStr);
     const blockedOnDay = blocked.some(b => (b.date || '').slice(0, 10) === dateStr);
+    const pinsOnDay = googlePins.filter(p => p.date === dateStr);
+    const hasMarker = gigsOnDay.length > 0 || blockedOnDay || pinsOnDay.length > 0;
 
     html += `<div class="cd ${isToday ? 'today' : ''}" onclick="selectCalendarDate('${dateStr}')" style="position:relative;">
       ${day}
-      ${gigsOnDay.length > 0 || blockedOnDay ? `
+      ${hasMarker ? `
       <div class="cd-dots">
         ${gigsOnDay.slice(0, 3).map(() => `<div class="cd-dot" style="background:var(--success);"></div>`).join('')}
         ${blockedOnDay ? `<div class="cd-dot" style="background:var(--danger);"></div>` : ''}
+        ${pinsOnDay.slice(0, 2).map(() => `<div class="cd-dot" style="background:#4285F4;"></div>`).join('')}
       </div>` : ''}
     </div>`;
   }
@@ -1252,11 +1304,37 @@ function renderCalendarMonth(currentDate, gigs, blocked) {
     html += `</div>`;
   }
 
+  // List Google Calendar pins this month
+  const monthPins = googlePins.filter(p => (p.date || '').slice(0, 7) === `${year}-${String(month + 1).padStart(2, '0')}`);
+  if (monthPins.length > 0) {
+    html += `<div style="margin-top:16px;">
+      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+        <span style="width:8px;height:8px;border-radius:2px;background:#4285F4;display:inline-block;"></span>
+        Google Calendar
+      </div>`;
+    monthPins.forEach(p => {
+      const d = new Date(p.date);
+      html += `<div style="display:flex;align-items:flex-start;gap:14px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-left:3px solid #4285F4;border-radius:var(--r);margin-bottom:6px;">
+        <div style="min-width:36px;text-align:center;">
+          <div style="font-size:18px;font-weight:700;color:var(--text);">${d.getDate()}</div>
+          <div style="font-size:9px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">${d.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase()}</div>
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(p.title)}</div>
+          <div style="font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            ${p.all_day ? 'All day' : (p.start_time ? formatTime(p.start_time) : '')}${p.location ? ' · ' + escapeHtml(p.location) : ''}
+          </div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
   html += `</div>`;
   return html;
 }
 
-function renderCalendarWeek(currentDate, gigs, blocked) {
+function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
   // Get week start (Monday)
   const d = new Date(currentDate);
   const day = d.getDay();
@@ -1312,11 +1390,41 @@ function renderCalendarWeek(currentDate, gigs, blocked) {
     html += `</div>`;
   }
 
+  // Google Calendar pins in this week
+  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const weekPins = googlePins.filter(p => {
+    const pd = new Date(p.date);
+    return pd >= weekStart && pd < weekEnd;
+  });
+  if (weekPins.length > 0) {
+    html += `<div style="margin-top:12px;">
+      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+        <span style="width:8px;height:8px;border-radius:2px;background:#4285F4;display:inline-block;"></span>
+        Google Calendar
+      </div>`;
+    weekPins.forEach(p => {
+      const d = new Date(p.date);
+      html += `<div style="display:flex;align-items:flex-start;gap:14px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-left:3px solid #4285F4;border-radius:var(--r);margin-bottom:6px;">
+        <div style="min-width:36px;text-align:center;">
+          <div style="font-size:18px;font-weight:700;color:var(--text);">${d.getDate()}</div>
+          <div style="font-size:9px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">${d.toLocaleDateString('en-GB', { weekday: 'short' }).toUpperCase()}</div>
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(p.title)}</div>
+          <div style="font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            ${p.all_day ? 'All day' : (p.start_time ? formatTime(p.start_time) : '')}${p.location ? ' · ' + escapeHtml(p.location) : ''}
+          </div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
   html += `</div>`;
   return html;
 }
 
-function renderCalendarDay(currentDate, gigs, blocked) {
+function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
   const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
   const layers = getCalendarLayers();
   const dayGigs = layers.gigs
@@ -1342,9 +1450,11 @@ function renderCalendarDay(currentDate, gigs, blocked) {
     </div>`;
   }
 
-  if (dayGigs.length === 0) {
+  const dayPins = googlePins.filter(p => p.date === dateStr);
+
+  if (dayGigs.length === 0 && dayPins.length === 0) {
     html += `<div style="text-align:center;padding:40px 20px;color:var(--text-2);">No gigs scheduled for this day</div>`;
-  } else {
+  } else if (dayGigs.length > 0) {
     html += `<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Gigs today</div>`;
 
     // Auto-blocks for the day: soft pre/post windows from travel + load-in + pack-down
@@ -1387,6 +1497,27 @@ function renderCalendarDay(currentDate, gigs, blocked) {
     html += `<div style="margin-top:16px;padding:8px 10px;background:var(--card);border:1px dashed var(--border);border-radius:6px;font-size:11px;color:var(--text-3);text-align:center;">
       Travel windows default to 60min each way + 30min load-in and pack-down. Tune in Settings.
     </div>`;
+  }
+
+  if (dayPins.length > 0) {
+    html += `<div style="margin-top:16px;">
+      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+        <span style="width:8px;height:8px;border-radius:2px;background:#4285F4;display:inline-block;"></span>
+        Google Calendar
+      </div>`;
+    dayPins.forEach(p => {
+      html += `<div style="display:flex;align-items:flex-start;gap:14px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-left:3px solid #4285F4;border-radius:var(--r);margin-bottom:6px;">
+        <div style="min-width:44px;text-align:center;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);">${p.all_day ? 'All' : (p.start_time ? formatTime(p.start_time) : '')}</div>
+          ${p.all_day ? '<div style="font-size:9px;color:var(--text-2);">DAY</div>' : ''}
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(p.title)}</div>
+          ${p.location ? `<div style="font-size:12px;color:var(--text-2);">${escapeHtml(p.location)}</div>` : ''}
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
   }
 
   html += `</div>`;
@@ -4810,6 +4941,7 @@ async function openFinancePanel() {
           </div>
         </div>
       </div>
+      <div id="financeCategoryBreakdown" style="padding:0 16px 16px;"></div>
       <div style="padding:0 16px;display:flex;flex-direction:column;gap:6px;">
         <button class="pill-g" onclick="exportGigsCSV()">Export gigs (CSV)</button>
         <button class="pill-g" onclick="exportExpensesCSV()">Export expenses (CSV)</button>
@@ -4819,9 +4951,72 @@ async function openFinancePanel() {
       </div>`;
 
     body.innerHTML = html;
+    renderFinanceCategoryBreakdown();
   } catch (err) {
     console.error('Finance panel error:', err);
     body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load earnings</div>';
+  }
+}
+
+async function renderFinanceCategoryBreakdown() {
+  const container = document.getElementById('financeCategoryBreakdown');
+  if (!container) return;
+  try {
+    const res = await fetch('/api/expenses');
+    if (!res.ok) return;
+    const data = await res.json();
+    const expenses = data.expenses || [];
+    if (expenses.length === 0) { container.innerHTML = ''; return; }
+
+    // Filter to current UK tax year (6 Apr - 5 Apr)
+    const now = new Date();
+    const taxYearStart = new Date(now.getMonth() < 3 || (now.getMonth() === 3 && now.getDate() < 6)
+      ? now.getFullYear() - 1 : now.getFullYear(), 3, 6);
+    const taxYearEnd = new Date(taxYearStart.getFullYear() + 1, 3, 6);
+
+    const inYear = expenses.filter(e => {
+      const d = new Date(e.date);
+      return d >= taxYearStart && d < taxYearEnd;
+    });
+    if (inYear.length === 0) { container.innerHTML = ''; return; }
+
+    const totals = {};
+    let grand = 0;
+    inYear.forEach(e => {
+      const cat = (e.category || 'Other').trim() || 'Other';
+      const amt = parseFloat(e.amount) || 0;
+      totals[cat] = (totals[cat] || 0) + amt;
+      grand += amt;
+    });
+    const rows = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+
+    let html = `<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;">
+      <span>HMRC category breakdown</span>
+      <span style="font-weight:500;text-transform:none;letter-spacing:0;font-size:10px;color:var(--text-3);">${taxYearStart.getFullYear()}/${(taxYearStart.getFullYear() + 1).toString().slice(2)}</span>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:4px 12px;">`;
+    rows.forEach(([cat, total], i) => {
+      const pct = grand > 0 ? Math.round((total / grand) * 100) : 0;
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;${i < rows.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}font-size:12px;">
+        <div style="flex:1;min-width:0;">
+          <div style="color:var(--text);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(cat)}</div>
+          <div style="height:3px;background:var(--bg,#0D1117);border-radius:2px;margin-top:4px;overflow:hidden;max-width:140px;">
+            <div style="width:${pct}%;height:100%;background:var(--accent);"></div>
+          </div>
+        </div>
+        <div style="text-align:right;margin-left:12px;">
+          <div style="color:var(--text);font-weight:600;">£${total.toFixed(0)}</div>
+          <div style="color:var(--text-3);font-size:10px;">${pct}%</div>
+        </div>
+      </div>`;
+    });
+    html += `</div>
+      <div style="font-size:10px;color:var(--text-3);margin-top:6px;line-height:1.4;">
+        Totals roll into the matching HMRC SA103 (self-employment) box at tax time.
+      </div>`;
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = '';
   }
 }
 
@@ -4973,8 +5168,9 @@ function markInvoiceAsPaid(invoiceId) {
 }
 
 function downloadInvoicePDF(invoiceId) {
-  // TODO: implement PDF download
-  alert('PDF download coming soon');
+  // Open the server-rendered printable invoice in a new tab; it auto-triggers
+  // the browser print dialog so the user can save as PDF.
+  window.open(`/api/print/invoice/${encodeURIComponent(invoiceId)}`, '_blank');
 }
 
 function chaseInvoicePayment(invoiceId) {

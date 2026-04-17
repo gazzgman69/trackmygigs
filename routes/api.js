@@ -1492,6 +1492,109 @@ router.get('/print/gigs', async (req, res) => {
   }
 });
 
+router.get('/print/invoice/:id', async (req, res) => {
+  try {
+    const userR = await db.query(
+      `SELECT display_name, name, business_address, vat_number, bank_details
+       FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const me = userR.rows[0] || {};
+
+    const invR = await db.query(
+      `SELECT i.*, g.venue_name AS g_venue, g.date AS g_date, g.band_name AS g_band
+       FROM invoices i
+       LEFT JOIN gigs g ON i.gig_id = g.id
+       WHERE i.id = $1 AND i.user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (invR.rows.length === 0) return res.status(404).send('Invoice not found');
+    const inv = invR.rows[0];
+
+    const fromName = me.display_name || me.name || 'TrackMyGigs user';
+    const fromMetaBits = [];
+    if (me.business_address) fromMetaBits.push(_printEscape(me.business_address).replace(/\n/g, '<br>'));
+    if (me.vat_number) fromMetaBits.push(`VAT: ${_printEscape(me.vat_number)}`);
+
+    const billTo = inv.band_name || inv.g_band || '';
+    const invDate = _fmtDate(inv.created_at || new Date());
+    const dueDate = inv.due_date ? _fmtDate(inv.due_date) : (inv.payment_terms || 'On receipt');
+    const desc = inv.description || (inv.g_venue
+      ? `Performance fee \u00b7 ${inv.g_venue}${inv.g_date ? ' \u00b7 ' + _fmtDate(inv.g_date) : ''}`
+      : 'Performance fee');
+    const amount = _gbp(inv.amount || 0);
+
+    const venueLine = inv.venue_name || inv.g_venue || '';
+    const venueRow = venueLine
+      ? `<tr><td colspan="2" style="padding:4px 6px 12px;font-size:11px;color:#666;">${_printEscape(venueLine)}${inv.g_date ? ' \u00b7 ' + _printEscape(_fmtDate(inv.g_date)) : ''}</td></tr>`
+      : '';
+
+    const bankBlock = me.bank_details
+      ? `<div style="margin-top:18px;padding:12px;background:#f6f7f9;border-radius:6px;">
+           <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#777;margin-bottom:6px;">Payment details</div>
+           <div style="font-size:12px;color:#111;white-space:pre-line;line-height:1.5;">${_printEscape(me.bank_details)}</div>
+         </div>`
+      : '';
+
+    const body = `
+      <div style="max-width:680px;margin:0 auto;color:#111;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;">
+          <div>
+            <div style="font-size:22px;font-weight:800;color:#111;">${_printEscape(fromName)}</div>
+            <div style="font-size:11px;color:#555;margin-top:4px;line-height:1.5;">${fromMetaBits.join('<br>')}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:28px;font-weight:900;letter-spacing:2px;color:#111;">INVOICE</div>
+            <div style="font-size:12px;color:#555;margin-top:4px;">${_printEscape(inv.invoice_number || 'INV-001')}</div>
+            <div style="font-size:11px;color:#555;margin-top:2px;">${_printEscape(invDate)}</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px;padding:12px;background:#f6f7f9;border-radius:6px;">
+          <div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#777;">Bill to</div>
+            <div style="font-size:13px;font-weight:600;color:#111;margin-top:4px;">${_printEscape(billTo)}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#777;">Payment due</div>
+            <div style="font-size:13px;font-weight:600;color:#111;margin-top:4px;">${_printEscape(dueDate)}</div>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:18px;">
+          <thead>
+            <tr style="border-bottom:2px solid #111;">
+              <th style="text-align:left;padding:8px 6px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#555;">Description</th>
+              <th style="text-align:right;padding:8px 6px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#555;width:110px;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom:1px solid #e5e7eb;">
+              <td style="padding:12px 6px;font-size:13px;color:#111;">${_printEscape(desc)}</td>
+              <td style="padding:12px 6px;text-align:right;font-size:13px;color:#111;font-weight:600;">${_printEscape(amount)}</td>
+            </tr>
+            ${venueRow}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td style="padding:14px 6px 4px;text-align:right;font-size:13px;color:#555;">Total due</td>
+              <td style="padding:14px 6px 4px;text-align:right;font-size:20px;font-weight:800;color:#111;">${_printEscape(amount)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        ${bankBlock}
+        ${inv.notes ? `<div style="margin-top:14px;font-size:11px;color:#555;white-space:pre-line;">${_printEscape(inv.notes)}</div>` : ''}
+        <div style="margin-top:22px;padding-top:14px;border-top:1px solid #e5e7eb;font-size:10px;color:#888;text-align:center;">
+          Generated with TrackMyGigs \u00b7 trackmygigs.app
+        </div>
+      </div>`;
+
+    res.set('Content-Type', 'text/html; charset=utf-8')
+      .send(printPage(`Invoice ${inv.invoice_number || ''} \u00b7 TrackMyGigs`, body));
+  } catch (err) {
+    console.error('Print invoice error:', err);
+    res.status(500).send('Failed to build invoice PDF');
+  }
+});
+
 router.get('/print/finance', async (req, res) => {
   try {
     const userR = await db.query('SELECT display_name, name FROM users WHERE id = $1', [req.user.id]);
@@ -1513,7 +1616,7 @@ router.get('/print/finance', async (req, res) => {
         [req.user.id, taxYearStart, taxYearEnd]
       ),
       db.query(
-        `SELECT date, description, category, amount FROM expenses
+        `SELECT date, vendor AS description, category, amount FROM receipts
          WHERE user_id = $1 AND date >= $2 AND date <= $3
          ORDER BY date ASC`,
         [req.user.id, taxYearStart, taxYearEnd]
@@ -1545,6 +1648,21 @@ router.get('/print/finance', async (req, res) => {
         </tr>`).join('')
       : `<tr><td colspan="4" style="text-align:center;color:#888;padding:20px;">No expenses in this tax year</td></tr>`;
 
+    // HMRC category subtotals (aligned to SA103)
+    const catTotals = {};
+    expenses.forEach(e => {
+      const k = (e.category || 'Other').trim() || 'Other';
+      catTotals[k] = (catTotals[k] || 0) + (Number(e.amount) || 0);
+    });
+    const catRows = Object.keys(catTotals).length
+      ? Object.entries(catTotals)
+          .sort((a, b) => b[1] - a[1])
+          .map(([cat, total]) => `<tr>
+            <td>${_printEscape(cat)}</td>
+            <td class="right">${_printEscape(_gbp(total))}</td>
+          </tr>`).join('')
+      : '';
+
     const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     const owner = me.display_name || me.name || 'TrackMyGigs user';
     const body = `
@@ -1568,6 +1686,11 @@ router.get('/print/finance', async (req, res) => {
         <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="right">Amount</th></tr></thead>
         <tbody>${expenseRows}</tbody>
       </table>
+      ${catRows ? `<div class="section-title">HMRC category totals (SA103)</div>
+        <table>
+          <thead><tr><th>Category</th><th class="right">Total</th></tr></thead>
+          <tbody>${catRows}</tbody>
+        </table>` : ''}
       <div class="totals"><span>Net for tax year ${_printEscape(taxYearLabel)}</span><span>${_printEscape(_gbp(net))}</span></div>
       <div class="meta" style="margin-top:18px;">Figures are indicative. This is not a replacement for filing a tax return. Keep source receipts and invoices for HMRC records.</div>`;
     res.set('Content-Type', 'text/html; charset=utf-8').send(printPage('Finance summary \u00b7 TrackMyGigs', body));

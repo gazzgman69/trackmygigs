@@ -224,6 +224,65 @@ router.get('/events', async (req, res) => {
 });
 
 // Import a calendar event as a gig
+// Lightweight events feed for rendering pins on the Calendar month/week views.
+// Returns ALL events in a date range (not filtered by gig-nudge score).
+// Query: ?start=YYYY-MM-DD&end=YYYY-MM-DD (defaults to today..+35 days).
+router.get('/pins', async (req, res) => {
+  try {
+    const auth = await getGoogleAuth(req.user.id);
+    if (!auth) return res.json({ pins: [], connected: false });
+
+    const start = req.query.start ? new Date(req.query.start) : new Date();
+    const end = req.query.end ? new Date(req.query.end) : new Date(Date.now() + 35 * 24 * 60 * 60 * 1000);
+
+    const calendar = google.calendar({ version: 'v3', auth });
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: start.toISOString(),
+      timeMax: end.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 250,
+    });
+
+    // Exclude events already imported as gigs (they render as gigs already)
+    const existingGigs = await db.query(
+      "SELECT source FROM gigs WHERE user_id = $1 AND source LIKE 'gcal:%'",
+      [req.user.id]
+    );
+    const importedIds = new Set(existingGigs.rows.map(g => g.source.replace('gcal:', '')));
+
+    const pins = (response.data.items || [])
+      .filter(ev => !importedIds.has(ev.id))
+      .map(ev => {
+        const s = ev.start?.dateTime || ev.start?.date;
+        const e = ev.end?.dateTime || ev.end?.date;
+        const sd = s ? new Date(s) : null;
+        return {
+          id: ev.id,
+          title: ev.summary || 'Untitled event',
+          location: ev.location || null,
+          date: sd
+            ? `${sd.getFullYear()}-${String(sd.getMonth() + 1).padStart(2, '0')}-${String(sd.getDate()).padStart(2, '0')}`
+            : null,
+          start: s,
+          end: e,
+          start_time: sd && ev.start?.dateTime ? sd.toTimeString().substring(0, 5) : null,
+          all_day: !!(ev.start?.date && !ev.start?.dateTime),
+        };
+      })
+      .filter(p => p.date);
+
+    res.json({ pins, connected: true });
+  } catch (error) {
+    console.error('Calendar pins error:', error);
+    if (error.code === 401 || error.message?.includes('invalid_grant')) {
+      return res.json({ pins: [], connected: false, needs_reauth: true });
+    }
+    res.status(500).json({ error: 'Failed to fetch calendar pins' });
+  }
+});
+
 router.post('/import', async (req, res) => {
   try {
     const { event_id, title, location, start, end, fee, band_name, dress_code } = req.body;
