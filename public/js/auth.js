@@ -151,6 +151,24 @@ function showApp(user) {
 async function logout() {
   try {
     await fetch('/auth/logout', { method: 'POST' });
+    // S11-07: Clear all per-user caches before reload so if another user
+    // signs in before the page fully rebuilds, we never render stale data
+    // belonging to the logged-out user.
+    window._cachedStats = null;
+    window._cachedStatsTime = 0;
+    window._cachedStatsUser = null;
+    window._cachedGigs = null;
+    window._cachedGigsTime = 0;
+    window._cachedInvoices = null;
+    window._cachedInvoicesTime = 0;
+    window._cachedOffers = null;
+    window._cachedOffersTime = 0;
+    window._cachedProfile = null;
+    window._cachedProfileTime = 0;
+    window._cachedBlocked = null;
+    window._cachedBlockedTime = 0;
+    window._invoicesFullList = null;
+    window._invoicesInitialFilter = null;
     location.reload();
   } catch (error) {
     console.error('Logout error:', error);

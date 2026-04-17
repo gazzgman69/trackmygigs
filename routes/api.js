@@ -1070,7 +1070,15 @@ router.get('/stats', async (req, res) => {
       draft_total: parseFloat(draftCountResult.rows[0]?.total || 0),
       overdue_invoice_preview: overdueInvoice || null,
       draft_invoice_preview: draftInvoice || null,
-      unread_notifications: parseInt(unreadResult.rows[0]?.count || 0),
+      // S11-05: unread_notifications is a superset of unread_messages.
+      // It combines chat unreads + pending offers + overdue invoices so the
+      // header dot lights up for anything the user needs to attend to, not
+      // just chat. Previously both fields were identical which meant paid
+      // invoices, incoming offers, and calendar imports never triggered the dot.
+      unread_notifications:
+        parseInt(unreadResult.rows[0]?.count || 0) +
+        parseInt(offersResult.rows[0]?.count || 0) +
+        parseInt(overdueCountResult.rows[0]?.count || 0),
       unread_messages: parseInt(unreadResult.rows[0]?.count || 0),
       offer_count: parseInt(offersResult.rows[0]?.count || 0),
       network_offers: parseInt(networkOffersResult.rows[0]?.count || 0),

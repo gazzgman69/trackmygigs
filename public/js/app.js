@@ -160,18 +160,26 @@ function updateAppHeader() {
 // prefetchGigs replaced by prefetchAllData above
 
 function buildSkeletonHTML() {
-  const pulse = 'background:var(--card);border-radius:var(--rs);animation:pulse 1.5s ease-in-out infinite;';
+  // S11-08: Skeleton must mirror the real Home layout so the content doesn't
+  // jump when stats resolve. Order here matches buildHomeHTML(): next-gig
+  // card, alert tile row (3 tiles), messages preview, quick-stats row,
+  // forecast chart. Heights and margins are set to match the real elements.
+  const pulse = 'background:var(--card);border-radius:var(--r);animation:pulse 1.5s ease-in-out infinite;';
+  const pulseSm = 'background:var(--card);border-radius:var(--rs);animation:pulse 1.5s ease-in-out infinite;';
   return `
     <style>@keyframes pulse{0%,100%{opacity:.4}50%{opacity:.8}}</style>
-    <div style="margin:8px 16px;${pulse}height:90px;border-radius:var(--r);"></div>
-    <div style="display:flex;gap:6px;margin:8px 16px;">
-      <div style="flex:1;${pulse}height:64px;"></div>
-      <div style="flex:1;${pulse}height:64px;"></div>
+    <div style="margin:0 16px 8px;${pulse}height:88px;"></div>
+    <div style="display:flex;gap:6px;margin:0 16px 6px;">
+      <div style="flex:1;${pulseSm}height:54px;"></div>
+      <div style="flex:1;${pulseSm}height:54px;"></div>
+      <div style="flex:1;${pulseSm}height:54px;"></div>
     </div>
-    <div style="display:flex;gap:6px;margin:8px 16px;">
-      <div style="flex:1;${pulse}height:60px;"></div>
-      <div style="flex:1;${pulse}height:60px;"></div>
-    </div>`;
+    <div style="margin:0 16px 8px;${pulseSm}height:56px;"></div>
+    <div style="display:flex;gap:6px;margin:0 16px 8px;">
+      <div style="flex:1;${pulseSm}height:64px;"></div>
+      <div style="flex:1;${pulseSm}height:64px;"></div>
+    </div>
+    <div style="margin:0 16px 8px;${pulseSm}height:72px;"></div>`;
 }
 
 function setupTextScaling() {
@@ -284,9 +292,15 @@ function showScreen(screenName) {
   }
 }
 
+// S11-07: Stats cache must belong to a specific user so account switches
+// (dev-login, log out / log back in) never render the previous user's data.
+// _cachedStatsUser tracks who the cache belongs to and the cache is
+// invalidated whenever it doesn't match the currently logged-in user id.
 async function fetchStatsWithCache(forceRefresh) {
   const now = Date.now();
-  if (!forceRefresh && window._cachedStats && (now - window._cachedStatsTime) < STATS_CACHE_TTL) {
+  const currentUserId = window._currentUser?.id || null;
+  const cacheMatchesUser = window._cachedStatsUser && window._cachedStatsUser === currentUserId;
+  if (!forceRefresh && cacheMatchesUser && window._cachedStats && (now - window._cachedStatsTime) < STATS_CACHE_TTL) {
     return window._cachedStats;
   }
   const res = await fetch('/api/stats');
@@ -294,14 +308,17 @@ async function fetchStatsWithCache(forceRefresh) {
   const stats = await res.json();
   window._cachedStats = stats;
   window._cachedStatsTime = now;
+  window._cachedStatsUser = currentUserId;
   return stats;
 }
 
 async function renderHomeScreen() {
   const content = document.getElementById('homeScreen');
+  const currentUserId = window._currentUser?.id || null;
+  const cacheMatchesUser = window._cachedStatsUser && window._cachedStatsUser === currentUserId;
 
-  // If we have cached stats, render immediately (no loading flash)
-  if (window._cachedStats && (Date.now() - window._cachedStatsTime) < STATS_CACHE_TTL) {
+  // If we have fresh cached stats for THIS user, render immediately (no loading flash)
+  if (cacheMatchesUser && window._cachedStats && (Date.now() - window._cachedStatsTime) < STATS_CACHE_TTL) {
     buildHomeHTML(content, window._cachedStats);
     return;
   }
@@ -314,13 +331,26 @@ async function renderHomeScreen() {
     buildHomeHTML(content, stats);
   } catch (err) {
     console.error('Home screen error:', err);
+    // S11-09: Give the user a way out. A retry button that re-fetches the
+    // stats with the cache bypassed is far kinder than "Check your connection
+    // and refresh" with no affordance.
     content.innerHTML = `
       <div style="padding:40px 20px;text-align:center;">
         <div style="font-size:32px;margin-bottom:8px;">&#9888;&#65039;</div>
-        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load home</div>
-        <div style="font-size:13px;color:var(--text-2);">Check your connection and refresh</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn&#x2019;t load home</div>
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:16px;">Check your connection and try again.</div>
+        <button onclick="retryHomeScreen()" style="background:var(--accent);color:#000;border:none;border-radius:20px;padding:10px 20px;font-size:13px;font-weight:700;cursor:pointer;">Try again</button>
       </div>`;
   }
+}
+
+// S11-09: Companion helper for the retry button. Clears stale cache and
+// re-renders the home screen from scratch.
+function retryHomeScreen() {
+  window._cachedStats = null;
+  window._cachedStatsTime = 0;
+  window._cachedStatsUser = null;
+  renderHomeScreen();
 }
 
 function buildHomeHTML(content, stats) {
@@ -395,7 +425,7 @@ function buildHomeHTML(content, stats) {
 
     if (stats.overdue_invoices > 0) {
       html += `
-      <div onclick="showScreen('invoices')" style="flex:1;background:var(--danger-dim);border:1px solid rgba(248,81,73,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
+      <div onclick="goToInvoicesFiltered('overdue')" style="flex:1;background:var(--danger-dim);border:1px solid rgba(248,81,73,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
         <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📄 Invoice</div>
         <div style="font-size:11px;font-weight:600;color:var(--danger);">£${stats.overdue_total} overdue</div>
         <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.overdue_invoices} invoice${stats.overdue_invoices === 1 ? '' : 's'}</div>
@@ -404,7 +434,7 @@ function buildHomeHTML(content, stats) {
 
     if (stats.draft_invoices > 0) {
       html += `
-      <div onclick="showScreen('invoices')" style="flex:1;background:var(--info-dim);border:1px solid rgba(88,166,255,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
+      <div onclick="goToInvoicesFiltered('draft')" style="flex:1;background:var(--info-dim);border:1px solid rgba(88,166,255,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
         <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📄 Invoice</div>
         <div style="font-size:11px;font-weight:600;color:var(--info);">£${stats.draft_total} draft</div>
         <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.draft_invoices} ready</div>
@@ -1690,6 +1720,21 @@ function buildInvoicesHTML(content, invoices) {
     const draft = invoices.filter(i => i.status === 'draft').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
     const sent = invoices.filter(i => i.status === 'sent').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
 
+    // S11-06: Honour initial filter set by Home-screen invoice tiles. The tiles
+    // set window._invoicesInitialFilter before calling showScreen('invoices'),
+    // and we consume-and-clear it here so it only applies on first render.
+    const initialFilter = window._invoicesInitialFilter || 'all';
+    window._invoicesInitialFilter = null;
+    // Stash the full list so filterInvoicesByStatus can re-filter without refetching.
+    window._invoicesFullList = invoices;
+
+    const statuses = ['all', 'overdue', 'draft', 'sent', 'paid'];
+    const chipsHtml = statuses.map(s => {
+      const label = s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1);
+      const cls = s === initialFilter ? 'filter-badge ac' : 'filter-badge';
+      return `<button class="${cls}" data-status="${s}" onclick="filterInvoicesByStatus('${s}')">${label}</button>`;
+    }).join('');
+
     let html = `
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
         <div>
@@ -1699,20 +1744,41 @@ function buildInvoicesHTML(content, invoices) {
         <button onclick="openPanel('panel-invoice');initInvoicePanel();" style="background:var(--accent);color:#000;border:none;border-radius:24px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;">+ New</button>
       </div>
       <div style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
-        <button class="filter-badge ac" onclick="filterInvoicesByStatus('all')">All</button>
-        <button class="filter-badge" onclick="filterInvoicesByStatus('overdue')">Overdue</button>
-        <button class="filter-badge" onclick="filterInvoicesByStatus('draft')">Draft</button>
-        <button class="filter-badge" onclick="filterInvoicesByStatus('sent')">Sent</button>
-        <button class="filter-badge" onclick="filterInvoicesByStatus('paid')">Paid</button>
+        ${chipsHtml}
       </div>
-      <div id="invoicesList" style="padding:0 16px;">`;
+      <div id="invoicesList" style="padding:0 16px;"></div>
+      <div style="padding:0 16px;margin-top:12px;">
+        <button onclick="openStandaloneInvoice()" class="pill-g">Create standalone invoice</button>
+      </div>`;
 
-    invoices.forEach(inv => {
-      const dotColor = inv.status === 'paid' ? 'var(--success)' :
-                       inv.status === 'overdue' ? 'var(--danger)' :
-                       inv.status === 'draft' ? 'var(--info)' : 'var(--warning)';
+    content.innerHTML = html;
+    renderInvoicesList(initialFilter);
+}
 
-      html += `
+// S11-06: Render the invoice list filtered by status. Called by both the initial
+// render and filterInvoicesByStatus on chip clicks. Pulls from the cached full
+// list so no refetch is needed.
+function renderInvoicesList(status) {
+  const listEl = document.getElementById('invoicesList');
+  if (!listEl) return;
+  const invoices = window._invoicesFullList || [];
+  const filtered = status === 'all' ? invoices : invoices.filter(i => i.status === status);
+
+  if (filtered.length === 0) {
+    const emptyLabel = status === 'all' ? 'No invoices yet' : `No ${status} invoices`;
+    listEl.innerHTML = `
+      <div style="padding:32px 20px;text-align:center;color:var(--text-2);font-size:13px;">
+        ${emptyLabel}
+      </div>`;
+    return;
+  }
+
+  let html = '';
+  filtered.forEach(inv => {
+    const dotColor = inv.status === 'paid' ? 'var(--success)' :
+                     inv.status === 'overdue' ? 'var(--danger)' :
+                     inv.status === 'draft' ? 'var(--info)' : 'var(--warning)';
+    html += `
       <div class="inv-i" onclick="openInvoiceDetail('${inv.id}')">
         <div class="inv-dot" style="background:${dotColor};"></div>
         <div style="flex:1;min-width:0;">
@@ -1724,20 +1790,26 @@ function buildInvoicesHTML(content, invoices) {
           <div style="font-size:10px;color:var(--text-2);margin-top:2px;text-transform:capitalize;">${inv.status}</div>
         </div>
       </div>`;
-    });
-
-    html += `</div>
-      <div style="padding:0 16px;margin-top:12px;">
-        <button onclick="openStandaloneInvoice()" class="pill-g">Create standalone invoice</button>
-      </div>`;
-
-    content.innerHTML = html;
+  });
+  listEl.innerHTML = html;
 }
 
 function filterInvoicesByStatus(status) {
-  document.querySelectorAll('.filter-badge').forEach(b => b.classList.remove('ac'));
-  event.target.classList.add('ac');
-  // TODO: implement filtering
+  // S11-06: Wire chips to real filtering. Use data-status on the chip so we
+  // don't depend on event.target (which breaks if onclick is triggered
+  // programmatically). Falls through to status arg if attribute missing.
+  document.querySelectorAll('.filter-badge').forEach(b => {
+    if (b.dataset.status === status) b.classList.add('ac');
+    else b.classList.remove('ac');
+  });
+  renderInvoicesList(status);
+}
+
+// S11-06: Helper the Home invoice tiles call. Sets the initial filter, then
+// navigates to the invoices screen. buildInvoicesHTML consumes the filter.
+function goToInvoicesFiltered(status) {
+  window._invoicesInitialFilter = status;
+  showScreen('invoices');
 }
 
 async function openInvoiceDetail(invoiceId) {
