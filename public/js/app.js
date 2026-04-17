@@ -2450,6 +2450,13 @@ function buildProfileHTML(content, profile) {
           <span style="color:var(--text);font-size:14px;">Google Calendar</span>
           <span style="color:var(--accent);font-size:16px;">\u203A</span>
         </div>
+        <div onclick="openMapsPreferencePicker()" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text);font-size:14px;">Preferred maps app</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:12px;color:var(--text-2);">${(() => { const p = (typeof getMapsPreference === 'function') ? getMapsPreference() : null; return p === 'google' ? 'Google Maps' : p === 'apple' ? 'Apple Maps' : p === 'waze' ? 'Waze' : 'Ask each time'; })()}</span>
+            <span style="color:var(--accent);font-size:16px;">\u203A</span>
+          </span>
+        </div>
         <div style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);">
           <div style="font-size:14px;color:var(--text);margin-bottom:10px;">Colour theme</div>
           <div style="display:flex;gap:12px;justify-content:center;">
@@ -6448,10 +6455,139 @@ async function submitCancelDep(offerId) {
 }
 
 // Open directions to an address using the user's preferred nav app
+// Maps preference: 'google' | 'apple' | 'waze' | null (null = ask every time)
+// Stored in localStorage so the choice is per-device. If the user wants to
+// change it they can either tap "Change maps app" in Profile or clear the
+// stored value to trigger the chooser again.
+function getMapsPreference() {
+  const stored = localStorage.getItem('preferredMapsApp');
+  return (stored === 'google' || stored === 'apple' || stored === 'waze') ? stored : null;
+}
+
+function setMapsPreference(app) {
+  if (app === 'clear' || app === null) {
+    localStorage.removeItem('preferredMapsApp');
+  } else if (app === 'google' || app === 'apple' || app === 'waze') {
+    localStorage.setItem('preferredMapsApp', app);
+  }
+}
+
+function launchMapsApp(app, address) {
+  const encoded = encodeURIComponent(address);
+  let url;
+  if (app === 'apple') {
+    // maps.apple.com opens Apple Maps on iOS directly; on non-iOS it shows a
+    // landing page so users who pick wrong get a soft fallback rather than a crash.
+    url = `https://maps.apple.com/?daddr=${encoded}`;
+  } else if (app === 'waze') {
+    url = `https://waze.com/ul?q=${encoded}&navigate=yes`;
+  } else {
+    url = `https://www.google.com/maps/dir/?api=1&destination=${encoded}`;
+  }
+  window.open(url, '_blank');
+}
+
 function openDirections(address) {
   if (!address) return;
-  const encoded = encodeURIComponent(address);
-  window.open(`https://www.google.com/maps/dir/?api=1&destination=${encoded}`, '_blank');
+  const pref = getMapsPreference();
+  if (pref) {
+    launchMapsApp(pref, address);
+    return;
+  }
+  showMapsChooser(address);
+}
+
+function showMapsChooser(address) {
+  // Remove any existing chooser first so rapid taps don't stack overlays
+  const existing = document.getElementById('mapsChooserOverlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'mapsChooserOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn .15s ease-out;';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  // Safe-attr version of the address for inline handlers
+  const safeAddr = String(address).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+  overlay.innerHTML = `
+    <div style="width:100%;max-width:420px;background:var(--surface);border-top-left-radius:18px;border-top-right-radius:18px;border-top:1px solid var(--border);padding:18px 18px 24px;animation:slideUp .2s ease-out;">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
+      <div style="font-size:15px;font-weight:700;color:var(--text);text-align:center;margin-bottom:4px;">Open directions in</div>
+      <div style="font-size:12px;color:var(--text-2);text-align:center;margin-bottom:16px;">Pick an app. We'll remember it next time if you tick the box below.</div>
+      <button onclick="pickMapsApp('google','${safeAddr}')" class="pill-o" style="width:100%;justify-content:flex-start;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">
+        <span style="font-size:20px;">🗺️</span><span style="font-size:14px;font-weight:600;">Google Maps</span>
+      </button>
+      <button onclick="pickMapsApp('apple','${safeAddr}')" class="pill-o" style="width:100%;justify-content:flex-start;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">
+        <span style="font-size:20px;">🍎</span><span style="font-size:14px;font-weight:600;">Apple Maps</span>
+      </button>
+      <button onclick="pickMapsApp('waze','${safeAddr}')" class="pill-o" style="width:100%;justify-content:flex-start;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px;">
+        <span style="font-size:20px;">🚗</span><span style="font-size:14px;font-weight:600;">Waze</span>
+      </button>
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 4px;cursor:pointer;">
+        <input type="checkbox" id="mapsRememberChoice" checked style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;">
+        <span style="font-size:13px;color:var(--text-2);">Remember my choice</span>
+      </label>
+      <button onclick="document.getElementById('mapsChooserOverlay').remove()" style="width:100%;background:none;border:none;color:var(--text-2);padding:12px;margin-top:4px;font-size:14px;cursor:pointer;">Cancel</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function pickMapsApp(app, address) {
+  const remember = document.getElementById('mapsRememberChoice')?.checked;
+  if (remember) setMapsPreference(app);
+  const overlay = document.getElementById('mapsChooserOverlay');
+  if (overlay) overlay.remove();
+  launchMapsApp(app, address);
+}
+
+function openMapsPreferencePicker() {
+  const current = getMapsPreference();
+  const existing = document.getElementById('mapsPrefPickerOverlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'mapsPrefPickerOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:flex-end;justify-content:center;';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const row = (value, label, emoji) => {
+    const active = current === value;
+    const neutralActive = !current && value === 'ask';
+    const isSelected = active || neutralActive;
+    return `
+      <button onclick="applyMapsPreference('${value}')" class="pill-o" style="width:100%;justify-content:space-between;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;${isSelected ? 'border-color:var(--accent);background:var(--accent-dim);' : ''}">
+        <span style="display:flex;align-items:center;gap:12px;"><span style="font-size:20px;">${emoji}</span><span style="font-size:14px;font-weight:600;">${label}</span></span>
+        ${isSelected ? '<span style="color:var(--accent);font-size:16px;">✓</span>' : ''}
+      </button>`;
+  };
+
+  overlay.innerHTML = `
+    <div style="width:100%;max-width:420px;background:var(--surface);border-top-left-radius:18px;border-top-right-radius:18px;border-top:1px solid var(--border);padding:18px 18px 24px;">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
+      <div style="font-size:15px;font-weight:700;color:var(--text);text-align:center;margin-bottom:4px;">Preferred maps app</div>
+      <div style="font-size:12px;color:var(--text-2);text-align:center;margin-bottom:16px;">Used when you tap a venue address.</div>
+      ${row('google','Google Maps','🗺️')}
+      ${row('apple','Apple Maps','🍎')}
+      ${row('waze','Waze','🚗')}
+      ${row('ask','Ask me each time','❓')}
+      <button onclick="document.getElementById('mapsPrefPickerOverlay').remove()" style="width:100%;background:none;border:none;color:var(--text-2);padding:12px;margin-top:4px;font-size:14px;cursor:pointer;">Close</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function applyMapsPreference(value) {
+  if (value === 'ask') {
+    setMapsPreference('clear');
+  } else {
+    setMapsPreference(value);
+  }
+  const overlay = document.getElementById('mapsPrefPickerOverlay');
+  if (overlay) overlay.remove();
+  // Re-render profile if open so the row label updates
+  if (typeof renderProfileScreen === 'function') renderProfileScreen();
 }
 
 // Expose dep flow helpers
