@@ -3105,6 +3105,11 @@ async function renderPubCalShare() {
     const origin = window.location.origin;
     const icsUrl = token ? `${origin}/cal/${token}.ics` : '';
     const pubUrl = token ? `${origin}/cal/${token}` : '';
+    // Slug-based availability link is always shareable (not gated by token),
+    // because anyone with a public_slug can see a calendar view at /share/:slug.
+    // Generate one on first open so the field is pre-populated instead of blank.
+    const slug = await _ensurePublicSlug();
+    const slugUrl = slug ? `${origin}/share/${slug}` : '';
 
     body.innerHTML = `
       <div style="padding:14px;">
@@ -3118,6 +3123,15 @@ async function renderPubCalShare() {
             </label>
           </div>
           <div style="font-size:12px;color:var(--text-2);line-height:1.5;">Let bookers check your availability without exposing personal details. Only the word "Busy" and date ranges are shared.</div>
+        </div>
+
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
+          <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Named availability link</div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <input type="text" value="${slugUrl || 'Generating...'}" readonly style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:12px;color:var(--text);" id="pubCalSlugInput">
+            <button onclick="shareAvailability()" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;">Share</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:6px;">Pretty URL using your profile name. Always live (no toggle required) and shows a 3-month calendar.</div>
         </div>
 
         ${enabled && token ? `
@@ -4132,6 +4146,17 @@ async function shareProfile() {
 }
 window.shareProfile = shareProfile;
 
+// Share the slug-based public availability calendar at /share/:slug.
+// This is the pretty, named link (as opposed to the rotatable /cal/:token).
+async function shareAvailability() {
+  const slug = await _ensurePublicSlug();
+  if (!slug) { showToast('Could not generate share link'); return; }
+  const name = window._currentUser?.display_name || window._currentUser?.name || 'my';
+  const url = `${location.origin}/share/${slug}`;
+  _shareOrCopy(url, `${name} availability`, `Check ${name} availability on TrackMyGigs`);
+}
+window.shareAvailability = shareAvailability;
+
 function viewEPK() {
   // Open the internal EPK editor; it includes a button to preview the public version
   openPanel('panel-epk');
@@ -4759,7 +4784,8 @@ async function openFinancePanel() {
       <div style="padding:0 16px;display:flex;flex-direction:column;gap:6px;">
         <button class="pill-g" onclick="exportGigsCSV()">Export gigs (CSV)</button>
         <button class="pill-g" onclick="exportExpensesCSV()">Export expenses (CSV)</button>
-        <button class="pill-o" onclick="alert('PDF export coming soon. CSV is ready now.')">Export PDF</button>
+        <button class="pill-o" onclick="exportGigsPDF()">Export gigs (PDF)</button>
+        <button class="pill-o" onclick="exportFinancePDF()">Export finance summary (PDF)</button>
         <button class="pill-o" onclick="alert('Receipts ZIP coming soon.')">Receipts ZIP</button>
       </div>`;
 
@@ -6845,6 +6871,21 @@ async function exportExpensesCSV() {
   }
 }
 window.exportExpensesCSV = exportExpensesCSV;
+
+// ── PDF EXPORT (browser-native Save as PDF) ─────────────────────────────────
+// The server returns a printable HTML page that auto-triggers window.print() on
+// load. The user saves as PDF from the browser's print dialog. Zero-dependency.
+
+function exportGigsPDF() {
+  // New tab so auth cookies are carried over; the server route is behind authMiddleware.
+  window.open('/api/print/gigs', '_blank', 'noopener');
+}
+window.exportGigsPDF = exportGigsPDF;
+
+function exportFinancePDF() {
+  window.open('/api/print/finance', '_blank', 'noopener');
+}
+window.exportFinancePDF = exportFinancePDF;
 
 // ── ONBOARDING TOUR ─────────────────────────────────────────────────────────
 // A simple first-run welcome shown once (gated by users.onboarded_at).

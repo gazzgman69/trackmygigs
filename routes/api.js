@@ -1405,4 +1405,176 @@ router.delete('/invoices/:id', async (req, res) => {
   }
 });
 
+// ── Printable export pages (Save as PDF via browser) ──────────────────────────
+// Zero-dependency PDF: we return a clean printable HTML page and the user hits
+// their browser Print > Save as PDF. Auto-triggers window.print() on load.
+// Scoped under /api/print so authMiddleware protects them.
+
+function _printEscape(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+const PRINT_STYLES = `
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111; margin: 24px; font-size: 12px; line-height: 1.4; }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #000; }
+  .sub { color: #555; font-size: 12px; margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+  th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #ddd; }
+  th { background: #f6f6f6; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: #333; }
+  .right { text-align: right; }
+  .totals { margin-top: 12px; border-top: 2px solid #000; padding-top: 10px; display: flex; justify-content: space-between; font-weight: 600; }
+  .meta { color: #666; font-size: 11px; margin-bottom: 14px; }
+  .section-title { font-size: 14px; font-weight: 700; margin: 20px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #000; }
+  .btn-bar { margin-bottom: 18px; }
+  .btn-bar button { background: #000; color: #fff; border: 0; padding: 8px 14px; font-size: 12px; border-radius: 4px; cursor: pointer; margin-right: 8px; }
+  @media print { .btn-bar { display: none; } body { margin: 12mm; } }
+`;
+
+function printPage(title, bodyHtml) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${_printEscape(title)}</title><style>${PRINT_STYLES}</style></head><body>
+  <div class="btn-bar"><button onclick="window.print()">Print / Save as PDF</button><button onclick="window.close()" style="background:#666;">Close</button></div>
+  ${bodyHtml}
+  <script>window.addEventListener('load', function(){ setTimeout(function(){ window.print(); }, 400); });</script>
+  </body></html>`;
+}
+
+function _gbp(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '';
+  return '\u00a3' + (Math.round(v * 100) / 100).toFixed(2);
+}
+
+function _fmtDate(d) {
+  if (!d) return '';
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt.getTime())) return String(d).slice(0, 10);
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+router.get('/print/gigs', async (req, res) => {
+  try {
+    const userR = await db.query('SELECT display_name, name FROM users WHERE id = $1', [req.user.id]);
+    const me = userR.rows[0] || {};
+    const gigsR = await db.query('SELECT * FROM gigs WHERE user_id = $1 ORDER BY date DESC', [req.user.id]);
+    const gigs = gigsR.rows;
+
+    const totalFee = gigs.reduce((s, g) => s + (Number(g.fee) || 0), 0);
+    const paidCount = gigs.filter(g => g.status === 'paid' || g.invoice_status === 'paid').length;
+
+    const rows = gigs.length
+      ? gigs.map(g => `<tr>
+          <td>${_printEscape(_fmtDate(g.date))}</td>
+          <td>${_printEscape(g.start_time || '')}</td>
+          <td>${_printEscape(g.venue_name || '')}</td>
+          <td>${_printEscape(g.act_name || g.band_name || '')}</td>
+          <td>${_printEscape(g.gig_type || '')}</td>
+          <td>${_printEscape(g.status || '')}</td>
+          <td class="right">${g.fee != null ? _printEscape(_gbp(g.fee)) : ''}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="7" style="text-align:center;color:#888;padding:20px;">No gigs yet</td></tr>`;
+
+    const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const owner = me.display_name || me.name || 'TrackMyGigs user';
+    const body = `
+      <h1>Gig log</h1>
+      <div class="sub">${_printEscape(owner)} \u00b7 exported ${_printEscape(today)}</div>
+      <div class="meta">${gigs.length} gigs total, ${paidCount} paid, total fee value ${_printEscape(_gbp(totalFee))}</div>
+      <table>
+        <thead><tr><th>Date</th><th>Time</th><th>Venue</th><th>Act</th><th>Type</th><th>Status</th><th class="right">Fee</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="totals"><span>Total fee value (all statuses)</span><span>${_printEscape(_gbp(totalFee))}</span></div>`;
+    res.set('Content-Type', 'text/html; charset=utf-8').send(printPage('Gig log \u00b7 TrackMyGigs', body));
+  } catch (err) {
+    console.error('Print gigs error:', err);
+    res.status(500).send('Failed to build print page');
+  }
+});
+
+router.get('/print/finance', async (req, res) => {
+  try {
+    const userR = await db.query('SELECT display_name, name FROM users WHERE id = $1', [req.user.id]);
+    const me = userR.rows[0] || {};
+
+    // UK tax year runs 6 April to 5 April. Work out the current tax year window.
+    const now = new Date();
+    const taxYearStartYear = now.getMonth() < 3 || (now.getMonth() === 3 && now.getDate() < 6)
+      ? now.getFullYear() - 1
+      : now.getFullYear();
+    const taxYearStart = `${taxYearStartYear}-04-06`;
+    const taxYearEnd = `${taxYearStartYear + 1}-04-05`;
+
+    const [gigsR, expensesR] = await Promise.all([
+      db.query(
+        `SELECT date, venue_name, fee, status FROM gigs
+         WHERE user_id = $1 AND date >= $2 AND date <= $3
+         ORDER BY date ASC`,
+        [req.user.id, taxYearStart, taxYearEnd]
+      ),
+      db.query(
+        `SELECT date, description, category, amount FROM expenses
+         WHERE user_id = $1 AND date >= $2 AND date <= $3
+         ORDER BY date ASC`,
+        [req.user.id, taxYearStart, taxYearEnd]
+      ).catch(() => ({ rows: [] })),
+    ]);
+
+    const gigs = gigsR.rows;
+    const expenses = expensesR.rows;
+    const totalIncome = gigs.reduce((s, g) => s + (Number(g.fee) || 0), 0);
+    const totalExpenses = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    const net = totalIncome - totalExpenses;
+    const taxYearLabel = `${String(taxYearStartYear).slice(-2)}/${String(taxYearStartYear + 1).slice(-2)}`;
+
+    const gigRows = gigs.length
+      ? gigs.map(g => `<tr>
+          <td>${_printEscape(_fmtDate(g.date))}</td>
+          <td>${_printEscape(g.venue_name || '')}</td>
+          <td>${_printEscape(g.status || '')}</td>
+          <td class="right">${g.fee != null ? _printEscape(_gbp(g.fee)) : ''}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="4" style="text-align:center;color:#888;padding:20px;">No gigs in this tax year</td></tr>`;
+
+    const expenseRows = expenses.length
+      ? expenses.map(e => `<tr>
+          <td>${_printEscape(_fmtDate(e.date))}</td>
+          <td>${_printEscape(e.description || '')}</td>
+          <td>${_printEscape(e.category || '')}</td>
+          <td class="right">${e.amount != null ? _printEscape(_gbp(e.amount)) : ''}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="4" style="text-align:center;color:#888;padding:20px;">No expenses in this tax year</td></tr>`;
+
+    const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const owner = me.display_name || me.name || 'TrackMyGigs user';
+    const body = `
+      <h1>Finance summary</h1>
+      <div class="sub">${_printEscape(owner)} \u00b7 tax year ${_printEscape(taxYearLabel)} \u00b7 exported ${_printEscape(today)}</div>
+      <table>
+        <thead><tr><th>Metric</th><th class="right">Value</th></tr></thead>
+        <tbody>
+          <tr><td>Income (gig fees)</td><td class="right">${_printEscape(_gbp(totalIncome))}</td></tr>
+          <tr><td>Expenses</td><td class="right">${_printEscape(_gbp(totalExpenses))}</td></tr>
+          <tr><td><strong>Net (taxable profit)</strong></td><td class="right"><strong>${_printEscape(_gbp(net))}</strong></td></tr>
+        </tbody>
+      </table>
+      <div class="section-title">Income \u00b7 ${gigs.length} gigs</div>
+      <table>
+        <thead><tr><th>Date</th><th>Venue</th><th>Status</th><th class="right">Fee</th></tr></thead>
+        <tbody>${gigRows}</tbody>
+      </table>
+      <div class="section-title">Expenses \u00b7 ${expenses.length} entries</div>
+      <table>
+        <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="right">Amount</th></tr></thead>
+        <tbody>${expenseRows}</tbody>
+      </table>
+      <div class="totals"><span>Net for tax year ${_printEscape(taxYearLabel)}</span><span>${_printEscape(_gbp(net))}</span></div>
+      <div class="meta" style="margin-top:18px;">Figures are indicative. This is not a replacement for filing a tax return. Keep source receipts and invoices for HMRC records.</div>`;
+    res.set('Content-Type', 'text/html; charset=utf-8').send(printPage('Finance summary \u00b7 TrackMyGigs', body));
+  } catch (err) {
+    console.error('Print finance error:', err);
+    res.status(500).send('Failed to build print page');
+  }
+});
+
 module.exports = router;
