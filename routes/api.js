@@ -1191,12 +1191,13 @@ router.get('/earnings', async (req, res) => {
       const y = now.getFullYear();
       taxYearStart = `${y}-04-06`;
       taxYearEnd = `${y + 1}-04-05`;
-      taxYearLabel = `${String(y).slice(-2)}/${String(y + 1).slice(-2)}`;
+      // S5-02: HMRC canonical format is YYYY/YY (e.g. "2026/27"), not "26/27".
+      taxYearLabel = `${y}/${String(y + 1).slice(-2)}`;
     } else {
       const y = now.getFullYear();
       taxYearStart = `${y - 1}-04-06`;
       taxYearEnd = `${y}-04-05`;
-      taxYearLabel = `${String(y - 1).slice(-2)}/${String(y).slice(-2)}`;
+      taxYearLabel = `${y - 1}/${String(y).slice(-2)}`;
     }
     // Previous tax year for year-over-year
     const prevYearStart = new Date(taxYearStart);
@@ -2143,7 +2144,8 @@ router.get('/print/finance', async (req, res) => {
     const totalIncome = gigs.reduce((s, g) => s + (Number(g.fee) || 0), 0);
     const totalExpenses = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
     const net = totalIncome - totalExpenses;
-    const taxYearLabel = `${String(taxYearStartYear).slice(-2)}/${String(taxYearStartYear + 1).slice(-2)}`;
+    // S5-02: full-year format matches /api/earnings (e.g. "2026/27").
+    const taxYearLabel = `${taxYearStartYear}/${String(taxYearStartYear + 1).slice(-2)}`;
 
     const gigRows = gigs.length
       ? gigs.map(g => `<tr>

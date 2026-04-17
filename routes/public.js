@@ -14,6 +14,47 @@ function esc(s) {
     .replace(/'/g, '&#39;');
 }
 
+// S9-06: user.instruments can be stored as a proper text[] (returned as a JS
+// array by node-postgres), a Postgres array literal string like `{Guitar,Vocal}`
+// on older rows, or a legacy comma-joined string. This helper normalises all
+// three to a clean `", "` display string so the EPK page never shows raw braces.
+function formatInstruments(val) {
+  if (val === null || val === undefined) return '';
+  if (Array.isArray(val)) return val.filter(Boolean).join(', ');
+  const s = String(val).trim();
+  if (!s) return '';
+  if (s.startsWith('{') && s.endsWith('}')) {
+    // Naive parse of `{a,"b with, comma",c}` — good enough for instrument names.
+    const inner = s.slice(1, -1);
+    if (!inner) return '';
+    const out = [];
+    let buf = '';
+    let inQuotes = false;
+    for (let i = 0; i < inner.length; i++) {
+      const c = inner[i];
+      if (c === '"' && inner[i - 1] !== '\\') { inQuotes = !inQuotes; continue; }
+      if (c === ',' && !inQuotes) { out.push(buf); buf = ''; continue; }
+      buf += c;
+    }
+    if (buf) out.push(buf);
+    return out.map(x => x.replace(/^"|"$/g, '').replace(/\\(.)/g, '$1').trim()).filter(Boolean).join(', ');
+  }
+  return s;
+}
+
+// S9-04: public EPK and share pages used to render `mailto:<raw email>` into
+// the HTML, which scrapers harvest for spam lists. Emit a base64-encoded
+// placeholder plus a tiny inline decoder that only wires up the real mailto
+// href on user interaction. Humans see a working Email button; bots see an
+// opaque string. Not a security control (it's base64, not encryption), just
+// enough friction to dodge naive scrapers.
+function emailLink(email, subject, label, extraClasses) {
+  if (!email) return '';
+  const payload = Buffer.from(`mailto:${email}?subject=${encodeURIComponent(subject || '')}`).toString('base64');
+  const cls = ['btn'].concat(extraClasses ? [extraClasses] : []).join(' ');
+  return `<a class="${cls}" href="#" data-eb64="${payload}" onclick="try{this.href=atob(this.dataset.eb64);}catch(e){}">${esc(label)}</a>`;
+}
+
 // Shared minimal styles for public pages (standalone — no app shell)
 const BASE_STYLES = `
   :root {
@@ -148,9 +189,19 @@ router.get('/share/:slug', async (req, res) => {
         <span><span class="legend-dot" style="background:#6E7681;"></span>Unavailable</span>
       </div>
       <div class="card">${monthsHtml}</div>
-      ${user.epk_bio || user.epk_photo_url ? `<div style="text-align:center;"><a class="btn btn-o" href="/epk/${esc(user.public_slug || user.id)}">View full EPK</a></div>` : ''}
+      ${
+        // S9-05: the "View full EPK" CTA used to only check epk_bio / epk_photo_url,
+        // so users who filled in a video, audio, rate card, or instrument list
+        // but no bio/photo had a working EPK page but no link to it from /share.
+        // Show the button if ANY EPK-relevant field is present.
+        (user.epk_bio || user.epk_photo_url || user.epk_video_url || user.epk_audio_url ||
+         user.rate_standard != null || user.rate_premium != null || user.rate_dep != null ||
+         user.rate_deposit_pct != null || user.rate_notes || user.instruments)
+          ? `<div style="text-align:center;"><a class="btn btn-o" href="/epk/${esc(user.public_slug || user.id)}">View full EPK</a></div>`
+          : ''
+      }
       <div style="text-align:center;margin-top:20px;">
-        <a class="btn" href="mailto:${esc(user.email || '')}?subject=${encodeURIComponent('Gig enquiry for ' + displayName)}">Enquire about a date</a>
+        ${emailLink(user.email, 'Gig enquiry for ' + displayName, 'Enquire about a date')}
       </div>`;
 
     res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} Availability`, body));
@@ -184,7 +235,7 @@ router.get('/epk/:slug', async (req, res) => {
       [user.id]
     );
 
-    const instruments = Array.isArray(user.instruments) ? user.instruments.join(', ') : (user.instruments || '');
+    const instruments = formatInstruments(user.instruments);
 
     // Rate card (all optional; show the section only if at least one value is set)
     const rateStandard = user.rate_standard != null ? Number(user.rate_standard) : null;
@@ -243,7 +294,7 @@ router.get('/epk/:slug', async (req, res) => {
 
       <div class="section-label">Book</div>
       <div class="card" style="text-align:center;">
-        <a class="btn" href="mailto:${esc(user.email || '')}?subject=${encodeURIComponent('Booking enquiry for ' + displayName)}">Email to book</a>
+        ${emailLink(user.email, 'Booking enquiry for ' + displayName, 'Email to book')}
         <a class="btn btn-o" href="/share/${esc(user.public_slug || user.id)}">See availability</a>
       </div>`;
 

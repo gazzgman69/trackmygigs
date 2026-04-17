@@ -39,7 +39,15 @@ app.use(express.static(path.join(__dirname, 'public'), {
   index: false, // prevent express.static from serving index.html for /
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      // S14-05: "no-store" told the browser not to cache at all, which
+      // defeated the service worker's offline story — the SW would serve
+      // a cached hit for /js/app.js, but the Cache-Control header forced
+      // every navigation revalidation and broke cold loads on flaky
+      // mobile networks. BUILD_ID query strings are the real cache-bust
+      // mechanism, so let the SW manage freshness. `must-revalidate`
+      // without `no-store` means browsers still respect the SW cache but
+      // always check origin on stale entries.
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
     }

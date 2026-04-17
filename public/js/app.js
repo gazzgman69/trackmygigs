@@ -60,6 +60,34 @@ function initApp(user) {
 
   // Prefetch ALL screen data in parallel so every tab opens instantly
   window._prefetchPromise = prefetchAllData();
+
+  // S14-08: honour the `?shortcut=…` URL param that PWA launcher shortcuts set.
+  // Wait a tick so the screen framework has mounted before opening a panel,
+  // then clear the param from the address bar to keep copy-paste links clean.
+  try {
+    const params = new URLSearchParams(location.search);
+    const shortcut = params.get('shortcut');
+    if (shortcut) {
+      setTimeout(() => {
+        try {
+          if (shortcut === 'new-gig' && typeof openGigWizard === 'function') {
+            openGigWizard();
+          } else if (shortcut === 'new-expense') {
+            if (typeof openPanel === 'function') openPanel('panel-receipt');
+            setTimeout(() => { if (typeof showReceiptForm === 'function') showReceiptForm('manual'); }, 150);
+          } else if (shortcut === 'invoices' && typeof showScreen === 'function') {
+            showScreen('invoices');
+          } else if (shortcut === 'finance' && typeof openPanel === 'function') {
+            openPanel('panel-finance');
+          }
+        } catch (_) { /* shortcut is a nice-to-have, never block boot */ }
+        // Strip the param so refreshes don't re-trigger the shortcut
+        params.delete('shortcut');
+        const qs = params.toString();
+        history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : '') + location.hash);
+      }, 250);
+    }
+  } catch (_) { /* ignore */ }
 }
 
 async function prefetchAllData() {
@@ -3530,7 +3558,16 @@ async function renderFinancePanel() {
     const yoyPct = data.year_over_year_pct !== undefined && data.year_over_year_pct !== null
       ? data.year_over_year_pct : null;
 
-    const fmtGBP = (n) => '£' + Math.round(Number(n) || 0).toLocaleString('en-GB');
+    // S5-03 / S5-07: consistent GBP formatting across hero, tiles, mileage, and
+    // tax-year rows. Intl.NumberFormat gives us the £ symbol, thousands
+    // separators, and pinned two decimal places (£45.50 not £45.5).
+    const _gbpFormatter = new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: 'GBP',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    const fmtGBP = (n) => _gbpFormatter.format(Number(n) || 0);
     const fmtBar = (n) => {
       const v = Math.round(Number(n) || 0);
       if (v >= 1000) return '£' + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
@@ -3564,7 +3601,7 @@ async function renderFinancePanel() {
       <div style="padding:12px 16px 16px;text-align:center;">
         <div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Tax year ${escapeHtml(taxYear)} &middot; Total invoiced</div>
         <div style="font-size:28px;font-weight:800;color:var(--text);line-height:1.1;">${fmtGBP(grossTot)}</div>
-        <div style="font-size:11px;color:var(--text-2);margin-top:4px;">${fmtGBP(paidTot)} paid &middot; ${fmtGBP(unpaidTot)} pending &middot; ${fmtGBP(overdueTot)} overdue${yoyPct !== null ? ` &middot; ${yoyPct >= 0 ? '+' : ''}${yoyPct}% YoY` : ''}</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:4px;">${fmtGBP(paidTot)} paid &middot; ${fmtGBP(unpaidTot)} pending &middot; ${fmtGBP(overdueTot)} overdue${yoyPct !== null ? ` &middot; ${yoyPct >= 0 ? '+' : ''}${yoyPct}% YoY` : ' &middot; First tax year'}</div>
         <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--bg,#0D1117);margin-top:10px;border:1px solid var(--border);">
           <div title="Paid ${fmtGBP(paidTot)}" style="width:${pctPaid.toFixed(2)}%;background:var(--success);"></div>
           <div title="Pending ${fmtGBP(unpaidTot)}" style="width:${pctUnpaid.toFixed(2)}%;background:var(--warning);"></div>
@@ -4516,16 +4553,10 @@ async function shareProfile() {
 }
 window.shareProfile = shareProfile;
 
-// Share the slug-based public availability calendar at /share/:slug.
-// This is the pretty, named link (as opposed to the rotatable /cal/:token).
-async function shareAvailability() {
-  const slug = await _ensurePublicSlug();
-  if (!slug) { showToast('Could not generate share link'); return; }
-  const name = window._currentUser?.display_name || window._currentUser?.name || 'my';
-  const url = `${location.origin}/share/${slug}`;
-  _shareOrCopy(url, `${name} availability`, `Check ${name} availability on TrackMyGigs`);
-}
-window.shareAvailability = shareAvailability;
+// S9-03: shareAvailability used to be defined twice. The second copy (further
+// down this file) shadowed this one, which left dead code and a confusing
+// diff-of-messaging. Keeping only the later definition, which has the copy the
+// promoter actually sees.
 
 function viewEPK() {
   // Open the internal EPK editor; it includes a button to preview the public version

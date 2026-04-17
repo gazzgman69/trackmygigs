@@ -37,5 +37,43 @@
       "purpose": "maskable"
     }
   ],
-  "categories": ["business", "productivity"]
+  "categories": ["business", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Log a gig",
+      "short_name": "Log gig",
+      "description": "Open the gig wizard to add a new booking",
+      "url": "/?shortcut=new-gig",
+      "icons": [
+        { "src": "/icons/icon-192.svg", "sizes": "192x192", "type": "image/svg+xml" }
+      ]
+    },
+    {
+      "name": "Log an expense",
+      "short_name": "Log expense",
+      "description": "Add a manual receipt or snap a photo",
+      "url": "/?shortcut=new-expense",
+      "icons": [
+        { "src": "/icons/icon-192.svg", "sizes": "192x192", "type": "image/svg+xml" }
+      ]
+    },
+    {
+      "name": "Send invoice",
+      "short_name": "Invoice",
+      "description": "Jump straight to the invoices panel",
+      "url": "/?shortcut=invoices",
+      "icons": [
+        { "src": "/icons/icon-192.svg", "sizes": "192x192", "type": "image/svg+xml" }
+      ]
+    },
+    {
+      "name": "Finance",
+      "short_name": "Finance",
+      "description": "View your tax year totals and HMRC export",
+      "url": "/?shortcut=finance",
+      "icons": [
+        { "src": "/icons/icon-192.svg", "sizes": "192x192", "type": "image/svg+xml" }
+      ]
+    }
+  ]
 }

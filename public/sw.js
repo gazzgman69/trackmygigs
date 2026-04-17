@@ -3,6 +3,11 @@
 const CACHE_VERSION = self.CACHE_VERSION || 'v-' + Date.now();
 const CACHE_NAME = 'trackmygigs-' + CACHE_VERSION;
 
+// S14-09: hard cap on cache entries so the non-versioned runtime cache
+// cannot grow unbounded. 120 entries covers the icon set, audio previews,
+// photo thumbnails, and the half-dozen route-split bundles with headroom.
+const CACHE_MAX_ENTRIES = 120;
+
 // Pre-cache the shell so the app still opens with no network.
 // Index HTML is NOT cached here — fresh HTML always comes from network, and the
 // offline.html fallback covers navigation when the network is unreachable.
@@ -18,6 +23,13 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
+  // S14-06: skipWaiting used to be paired with clients.claim() below, which
+  // yanked open tabs onto the new SW mid-session. That left pages that had
+  // already fetched the old /js/app.js?v=OLD talking to a SW that thought
+  // the current build was NEW, causing "Unexpected token '<'" style crashes
+  // when subsequent requests were answered from mismatched caches. We still
+  // skipWaiting so we don't leave a zombie old SW active indefinitely, but
+  // existing tabs now keep their SW until they're closed and reopened.
   self.skipWaiting();
 });
 
@@ -31,8 +43,22 @@ self.addEventListener('activate', (event) => {
       )
     )
   );
-  self.clients.claim();
+  // S14-06: removed self.clients.claim() so new tabs opened after activation
+  // get the new SW, and existing tabs finish their session on the old one.
 });
+
+// S14-09: trim the named cache back to CACHE_MAX_ENTRIES by evicting the
+// oldest keys first (request order is insertion order). Fire-and-forget —
+// callers don't need to await completion of the trim before responding.
+function trimCache(cacheName, maxEntries) {
+  caches.open(cacheName).then((cache) =>
+    cache.keys().then((keys) => {
+      if (keys.length <= maxEntries) return;
+      const excess = keys.length - maxEntries;
+      return Promise.all(keys.slice(0, excess).map((k) => cache.delete(k)));
+    })
+  );
+}
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
@@ -71,7 +97,10 @@ self.addEventListener('fetch', (event) => {
         return fetch(request).then((response) => {
           if (response.ok) {
             const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, clone);
+              trimCache(CACHE_NAME, CACHE_MAX_ENTRIES);
+            });
           }
           return response;
         });
@@ -86,7 +115,10 @@ self.addEventListener('fetch', (event) => {
       .then((response) => {
         if (response.ok) {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(request, clone);
+            trimCache(CACHE_NAME, CACHE_MAX_ENTRIES);
+          });
         }
         return response;
       })
