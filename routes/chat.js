@@ -9,34 +9,35 @@ router.use(authMiddleware);
 
 router.get('/threads', async (req, res) => {
   try {
+    // S12-07: Fold participant enrichment into the thread query so we issue
+    // a single round-trip instead of 1 + N. We aggregate matching users as a
+    // JSON array per thread via a LATERAL subquery.
     const result = await db.query(
       `SELECT t.*,
         (SELECT content FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_message,
         (SELECT created_at FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_message_at,
         (SELECT sender_id FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_sender_id,
         (SELECT COUNT(*) FROM messages WHERE thread_id = t.id AND NOT ($1 = ANY(read_by))) AS unread_count,
-        g.band_name, g.venue_name, g.date AS gig_date
+        g.band_name, g.venue_name, g.date AS gig_date,
+        COALESCE(p.participants, '[]'::jsonb) AS participants
        FROM threads t
        LEFT JOIN gigs g ON t.gig_id = g.id
+       LEFT JOIN LATERAL (
+         SELECT jsonb_agg(jsonb_build_object(
+           'id', u.id,
+           'name', u.name,
+           'email', u.email,
+           'avatar_url', u.avatar_url
+         )) AS participants
+         FROM users u
+         WHERE u.id = ANY(t.participant_ids)
+       ) p ON TRUE
        WHERE $1 = ANY(t.participant_ids)
        ORDER BY (SELECT MAX(created_at) FROM messages WHERE thread_id = t.id) DESC NULLS LAST`,
       [req.user.id]
     );
 
-    // Enrich with participant names
-    const threads = [];
-    for (const thread of result.rows) {
-      const participantResult = await db.query(
-        'SELECT id, name, email, avatar_url FROM users WHERE id = ANY($1)',
-        [thread.participant_ids]
-      );
-      threads.push({
-        ...thread,
-        participants: participantResult.rows,
-      });
-    }
-
-    res.json({ threads });
+    res.json({ threads: result.rows });
   } catch (error) {
     console.error('Get threads error:', error);
     res.status(500).json({ error: 'Failed to fetch threads' });
@@ -84,11 +85,19 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
 // ── Send a message ───────────────────────────────────────────────────────────
 
+// S12-10: Hard cap on message size. 40 kB is comfortable for anything the user
+// types by hand but blocks runaway bodies that would bloat the messages table
+// and drag out thread fetches.
+const MESSAGE_MAX_BYTES = 40 * 1024;
+
 router.post('/threads/:threadId/messages', async (req, res) => {
   try {
     const { content, attachments } = req.body;
     if (!content || !content.trim()) {
       return res.status(400).json({ error: 'Message content is required' });
+    }
+    if (Buffer.byteLength(content, 'utf8') > MESSAGE_MAX_BYTES) {
+      return res.status(413).json({ error: 'Message is too long. Please keep it under 40,000 characters.' });
     }
 
     // Verify user is a participant

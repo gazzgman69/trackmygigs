@@ -6554,7 +6554,11 @@ async function openChatInbox() {
   try {
     const resp = await fetch('/api/chat/threads');
     const data = await resp.json();
-    const threads = data.threads || [];
+    // S12-13: Hide empty threads the user never actually sent a message in.
+    // "Message band" auto-creates a thread on open; if the user never types
+    // anything, it's just clutter in the inbox. We keep the row only if a
+    // message has been sent (last_message is non-null).
+    const threads = (data.threads || []).filter(t => !!t.last_message);
 
     if (threads.length === 0) {
       body.innerHTML = `
@@ -6649,6 +6653,12 @@ async function openChatThread(threadId) {
     const resp = await fetch(`/api/chat/threads/${threadId}/messages`);
     const data = await resp.json();
 
+    // S12-14: Fetching messages marks them as read on the server. The stats
+    // cache would otherwise continue to report the stale unread count for up
+    // to 30s. Invalidate so the next Home render refetches.
+    window._cachedStats = null;
+    window._cachedStatsTime = 0;
+
     renderChatThread(data.thread, data.messages);
   } catch (err) {
     console.error('Chat thread error:', err);
@@ -6686,13 +6696,19 @@ function renderChatThread(thread, messages, participants) {
   // Update header
   const header = document.getElementById('chatThreadHeader');
   if (header) {
+    // S12-08: Gig info only makes sense if this thread is attached to a gig.
+    // Wire the onclick to openGigDetail; otherwise hide the button entirely so
+    // it isn't a dead tap target.
+    const gigInfoBtn = thread.gig_id
+      ? `<div onclick="closePanel('panel-chat-thread');openGigDetail('${thread.gig_id}')" style="font-size:11px;color:var(--accent);cursor:pointer;width:50px;text-align:right;">Gig info</div>`
+      : `<div style="width:50px;"></div>`;
     header.innerHTML = `
       <button class="panel-back" onclick="closePanel('panel-chat-thread')">&#8249; Back</button>
       <div style="text-align:center;flex:1;">
         <div class="panel-title" style="font-size:15px;">${escapeHtml(thread.band_name || 'Messages')}</div>
         <div style="font-size:10px;color:var(--text-3);">${participantCount} ${participantCount === 1 ? 'person' : 'people'}</div>
       </div>
-      <div style="font-size:11px;color:var(--accent);cursor:pointer;width:50px;text-align:right;">Gig info</div>
+      ${gigInfoBtn}
     `;
   }
 
@@ -6743,10 +6759,12 @@ function renderChatThread(thread, messages, participants) {
   messagesHTML += '</div>';
 
   // Input bar
+  // S12-12: textarea so users can compose multi-line messages. Shift+Enter
+  // inserts a newline; Enter alone sends. Auto-grows up to 5 lines then scrolls.
   const inputHTML = `
-    <div style="padding:12px 20px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:center;">
-      <input type="text" id="chatMessageInput" placeholder="Message..." style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:24px;padding:10px 16px;color:var(--text);font-size:14px;outline:none;" onkeydown="if(event.key==='Enter')sendChatMessage()">
-      <button onclick="sendChatMessage()" style="width:36px;height:36px;border-radius:18px;background:var(--accent);border:none;color:#000;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;">&#x2191;</button>
+    <div style="padding:12px 20px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:flex-end;">
+      <textarea id="chatMessageInput" rows="1" placeholder="Message..." style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:9px 16px;color:var(--text);font-size:14px;outline:none;resize:none;font-family:inherit;line-height:1.4;max-height:108px;" oninput="autoGrowChatInput(this)" onkeydown="handleChatKey(event)"></textarea>
+      <button id="chatSendBtn" onclick="sendChatMessage()" style="width:36px;height:36px;border-radius:18px;background:var(--accent);border:none;color:#000;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">&#x2191;</button>
     </div>
   `;
 
@@ -6825,25 +6843,86 @@ function startChatThreadPolling(threadId, initialMessages) {
   }, 6000);
 }
 
+// S12-12: Enter alone sends, Shift+Enter inserts a newline. Also gated so we
+// don't fire while the previous POST is still in flight (see _chatSendInFlight
+// in sendChatMessage).
+function handleChatKey(event) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendChatMessage();
+  }
+}
+
+// S12-12: Keep the textarea height in step with content up to a 5-line cap.
+function autoGrowChatInput(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 108) + 'px';
+}
+
+let _chatSendInFlight = false;
+
 async function sendChatMessage() {
   const input = document.getElementById('chatMessageInput');
+  const sendBtn = document.getElementById('chatSendBtn');
   if (!input || !input.value.trim() || !_currentThreadId) return;
+
+  // S12-09: guard against double-sends. On slow links the previous response
+  // may not have come back yet; we disable the button and ignore re-entrant
+  // sends until this one resolves.
+  if (_chatSendInFlight) return;
+  _chatSendInFlight = true;
 
   const content = input.value.trim();
   input.value = '';
+  autoGrowChatInput(input);
+
+  // Disable button and show a subtle spinner glyph so the user sees progress.
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.style.opacity = '0.55';
+    sendBtn.style.cursor = 'default';
+    sendBtn.dataset.originalHtml = sendBtn.innerHTML;
+    sendBtn.innerHTML = '<span style="font-size:12px;">&hellip;</span>';
+  }
 
   try {
-    await fetch(`/api/chat/threads/${_currentThreadId}/messages`, {
+    const res = await fetch(`/api/chat/threads/${_currentThreadId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     });
-
-    // Refresh thread
+    if (!res.ok) {
+      // Surface server-side errors (e.g. S12-10 length cap 413) to the user.
+      let errMsg = 'Message failed to send.';
+      try {
+        const data = await res.json();
+        if (data && data.error) errMsg = data.error;
+      } catch (_) {
+        // ignore parse errors, keep default message
+      }
+      throw new Error(errMsg);
+    }
+    // Refresh thread to append the new message
     openChatThread(_currentThreadId);
   } catch (err) {
     console.error('Send message error:', err);
-    input.value = content; // Restore on error
+    // S12-09: tell the user something went wrong and restore their draft so
+    // they can edit + retry instead of losing their message.
+    input.value = content;
+    autoGrowChatInput(input);
+    try { toast(err.message || 'Message failed to send.'); } catch (_) {}
+  } finally {
+    _chatSendInFlight = false;
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.style.opacity = '';
+      sendBtn.style.cursor = 'pointer';
+      if (sendBtn.dataset.originalHtml) {
+        sendBtn.innerHTML = sendBtn.dataset.originalHtml;
+        delete sendBtn.dataset.originalHtml;
+      }
+    }
   }
 }
 
