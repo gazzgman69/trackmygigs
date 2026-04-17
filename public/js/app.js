@@ -517,17 +517,67 @@ function buildHomeHTML(content, stats) {
       </div>
     </div>`;
 
-    // 12-month forecast
-    if (stats.monthly_breakdown) {
+    // 12-month forecast (S11-FORECAST stacked-bar rewrite)
+    // API now returns confirmed_earnings + pending_earnings per month. We
+    // render each month as a stacked column: green (confirmed) bottom,
+    // amber (pending) middle, grey (forecast) top. Forecast is the past
+    // 6-month confirmed-earnings average, applied only to future months
+    // that have no confirmed/pending gigs yet — it's a visual "expect this"
+    // hint, not real revenue. Past months only show what actually happened.
+    if (stats.monthly_breakdown && stats.monthly_breakdown.length) {
+      const nowRef = new Date();
+      const thisMonthStart = new Date(nowRef.getFullYear(), nowRef.getMonth(), 1).getTime();
+      const enriched = stats.monthly_breakdown.map((m) => {
+        const ts = new Date(m.month_start).getTime();
+        const confirmed = parseFloat(m.confirmed_earnings || 0);
+        const pending = parseFloat(m.pending_earnings || 0);
+        return {
+          month_label: m.month_label,
+          confirmed,
+          pending,
+          forecast: 0,
+          isFuture: ts > thisMonthStart,
+        };
+      });
+      const pastWithEarnings = enriched.filter((m) => !m.isFuture && m.confirmed > 0);
+      const pastAvg = pastWithEarnings.length
+        ? pastWithEarnings.reduce((s, m) => s + m.confirmed, 0) / pastWithEarnings.length
+        : 0;
+      enriched.forEach((m) => {
+        if (m.isFuture && m.confirmed === 0 && m.pending === 0 && pastAvg > 0) {
+          m.forecast = pastAvg;
+        }
+      });
+      const maxTotal = Math.max(
+        1,
+        ...enriched.map((m) => m.confirmed + m.pending + m.forecast)
+      );
       html += `
       <div style="margin:0 16px 6px;">
         <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">12-Month Forecast</div>
-        <div style="display:flex;align-items:flex-end;gap:2px;height:60px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:8px;">
-          ${stats.monthly_breakdown.map((m) => {
-            const height = Math.min(100, (m.earnings / (Math.max(...stats.monthly_breakdown.map(x => x.earnings)) || 1)) * 100);
-            const color = m.status === 'confirmed' ? 'var(--success)' : m.status === 'forecast' ? '#666' : 'var(--warning)';
-            return `<div style="flex:1;background:${color};border-radius:2px;opacity:${height < 5 ? 0.4 : 1};height:${Math.max(4, height)}%;" title="£${m.earnings}"></div>`;
+        <div style="display:flex;align-items:flex-end;gap:3px;height:60px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:8px;">
+          ${enriched.map((m) => {
+            const total = m.confirmed + m.pending + m.forecast;
+            const columnPct = total > 0 ? Math.max(6, (total / maxTotal) * 100) : 2;
+            const denom = total || 1;
+            const fPct = (m.forecast / denom) * 100;
+            const pPct = (m.pending / denom) * 100;
+            const cPct = (m.confirmed / denom) * 100;
+            const titleParts = [];
+            if (m.confirmed) titleParts.push('£' + Math.round(m.confirmed) + ' confirmed');
+            if (m.pending) titleParts.push('£' + Math.round(m.pending) + ' pending');
+            if (m.forecast) titleParts.push('~£' + Math.round(m.forecast) + ' forecast');
+            const title = (m.month_label || '') + (titleParts.length ? ': ' + titleParts.join(', ') : ': no gigs');
+            const emptyOpacity = total > 0 ? 1 : 0.25;
+            return `<div style="flex:1;display:flex;flex-direction:column;height:${columnPct}%;border-radius:2px;overflow:hidden;opacity:${emptyOpacity};background:${total > 0 ? 'transparent' : 'var(--border)'};" title="${title}">
+              ${m.forecast > 0 ? `<div style="flex:${fPct};background:#666;"></div>` : ''}
+              ${m.pending > 0 ? `<div style="flex:${pPct};background:var(--warning);"></div>` : ''}
+              ${m.confirmed > 0 ? `<div style="flex:${cPct};background:var(--success);"></div>` : ''}
+            </div>`;
           }).join('')}
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:3px;margin-top:4px;padding:0 8px;font-size:9px;color:var(--text-3);">
+          ${enriched.map((m) => `<div style="flex:1;text-align:center;">${(m.month_label || '').slice(0, 3)}</div>`).join('')}
         </div>
         <div style="display:flex;justify-content:center;gap:14px;margin-top:6px;font-size:10px;color:var(--text-2);">
           <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;"></span>Confirmed</span>

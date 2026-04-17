@@ -1080,18 +1080,35 @@ router.get('/stats', async (req, res) => {
          ORDER BY g.date ASC LIMIT 1`,
         [userId, today]
       ),
-      // Monthly breakdown for Home forecast chart (past 6 months + next 6 months)
+      // Monthly breakdown for Home forecast chart (past 6 months + next 6 months).
+      // S11-FORECAST: split earnings by status so the client can render a stacked
+      // chart (confirmed green + pending amber + forecast grey). generate_series
+      // pre-fills all 12 months so empty months still appear as zero-height
+      // columns instead of disappearing from the chart.
       db.query(
-        `SELECT TO_CHAR(DATE_TRUNC('month', date), 'Mon YY') AS month_label,
-                DATE_TRUNC('month', date)::date AS month_start,
-                COALESCE(SUM(fee) FILTER (WHERE status = 'confirmed'), 0) AS earnings,
-                COUNT(*) AS gigs
-         FROM gigs
-         WHERE user_id = $1
-           AND date >= DATE_TRUNC('month', NOW()) - INTERVAL '6 months'
-           AND date <  DATE_TRUNC('month', NOW()) + INTERVAL '6 months'
-         GROUP BY DATE_TRUNC('month', date)
-         ORDER BY DATE_TRUNC('month', date) ASC`,
+        `WITH months AS (
+           SELECT (DATE_TRUNC('month', NOW()) + (n || ' month')::interval)::date AS month_start
+           FROM generate_series(-6, 5) AS n
+         ),
+         monthly AS (
+           SELECT DATE_TRUNC('month', date)::date AS month_start,
+                  COALESCE(SUM(fee) FILTER (WHERE status = 'confirmed'), 0) AS confirmed_earnings,
+                  COALESCE(SUM(fee) FILTER (WHERE status = 'enquiry'),   0) AS pending_earnings,
+                  COUNT(*) AS gigs
+           FROM gigs
+           WHERE user_id = $1
+             AND date >= DATE_TRUNC('month', NOW()) - INTERVAL '6 months'
+             AND date <  DATE_TRUNC('month', NOW()) + INTERVAL '6 months'
+           GROUP BY DATE_TRUNC('month', date)
+         )
+         SELECT TO_CHAR(m.month_start, 'Mon YY') AS month_label,
+                m.month_start,
+                COALESCE(mo.confirmed_earnings, 0) AS confirmed_earnings,
+                COALESCE(mo.pending_earnings,   0) AS pending_earnings,
+                COALESCE(mo.gigs, 0) AS gigs
+         FROM months m
+         LEFT JOIN monthly mo ON mo.month_start = m.month_start
+         ORDER BY m.month_start ASC`,
         [userId]
       ),
       // Recent messages preview (last 3 messages in threads the user participates in,
@@ -1157,7 +1174,11 @@ router.get('/stats', async (req, res) => {
     const monthlyBreakdown = (monthlyBreakdownResult.rows || []).map((r) => ({
       month_label: r.month_label,
       month_start: r.month_start,
-      earnings: parseFloat(r.earnings || 0),
+      confirmed_earnings: parseFloat(r.confirmed_earnings || 0),
+      pending_earnings: parseFloat(r.pending_earnings || 0),
+      // Legacy `earnings` field = total so older callers that still read it
+      // get a single number to chart against.
+      earnings: parseFloat(r.confirmed_earnings || 0) + parseFloat(r.pending_earnings || 0),
       gigs: parseInt(r.gigs || 0),
     }));
 
