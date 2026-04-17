@@ -533,7 +533,27 @@ async function renderGigsScreen() {
   }
 }
 
+async function pullGoogleCalendarChanges() {
+  try {
+    const resp = await fetch('/api/calendar/pull', { method: 'POST' });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.success && (data.updated > 0 || data.cancelled > 0)) {
+      // Refresh cached gigs so inbound changes appear immediately
+      if (typeof window.loadGigs === 'function') {
+        window.loadGigs().catch(() => {});
+      }
+    }
+  } catch (_) {
+    // Silent fail — inbound sync is best-effort
+  }
+}
+
 async function checkCalendarNudges() {
+  // Fire inbound sync first so existing gigs reflect Google changes before we
+  // compute nudges from the remaining "unknown" events.
+  await pullGoogleCalendarChanges();
+
   const bar = document.getElementById('calendarNudgeBar');
   if (!bar) return;
   try {

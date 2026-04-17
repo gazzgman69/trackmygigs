@@ -427,7 +427,128 @@ router.post('/push-all', async (req, res) => {
   }
 });
 
+// ── INBOUND SYNC: pull Google Calendar changes into TrackMyGigs ─────────────
+//
+// Uses Google's incremental sync via syncToken. On first call we establish a
+// token from a baseline window (past month onwards). On subsequent calls we
+// only fetch what changed since last pull. If the token is invalidated (410)
+// we reset and do a fresh baseline fetch.
+//
+// Scope: we ONLY update gigs that are already linked to a Google event via
+// google_event_id. New/unknown events flow through the existing nudge system
+// (/events) so the user stays in control of what becomes a gig.
+
+async function pullFromGoogle(userId) {
+  const auth = await getGoogleAuth(userId);
+  if (!auth) return { error: 'not_connected' };
+
+  const userRow = await db.query('SELECT google_sync_token FROM users WHERE id = $1', [userId]);
+  let syncToken = userRow.rows[0]?.google_sync_token || null;
+
+  const calendar = google.calendar({ version: 'v3', auth });
+  const listParams = { calendarId: 'primary', singleEvents: true, showDeleted: true };
+
+  if (syncToken) {
+    listParams.syncToken = syncToken;
+  } else {
+    const past = new Date();
+    past.setMonth(past.getMonth() - 1);
+    listParams.timeMin = past.toISOString();
+  }
+
+  let pageToken = null;
+  let nextSyncToken = null;
+  let updated = 0;
+  let cancelled = 0;
+
+  try {
+    do {
+      if (pageToken) listParams.pageToken = pageToken;
+
+      const response = await calendar.events.list(listParams);
+      const events = response.data.items || [];
+
+      for (const event of events) {
+        if (event.status === 'cancelled') {
+          const r = await db.query(
+            `UPDATE gigs SET status = 'cancelled'
+             WHERE user_id = $1 AND google_event_id = $2 AND status != 'cancelled'
+             RETURNING id`,
+            [userId, event.id]
+          );
+          if (r.rowCount > 0) cancelled++;
+          continue;
+        }
+
+        const startDT = event.start?.dateTime || event.start?.date;
+        if (!startDT) continue;
+        const start = new Date(startDT);
+        const end = event.end?.dateTime || event.end?.date ? new Date(event.end.dateTime || event.end.date) : null;
+        const dateStr = start.toISOString().split('T')[0];
+        const startTime = event.start?.dateTime ? start.toTimeString().substring(0, 5) : null;
+        const endTime = event.end?.dateTime && end ? end.toTimeString().substring(0, 5) : null;
+
+        const r = await db.query(
+          `UPDATE gigs
+             SET date = $1,
+                 start_time = COALESCE($2, start_time),
+                 end_time = COALESCE($3, end_time),
+                 venue_name = COALESCE($4, venue_name),
+                 venue_address = COALESCE($5, venue_address)
+           WHERE user_id = $6 AND google_event_id = $7
+           RETURNING id`,
+          [
+            dateStr,
+            startTime,
+            endTime,
+            event.location ? event.location.split(',')[0] : null,
+            event.location || null,
+            userId,
+            event.id,
+          ]
+        );
+        if (r.rowCount > 0) updated++;
+      }
+
+      pageToken = response.data.nextPageToken;
+      if (response.data.nextSyncToken) nextSyncToken = response.data.nextSyncToken;
+    } while (pageToken);
+  } catch (err) {
+    // Sync token invalidated — clear it so the next pull re-baselines
+    if (err && err.code === 410) {
+      await db.query('UPDATE users SET google_sync_token = NULL WHERE id = $1', [userId]);
+      return { error: 'sync_token_expired', retry: true };
+    }
+    console.error('pullFromGoogle error:', err.message || err);
+    return { error: err.message || 'pull_failed' };
+  }
+
+  if (nextSyncToken) {
+    await db.query(
+      'UPDATE users SET google_sync_token = $1, google_last_pull_at = NOW() WHERE id = $2',
+      [nextSyncToken, userId]
+    );
+  }
+
+  return { success: true, updated, cancelled };
+}
+
+// POST /calendar/pull — fetch changes from Google and apply to linked gigs
+router.post('/pull', async (req, res) => {
+  try {
+    let result = await pullFromGoogle(req.user.id);
+    if (result.retry) {
+      result = await pullFromGoogle(req.user.id);
+    }
+    res.json(result);
+  } catch (err) {
+    console.error('Pull route error:', err);
+    res.status(500).json({ error: 'Pull failed' });
+  }
+});
+
 // Export helpers for fire-and-forget use in api.js
 module.exports = router;
 module.exports.pushGigToGoogle = pushGigToGoogle;
 module.exports.removeGigFromGoogle = removeGigFromGoogle;
+module.exports.pullFromGoogle = pullFromGoogle;

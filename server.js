@@ -142,6 +142,9 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS epk_audio_url TEXT`);
     // Two-way Google Calendar sync: store the Google event id for each pushed gig
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255)`);
+    // Inbound sync: incremental syncToken from Google, plus last-pull timestamp for throttling
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sync_token TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_last_pull_at TIMESTAMP`);
     // Onboarding + feedback
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMP`);
     await db.query(`CREATE TABLE IF NOT EXISTS nudge_feedback (
