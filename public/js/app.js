@@ -1189,7 +1189,25 @@ function renderCalendarDay(currentDate, gigs, blocked) {
     html += `<div style="text-align:center;padding:40px 20px;color:var(--text-2);">No gigs scheduled for this day</div>`;
   } else {
     html += `<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Gigs today</div>`;
+
+    // Auto-blocks for the day: soft pre/post windows from travel + load-in + pack-down
+    const autoBlocks = (typeof computeAutoBlocksForGigs === 'function')
+      ? computeAutoBlocksForGigs(dayGigs).filter(b => {
+          const bs = new Date(b.start);
+          return `${bs.getFullYear()}-${String(bs.getMonth() + 1).padStart(2, '0')}-${String(bs.getDate()).padStart(2, '0')}` === dateStr;
+        })
+      : [];
+
     dayGigs.forEach(gig => {
+      const pre = autoBlocks.find(b => b.gig_id === gig.id && b.kind === 'travel_out');
+      const post = autoBlocks.find(b => b.gig_id === gig.id && b.kind === 'travel_home');
+      const fmt = (iso) => new Date(iso).toTimeString().substring(0, 5);
+
+      if (pre) {
+        html += `<div title="${escapeHtml(pre.label)}" style="padding:6px 10px;margin:4px 0;background:rgba(240,165,0,.08);border-left:3px solid var(--accent);border-radius:6px;font-size:11px;color:var(--text-2);">
+          🚗 Travel + load-in · ${fmt(pre.start)} to ${fmt(pre.end)}
+        </div>`;
+      }
       html += `<div class="gi" onclick="openGigDetail('${gig.id}')">
         <div style="display:flex;align-items:flex-start;gap:14px;">
           <div class="gdb">
@@ -1202,7 +1220,16 @@ function renderCalendarDay(currentDate, gigs, blocked) {
           </div>
         </div>
       </div>`;
+      if (post) {
+        html += `<div title="${escapeHtml(post.label)}" style="padding:6px 10px;margin:4px 0;background:rgba(88,166,255,.08);border-left:3px solid var(--info);border-radius:6px;font-size:11px;color:var(--text-2);">
+          📦 Pack-down + drive home · ${fmt(post.start)} to ${fmt(post.end)}
+        </div>`;
+      }
     });
+
+    html += `<div style="margin-top:16px;padding:8px 10px;background:var(--card);border:1px dashed var(--border);border-radius:6px;font-size:11px;color:var(--text-3);text-align:center;">
+      Travel windows default to 60min each way + 30min load-in and pack-down. Tune in Settings.
+    </div>`;
   }
 
   html += `</div>`;
@@ -2246,6 +2273,24 @@ function getRecentBands() {
 
 async function submitGigWizard() {
   const btn = document.getElementById('wizardNextBtn');
+
+  // Auto-block pre-flight check: warn if this gig collides with another gig's
+  // travel-home or travel-out window. Runs on the client, cheap, no round-trip.
+  try {
+    if (gigWizardData.date && gigWizardData.start_time && !gigWizardData._forcedThroughAutoBlock) {
+      const d = gigWizardData.date;
+      const s = `${d}T${gigWizardData.start_time.length === 5 ? gigWizardData.start_time + ':00' : gigWizardData.start_time}`;
+      const endTime = gigWizardData.end_time || gigWizardData.start_time;
+      const e = `${d}T${endTime.length === 5 ? endTime + ':00' : endTime}`;
+      const clash = typeof isTimeAutoBlocked === 'function' ? isTimeAutoBlocked(s, e) : null;
+      if (clash) {
+        const ok = confirm(`Heads up: this overlaps with ${clash.label}. Book it anyway?`);
+        if (!ok) return;
+        gigWizardData._forcedThroughAutoBlock = true;
+      }
+    }
+  } catch (_) { /* non-fatal */ }
+
   if (btn) {
     btn.textContent = 'Saving...';
     btn.disabled = true;
@@ -4002,6 +4047,7 @@ async function acceptOffer(offerId) {
       body: JSON.stringify({ status: 'accepted' }),
     });
     if (!res.ok) throw new Error('Failed to accept');
+    recordNudgeFeedback('offer', 'accepted', offerId);
     await refreshOffersAndBadge();
   } catch (err) {
     console.error('Accept offer error:', err);
@@ -4018,6 +4064,7 @@ async function declineOffer(offerId) {
       body: JSON.stringify({ status: 'declined' }),
     });
     if (!res.ok) throw new Error('Failed to decline');
+    recordNudgeFeedback('offer', 'declined', offerId);
     await refreshOffersAndBadge();
   } catch (err) {
     console.error('Decline offer error:', err);
@@ -4238,6 +4285,7 @@ async function quickImportNudge(index) {
 
     window._cachedGigs = null;
     _nudgeEvents[index].already_imported = true;
+    recordNudgeFeedback('calendar_import', 'imported', e.id);
   } catch (err) {
     console.error('Quick import error:', err);
   }
@@ -4269,6 +4317,7 @@ async function importNudgeFromDetail(index) {
 
     window._cachedGigs = null;
     _nudgeEvents[index].already_imported = true;
+    recordNudgeFeedback('calendar_import', 'imported', e.id);
     closePanel('panel-nudge-detail');
     showToast('Gig imported!');
     renderNudgeList();
@@ -4294,6 +4343,7 @@ async function dismissNudge(index) {
       card.style.pointerEvents = 'none';
       card.querySelector('div:last-child').innerHTML = '<span style="font-size:12px;color:var(--text-3);">Dismissed</span>';
     }
+    recordNudgeFeedback('calendar_import', 'dismissed', e.id);
   } catch (err) {
     console.error('Dismiss error:', err);
   }
