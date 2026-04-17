@@ -496,6 +496,48 @@ router.post('/user/onboarded', async (req, res) => {
   }
 });
 
+// BUG-AUDIT-01: notification preferences get/set.
+// Defaults: every channel opted-in until the user says otherwise. A missing key is treated as true.
+router.get('/user/notification-preferences', async (req, res) => {
+  try {
+    const result = await db.query('SELECT notification_preferences FROM users WHERE id = $1', [req.user.id]);
+    const raw = (result.rows[0] && result.rows[0].notification_preferences) || {};
+    const defaults = {
+      dep_offers: true,
+      chat: true,
+      gig_reminders: true,
+      invoices: true,
+      weekly: true,
+      email_important: true
+    };
+    // Merge stored prefs on top of defaults so a newly-added channel does not come back undefined.
+    res.json(Object.assign({}, defaults, raw));
+  } catch (error) {
+    console.error('Get notification preferences error:', error);
+    res.status(500).json({ error: 'Failed to load notification preferences' });
+  }
+});
+
+router.post('/user/notification-preferences', async (req, res) => {
+  try {
+    const body = req.body || {};
+    // Accept only the known boolean flags. Anything else is dropped so clients can not smuggle data into the JSONB.
+    const allowed = ['dep_offers', 'chat', 'gig_reminders', 'invoices', 'weekly', 'email_important'];
+    const prefs = {};
+    for (const key of allowed) {
+      if (Object.prototype.hasOwnProperty.call(body, key)) prefs[key] = !!body[key];
+    }
+    await db.query(
+      'UPDATE users SET notification_preferences = $1::jsonb WHERE id = $2',
+      [JSON.stringify(prefs), req.user.id]
+    );
+    res.json({ ok: true, prefs });
+  } catch (error) {
+    console.error('Save notification preferences error:', error);
+    res.status(500).json({ error: 'Failed to save notification preferences' });
+  }
+});
+
 // Log nudge feedback so scoring can be tuned later
 router.post('/nudge-feedback', async (req, res) => {
   try {

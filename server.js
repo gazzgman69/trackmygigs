@@ -177,6 +177,9 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_dep DECIMAL(10,2)`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_deposit_pct INTEGER`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_notes TEXT`);
+    // BUG-AUDIT-01: Per-user notification preferences (dep offers, chat, gig reminders, invoices, weekly digest, important emails).
+    // Stored as JSONB so we can add new channels without further migrations.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences JSONB DEFAULT '{}'::jsonb`);
     // Onboarding: has the user seen the welcome tour yet?
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_completed_at TIMESTAMP`);
     // Invoice metadata: business address and VAT number printed on invoice PDFs.

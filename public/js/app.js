@@ -5295,6 +5295,33 @@ async function saveNewSetlist() {
   }
 }
 
+// BUG-AUDIT-01: Loader for the notification-preferences panel. The panel open hook already
+// tries typeof loadNotificationSettings, so we simply need to define it so the checkboxes
+// hydrate with what the user has actually saved.
+async function loadNotificationSettings() {
+  const status = document.getElementById('notifSettingsStatus');
+  try {
+    const res = await fetch('/api/user/notification-preferences');
+    if (!res.ok) throw new Error('Load failed');
+    const prefs = await res.json();
+    const set = (id, v) => {
+      const el = document.getElementById(id);
+      if (el) el.checked = v !== false; // missing -> default on
+    };
+    set('notifyDepOffers', prefs.dep_offers);
+    set('notifyChat', prefs.chat);
+    set('notifyGigReminders', prefs.gig_reminders);
+    set('notifyInvoices', prefs.invoices);
+    set('notifyWeekly', prefs.weekly);
+    set('notifyEmailImportant', prefs.email_important);
+    if (status) status.textContent = '';
+  } catch (err) {
+    // Silent fail: defaults stay checked so the panel is usable even offline.
+    console.warn('Load notif prefs error:', err);
+  }
+}
+window.loadNotificationSettings = loadNotificationSettings;
+
 async function saveNotificationSettings() {
   const status = document.getElementById('notifSettingsStatus');
   const prefs = {
@@ -5319,6 +5346,7 @@ async function saveNotificationSettings() {
     if (status) status.textContent = 'Could not save preferences.';
   }
 }
+window.saveNotificationSettings = saveNotificationSettings;
 
 async function editContact(contactId) {
   // Reuse add-contact panel pre-filled
