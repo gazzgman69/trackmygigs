@@ -502,24 +502,106 @@ router.get('/expenses', async (req, res) => {
   }
 });
 
+// S13-14: Bound receipt description length server-side so the client can't
+// post a runaway multi-megabyte string.
+const RECEIPT_DESCRIPTION_MAX = 200;
+
+// S13-16: Format the date server-side if the client didn't send one, using
+// UTC as a stable fallback. For users in later timezones this still lands on
+// the expected calendar day because we use the local now(), not new Date().
+function todayIsoDate() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 router.post('/expenses', async (req, res) => {
   try {
     const { amount, description, date, category, gig_id } = req.body;
+    // S13-14: validate description length
+    if (description && String(description).length > RECEIPT_DESCRIPTION_MAX) {
+      return res.status(400).json({ error: `Description is too long. Keep it under ${RECEIPT_DESCRIPTION_MAX} characters.` });
+    }
     // S13-09: persist the optional gig_id foreign key when the user logs an
     // expense from inside a gig detail screen. Falls through to NULL when not set.
     const gigIdValue = (gig_id === '' || gig_id === null || gig_id === undefined)
       ? null
       : gig_id;
+    // S13-16: accept client-supplied ISO date; fall back to a local today string
+    // rather than a raw Date object (which gets cast to UTC by node-postgres and
+    // can land on the previous day for UK users after 00:00 local time in BST).
+    const dateValue = date && /^\d{4}-\d{2}-\d{2}/.test(String(date))
+      ? String(date).slice(0, 10)
+      : todayIsoDate();
     const result = await db.query(
       `INSERT INTO receipts (user_id, vendor, amount, category, date, gig_id)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, vendor AS description, amount, category, date, gig_id`,
-      [req.user.id, description, amount, category || 'Other', date || new Date(), gigIdValue]
+      [req.user.id, description, amount, category || 'Other', dateValue, gigIdValue]
     );
     res.json({ success: true, expense: result.rows[0] });
   } catch (error) {
     console.error('Create expense error:', error);
     res.status(500).json({ error: 'Failed to save expense' });
+  }
+});
+
+// S13-13: Edit an existing expense. Required fields match POST; each one is
+// optional and only applied if present. Ownership is enforced via WHERE user_id.
+router.patch('/expenses/:id', async (req, res) => {
+  try {
+    const { amount, description, date, category, gig_id } = req.body;
+    if (description && String(description).length > RECEIPT_DESCRIPTION_MAX) {
+      return res.status(400).json({ error: `Description is too long. Keep it under ${RECEIPT_DESCRIPTION_MAX} characters.` });
+    }
+    const fields = [];
+    const params = [];
+    let idx = 1;
+    if (amount !== undefined && amount !== null && amount !== '') { fields.push(`amount = $${idx++}`); params.push(amount); }
+    if (description !== undefined) { fields.push(`vendor = $${idx++}`); params.push(description); }
+    if (date !== undefined && /^\d{4}-\d{2}-\d{2}/.test(String(date))) { fields.push(`date = $${idx++}`); params.push(String(date).slice(0, 10)); }
+    if (category !== undefined) { fields.push(`category = $${idx++}`); params.push(category); }
+    if (gig_id !== undefined) {
+      const v = (gig_id === '' || gig_id === null) ? null : gig_id;
+      fields.push(`gig_id = $${idx++}`);
+      params.push(v);
+    }
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    params.push(req.params.id, req.user.id);
+    const result = await db.query(
+      `UPDATE receipts SET ${fields.join(', ')}
+       WHERE id = $${idx++} AND user_id = $${idx}
+       RETURNING id, vendor AS description, amount, category, date, gig_id`,
+      params
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Expense not found' });
+    }
+    res.json({ success: true, expense: result.rows[0] });
+  } catch (error) {
+    console.error('Update expense error:', error);
+    res.status(500).json({ error: 'Failed to update expense' });
+  }
+});
+
+// S13-13: Delete an expense. Ownership enforced via user_id.
+router.delete('/expenses/:id', async (req, res) => {
+  try {
+    const result = await db.query(
+      'DELETE FROM receipts WHERE id = $1 AND user_id = $2 RETURNING id',
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Expense not found' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete expense error:', error);
+    res.status(500).json({ error: 'Failed to delete expense' });
   }
 });
 

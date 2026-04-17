@@ -7672,21 +7672,44 @@ function handleReceiptSnap(event) {
 }
 window.handleReceiptSnap = handleReceiptSnap;
 
+// S13-10: Categories that map to HMRC SA103 deductible boxes. 'Other' and
+// anything uncategorised does not roll up into the claimable total.
+const HMRC_DEDUCTIBLE_CATEGORIES = new Set([
+  'Travel & vehicle',
+  'Equipment & instruments',
+  'Equipment repairs',
+  'Accommodation',
+  'Subsistence (overnight)',
+  'Phone & office',
+  'Advertising & promotion',
+  'Professional fees',
+  'Subscriptions & dues',
+  'Stage clothing',
+  'Training & CPD',
+]);
+
 async function loadReceipts() {
   try {
     const res = await fetch('/api/expenses');
-    if (!res.ok) return;
+    if (!res.ok) throw new Error('Failed to load expenses');
     const data = await res.json();
     const expenses = data.expenses || [];
     _receiptsCache = expenses;
     renderReceiptCategoryPills();
     renderReceiptList();
+    // S13-10: Total expenses is the full list; total claimable is only rows
+    // tagged with a deductible HMRC category.
     const total = expenses.reduce((s, e) => s + parseFloat(e.amount || 0), 0);
+    const claimable = expenses
+      .filter(e => HMRC_DEDUCTIBLE_CATEGORIES.has((e.category || '').trim()))
+      .reduce((s, e) => s + parseFloat(e.amount || 0), 0);
     document.getElementById('receiptTotalExpenses').textContent = '£' + total.toFixed(0);
-    document.getElementById('receiptClaimable').textContent = '£' + total.toFixed(0);
+    document.getElementById('receiptClaimable').textContent = '£' + claimable.toFixed(0);
     document.getElementById('receiptCount').textContent = expenses.length + ' receipt' + (expenses.length !== 1 ? 's' : '');
-  } catch {
-    // silently ignore
+  } catch (err) {
+    // S13-12: surface the failure instead of swallowing it.
+    console.error('Load receipts error:', err);
+    try { showToast('Could not load receipts. Check your connection.'); } catch (_) {}
   }
 }
 
@@ -7723,15 +7746,108 @@ function renderReceiptList() {
   const filtered = (_receiptsActiveCategory === 'All')
     ? _receiptsCache
     : _receiptsCache.filter(e => ((e.category || 'Other').trim() || 'Other') === _receiptsActiveCategory);
-  list.innerHTML = filtered.length ? filtered.map((e) => `
-    <div class="receipt-item">
+  list.innerHTML = filtered.length ? filtered.map((e) => {
+    // S13-15: parseFloat(null) yields NaN and ".toFixed(2)" prints 'NaN.00'.
+    // Fall back to a placeholder so a corrupt row doesn't look like a bug.
+    const n = parseFloat(e.amount);
+    const amount = Number.isFinite(n) ? '&pound;' + n.toFixed(2) : '&mdash;';
+    return `
+    <div class="receipt-item" onclick="openReceiptDetail('${e.id}')" style="cursor:pointer;">
       <div>
         <div style="font-size:14px;font-weight:600;color:var(--text)">${escapeHtml(e.description || 'Expense')}</div>
-        <div style="font-size:12px;color:var(--text-2)">${escapeHtml(e.category || '')} · ${formatDate(e.date)}</div>
+        <div style="font-size:12px;color:var(--text-2)">${escapeHtml(e.category || '')} &middot; ${formatDate(e.date)}</div>
       </div>
-      <div style="font-size:15px;font-weight:700;color:var(--text)">£${parseFloat(e.amount).toFixed(2)}</div>
-    </div>`).join('') : '<div style="text-align:center;color:var(--text-2);padding:20px;font-size:14px">No expenses in this category</div>';
+      <div style="font-size:15px;font-weight:700;color:var(--text)">${amount}</div>
+    </div>`;
+  }).join('') : '<div style="text-align:center;color:var(--text-2);padding:20px;font-size:14px">No expenses in this category</div>';
 }
+
+// S13-13: Receipt edit/delete UI. Opens a lightweight inline modal from the
+// receipt list row. Uses a dedicated form that mirrors the manual-entry fields.
+function openReceiptDetail(id) {
+  const e = (_receiptsCache || []).find(r => String(r.id) === String(id));
+  if (!e) return;
+  const host = document.getElementById('receiptEditHost') || (() => {
+    const d = document.createElement('div');
+    d.id = 'receiptEditHost';
+    document.body.appendChild(d);
+    return d;
+  })();
+  const escapedDesc = escapeAttr(e.description || '');
+  const dateVal = e.date ? String(e.date).slice(0, 10) : '';
+  const categories = Array.from(HMRC_DEDUCTIBLE_CATEGORIES);
+  categories.push('Other');
+  const catOptions = categories.map(c =>
+    `<option value="${escapeAttr(c)}"${c === e.category ? ' selected' : ''}>${escapeHtml(c)}</option>`
+  ).join('');
+
+  host.innerHTML = `
+    <div id="receiptEditOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;" onclick="if(event.target===this)closeReceiptDetail()">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);max-width:420px;width:100%;padding:20px;">
+        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:12px;">Edit receipt</div>
+        <div class="form-group"><div class="form-label">Amount (&pound;)</div><input type="number" class="form-input" id="editReceiptAmount" value="${parseFloat(e.amount || 0)}"></div>
+        <div class="form-group"><div class="form-label">Description</div><input type="text" class="form-input" id="editReceiptDesc" value="${escapedDesc}" maxlength="200"></div>
+        <div class="form-group"><div class="form-label">Date</div><input type="date" class="form-input" id="editReceiptDate" value="${dateVal}"></div>
+        <div class="form-group"><div class="form-label">HMRC category</div>
+          <select class="form-input" id="editReceiptCategory">${catOptions}</select>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button onclick="deleteReceipt('${e.id}')" class="btn-pill-outline" style="flex:1;color:var(--danger);border-color:var(--danger);">Delete</button>
+          <button onclick="closeReceiptDetail()" class="btn-pill-outline" style="flex:1;">Cancel</button>
+          <button onclick="saveReceiptEdit('${e.id}')" class="btn-pill" style="flex:1;">Save</button>
+        </div>
+      </div>
+    </div>`;
+}
+window.openReceiptDetail = openReceiptDetail;
+
+function closeReceiptDetail() {
+  const host = document.getElementById('receiptEditHost');
+  if (host) host.innerHTML = '';
+}
+window.closeReceiptDetail = closeReceiptDetail;
+
+async function saveReceiptEdit(id) {
+  const amount = parseFloat(document.getElementById('editReceiptAmount').value);
+  const description = document.getElementById('editReceiptDesc').value.trim();
+  const date = document.getElementById('editReceiptDate').value;
+  const category = document.getElementById('editReceiptCategory').value;
+  if (!amount || amount <= 0) { showToast('Enter a valid amount'); return; }
+  if (!description) { showToast('Enter a description'); return; }
+  try {
+    const res = await fetch(`/api/expenses/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount, description, date, category }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to update');
+    }
+    closeReceiptDetail();
+    await loadReceipts();
+    showToast('Receipt updated');
+  } catch (err) {
+    console.error('Save receipt error:', err);
+    showToast(err.message || 'Failed to update receipt');
+  }
+}
+window.saveReceiptEdit = saveReceiptEdit;
+
+async function deleteReceipt(id) {
+  if (!confirm('Delete this receipt? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to delete');
+    closeReceiptDetail();
+    await loadReceipts();
+    showToast('Receipt deleted');
+  } catch (err) {
+    console.error('Delete receipt error:', err);
+    showToast('Failed to delete receipt');
+  }
+}
+window.deleteReceipt = deleteReceipt;
 
 async function submitReceipt(source) {
   // source === 'snap' uses the snap-form fields; anything else uses manual form
