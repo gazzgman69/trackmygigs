@@ -2965,6 +2965,13 @@ function searchVenues(query) {
   _venueSearchTimer = setTimeout(async () => {
     try {
       const resp = await fetch(`/api/places?q=${encodeURIComponent(query)}`);
+      if (!resp.ok) {
+        list.style.display = 'none';
+        if (typeof showToast === 'function') {
+          showToast('Venue lookup unavailable. Type the venue name manually.');
+        }
+        return;
+      }
       const data = await resp.json();
       if (!data.predictions || data.predictions.length === 0) {
         list.style.display = 'none';
@@ -2984,6 +2991,9 @@ function searchVenues(query) {
     } catch (err) {
       console.error('Venue search error:', err);
       list.style.display = 'none';
+      if (typeof showToast === 'function') {
+        showToast('Venue lookup unavailable. Type the venue name manually.');
+      }
     }
   }, 300);
 }
@@ -2999,8 +3009,18 @@ async function selectVenue(placeId, name) {
   if (nameInput) nameInput.value = name;
   if (list) list.style.display = 'none';
 
+  // Optimistically save the typed name even if the detail lookup fails,
+  // so a Places outage never silently drops the venue.
+  gigWizardData.venue_name = name;
+
   try {
     const resp = await fetch(`/api/places/detail?place_id=${encodeURIComponent(placeId)}`);
+    if (!resp.ok) {
+      if (typeof showToast === 'function') {
+        showToast('Address lookup unavailable. Venue name saved.');
+      }
+      return;
+    }
     const data = await resp.json();
     if (data.result) {
       const addr = data.result.formatted_address || '';
@@ -3031,6 +3051,9 @@ async function selectVenue(placeId, name) {
     }
   } catch (err) {
     console.error('Venue detail error:', err);
+    if (typeof showToast === 'function') {
+      showToast('Address lookup unavailable. Venue name saved.');
+    }
   }
 }
 
@@ -3098,16 +3121,27 @@ async function submitGigWizard() {
       showScreen('gigs');
       showToast('Gig saved!');
     } else {
-      const err = await response.json();
+      let errMsg = 'Unknown error';
+      try {
+        const err = await response.json();
+        errMsg = err.error || errMsg;
+      } catch (_) {
+        // Server returned non-JSON (proxy down, HTML error page). Flag that
+        // specifically so the user knows to retry rather than debug their input.
+        errMsg = response.status === 404 || response.status === 502
+          ? 'Server unavailable. Try again in a moment.'
+          : `Server error ${response.status}`;
+      }
       const body = document.getElementById('wizardBody');
       if (body) {
         body.insertAdjacentHTML(
           'afterbegin',
           `<div class="alert alert-error" style="margin-bottom: var(--spacing-4);">
-            Failed to save: ${err.error || 'Unknown error'}
+            Failed to save: ${errMsg}
           </div>`
         );
       }
+      if (typeof showToast === 'function') showToast('Gig not saved: ' + errMsg);
       if (btn) {
         btn.textContent = 'Save Gig';
         btn.disabled = false;
@@ -3115,6 +3149,9 @@ async function submitGigWizard() {
     }
   } catch (error) {
     console.error('Submit gig error:', error);
+    if (typeof showToast === 'function') {
+      showToast('Gig not saved. Check your connection and try again.');
+    }
     if (btn) {
       btn.textContent = 'Save Gig';
       btn.disabled = false;
