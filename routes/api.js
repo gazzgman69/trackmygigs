@@ -997,6 +997,19 @@ router.get('/places/detail', async (req, res) => {
 // ── Distance Matrix Proxy ────────────────────────────────────────────────────
 // Returns miles & drive time from user's home postcode to a venue address
 
+// Format an ISO-8601-ish duration string from Routes API ("13578s") into
+// human "X hr Y min" / "Y min" so the front-end can drop it straight in.
+function formatRoutesDuration(durationStr) {
+  if (!durationStr) return null;
+  const seconds = parseInt(String(durationStr).replace(/[^0-9]/g, ''), 10);
+  if (!seconds) return null;
+  const totalMinutes = Math.round(seconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) return minutes > 0 ? `${hours} hr ${minutes} min` : `${hours} hr`;
+  return `${minutes} min`;
+}
+
 router.get('/distance', async (req, res) => {
   const key = process.env.GOOGLE_PLACES_KEY;
   if (!key) {
@@ -1008,11 +1021,52 @@ router.get('/distance', async (req, res) => {
   const dest = req.query.destination;
   if (!origin || !dest) return res.json({ distance: null, error: 'missing_params' });
 
+  // Try the modern Routes API first (Google's recommended replacement for
+  // Distance Matrix). Falls back to legacy Distance Matrix only if Routes
+  // returns a hard "API not enabled" error.
   try {
+    const routesResp = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': key,
+        'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration',
+      },
+      body: JSON.stringify({
+        origin: { address: origin },
+        destination: { address: dest },
+        travelMode: 'DRIVE',
+        units: 'IMPERIAL',
+      }),
+    });
+    const routesData = await routesResp.json();
+
+    if (routesResp.ok && routesData.routes && routesData.routes[0]?.distanceMeters) {
+      const meters = routesData.routes[0].distanceMeters;
+      const miles = Math.round(meters / 1609.34);
+      return res.json({
+        distance: `${miles} mi`,
+        duration: formatRoutesDuration(routesData.routes[0].duration),
+        miles,
+      });
+    }
+
+    // Routes API returned an error. Log + fall through to legacy.
+    const routesErr = routesData?.error || {};
+    console.error('[distance] Routes API error', {
+      http: routesResp.status,
+      code: routesErr.code,
+      status: routesErr.status,
+      message: routesErr.message,
+    });
+
+    // If Routes is genuinely not enabled, try the legacy Distance Matrix
+    // as a last resort so users don't see a blank field while the GCP
+    // project is being updated.
     const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(dest)}&units=imperial&key=${key}`;
-    const response = await fetch(url);
-    const data = await response.json();
-    const element = data.rows?.[0]?.elements?.[0];
+    const legacyResp = await fetch(url);
+    const legacyData = await legacyResp.json();
+    const element = legacyData.rows?.[0]?.elements?.[0];
     if (element?.status === 'OK') {
       return res.json({
         distance: element.distance?.text || null,
@@ -1020,18 +1074,17 @@ router.get('/distance', async (req, res) => {
         miles: element.distance ? Math.round(element.distance.value / 1609.34) : null,
       });
     }
-    // Log everything we need to diagnose why this failed
-    console.error('[distance] non-OK response', {
-      top_status: data.status,
-      top_error: data.error_message,
+
+    console.error('[distance] Legacy Distance Matrix also failed', {
+      top_status: legacyData.status,
+      top_error: legacyData.error_message,
       element_status: element?.status,
-      origin,
-      dest,
     });
     return res.json({
       distance: null,
-      error: data.status || element?.status || 'unknown',
-      error_message: data.error_message || null,
+      error: routesErr.status || legacyData.status || 'unknown',
+      error_message: routesErr.message || legacyData.error_message || null,
+      hint: 'Enable Routes API (or legacy Distance Matrix API) in the Google Cloud project for this key.',
     });
   } catch (error) {
     console.error('[distance] fetch threw', error);
