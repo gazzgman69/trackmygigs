@@ -532,6 +532,7 @@ router.get('/stats', async (req, res) => {
       draftResult,
       unreadResult,
       offersResult,
+      activeDepResult,
     ] = await Promise.all([
       // Next gig
       db.query(
@@ -578,10 +579,41 @@ router.get('/stats', async (req, res) => {
          WHERE recipient_id = $1 AND status = 'pending'`,
         [userId]
       ),
+      // Outgoing active dep request (user sent, awaiting cover)
+      db.query(
+        `SELECT o.id, o.created_at, o.deadline, g.id as gig_id, g.band_name,
+                g.venue_name, g.date, g.start_time, g.end_time
+         FROM offers o
+         JOIN gigs g ON g.id = o.gig_id
+         WHERE o.sender_id = $1 AND o.offer_type = 'dep'
+           AND o.status = 'pending' AND g.date >= $2
+         ORDER BY g.date ASC LIMIT 1`,
+        [userId, today]
+      ),
     ]);
 
     const overdueInvoice = overdueResult.rows[0] || null;
     const draftInvoice = draftResult.rows[0] || null;
+    const activeDep = activeDepResult.rows[0] || null;
+
+    // Compute hours remaining from deadline (fallback: until gig start)
+    let activeDepRequest = null;
+    if (activeDep) {
+      const deadline = activeDep.deadline
+        ? new Date(activeDep.deadline)
+        : new Date(activeDep.date + 'T' + (activeDep.start_time || '19:00'));
+      const hoursLeft = Math.max(0, Math.floor((deadline - now) / 36e5));
+      activeDepRequest = {
+        offer_id: activeDep.id,
+        gig_id: activeDep.gig_id,
+        band_name: activeDep.band_name,
+        venue_name: activeDep.venue_name,
+        date: activeDep.date,
+        start_time: activeDep.start_time,
+        end_time: activeDep.end_time,
+        hours_left: hoursLeft,
+      };
+    }
 
     res.json({
       next_gig: nextGigResult.rows[0] || null,
@@ -597,6 +629,7 @@ router.get('/stats', async (req, res) => {
       unread_notifications: parseInt(unreadResult.rows[0]?.count || 0),
       unread_messages: parseInt(unreadResult.rows[0]?.count || 0),
       offer_count: parseInt(offersResult.rows[0]?.count || 0),
+      active_dep_request: activeDepRequest,
     });
   } catch (error) {
     console.error('Get stats error:', error);

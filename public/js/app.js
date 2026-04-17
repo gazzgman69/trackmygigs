@@ -358,6 +358,34 @@ function buildHomeHTML(content, stats) {
       </div>`;
     }
 
+    // Active outgoing dep-request banner (purple)
+    if (stats.active_dep_request) {
+      const dep = stats.active_dep_request;
+      const dateLabel = formatDateLong(dep.date);
+      const hoursLeft = dep.hours_left;
+      const timeLabel = hoursLeft > 48
+        ? Math.ceil(hoursLeft / 24) + 'd left'
+        : hoursLeft + 'h left';
+      html += `
+      <div onclick="showScreen('offers')" style="margin:0 16px 8px;background:linear-gradient(135deg,rgba(136,87,255,.12),rgba(136,87,255,.04));border:1px solid rgba(136,87,255,.3);border-radius:var(--r);padding:10px 14px;cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <span style="font-size:13px;">📤</span>
+          <span style="font-size:11px;font-weight:700;color:#A78BFA;text-transform:uppercase;letter-spacing:.5px;">Active dep request</span>
+          <span style="margin-left:auto;color:#A78BFA;font-size:16px;">›</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="width:3px;height:30px;border-radius:2px;background:#A78BFA;flex-shrink:0;"></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(dep.band_name)}</div>
+            <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${dateLabel} · ${escapeHtml(dep.venue_name || '')} · <span style="color:var(--warning);font-weight:600;">awaiting cover</span></div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div style="font-size:11px;font-weight:700;color:#A78BFA;">⏳ ${timeLabel}</div>
+          </div>
+        </div>
+      </div>`;
+    }
+
     // Compact alert row
     html += `<div style="display:flex;gap:6px;margin:0 16px 6px;">`;
 
