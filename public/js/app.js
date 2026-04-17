@@ -467,6 +467,11 @@ function buildHomeHTML(content, stats) {
             return `<div style="flex:1;background:${color};border-radius:2px;opacity:${height < 5 ? 0.4 : 1};height:${Math.max(4, height)}%;" title="£${m.earnings}"></div>`;
           }).join('')}
         </div>
+        <div style="display:flex;justify-content:center;gap:14px;margin-top:6px;font-size:10px;color:var(--text-2);">
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;"></span>Confirmed</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--warning);border-radius:2px;"></span>Pending</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:#666;border-radius:2px;"></span>Forecast</span>
+        </div>
       </div>`;
     }
 
@@ -4682,6 +4687,7 @@ async function openRepertoirePanel() {
       <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;">
         <div class="tb ac" onclick="switchRepertoireTab('songs')">Songs</div>
         <div class="tb" onclick="switchRepertoireTab('setlists')">Setlists</div>
+        <div class="tb" onclick="switchRepertoireTab('import')">Import</div>
       </div>
       <div id="repertoireContent" style="padding:0 16px;">`;
 
@@ -4706,6 +4712,21 @@ async function openRepertoirePanel() {
         <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(setlist.name)}</div>
         <div style="font-size:11px;color:var(--text-2);">${setlist.song_count} songs · ${setlist.duration || '?'} mins · ${setlist.linked_gig ? 'Linked to gig' : 'Not linked'}</div>
       </div>`).join('')}
+    </div>`;
+
+    // Import tab (ChordPro)
+    html += `<div id="importTab" style="display:none;padding:12px 0;">
+      <div style="font-size:13px;color:var(--text);margin-bottom:6px;font-weight:600;">ChordPro import</div>
+      <div style="font-size:11px;color:var(--text-2);line-height:1.5;margin-bottom:12px;">
+        Select one or more .chopro, .chordpro or .cho files. We read the title, artist, key and lyrics so you don't have to retype them. Chord brackets stay in the lyrics so they're visible when you expand the song.
+      </div>
+      <input type="file" id="chordProFile" accept=".chopro,.chordpro,.cho,text/plain" multiple
+        onchange="parseChordProFiles(event)"
+        style="display:block;width:100%;padding:12px;background:var(--card);border:1px dashed var(--border);border-radius:var(--rs);color:var(--text-2);font-size:12px;cursor:pointer;margin-bottom:12px;" />
+      <div id="chordProPreview"></div>
+      <div style="font-size:10px;color:var(--text-3);line-height:1.5;margin-top:16px;">
+        Tip: most ChordPro files include {title}, {artist} and {key} directives. Anything we can't read will show as blank so you can fill it in before saving.
+      </div>
     </div>`;
 
     html += `</div>`;
@@ -4888,20 +4909,64 @@ async function openFinancePanel() {
       return;
     }
 
+    const paidTot = Number(earnings.paid_total) || 0;
+    const unpaidTot = Number(earnings.unpaid_total) || 0;
+    const overdueTot = Number(earnings.overdue_total) || 0;
+    const grossTot = paidTot + unpaidTot + overdueTot;
+    const pct = (v) => grossTot > 0 ? Math.max(0, Math.min(100, (v / grossTot) * 100)) : 0;
+    const pctPaid = pct(paidTot);
+    const pctOverdue = pct(overdueTot);
+    const pctUnpaid = Math.max(0, 100 - pctPaid - pctOverdue);
+    const fmtGBP = (n) => '£' + Math.round(Number(n) || 0).toLocaleString('en-GB');
+    const fmtBar = (n) => {
+      const v = Math.round(Number(n) || 0);
+      if (v >= 1000) return '£' + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
+      return '£' + v;
+    };
+
     let html = `
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
         <button onclick="closePanel('finance-panel')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">‹</button>
         <div style="font-size:16px;font-weight:700;color:var(--text);">Earnings & Tax</div>
         <div style="width:32px;"></div>
       </div>
+      <div style="padding:4px 16px 16px;text-align:center;">
+        <div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Total invoiced</div>
+        <div style="font-size:28px;font-weight:800;color:var(--text);line-height:1.1;">${fmtGBP(grossTot)}</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:4px;">${fmtGBP(paidTot)} paid · ${fmtGBP(unpaidTot)} pending · ${fmtGBP(overdueTot)} overdue</div>
+        <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--bg,#0D1117);margin-top:10px;border:1px solid var(--border);">
+          <div title="Paid ${fmtGBP(paidTot)}" style="width:${pctPaid.toFixed(2)}%;background:var(--success);"></div>
+          <div title="Pending ${fmtGBP(unpaidTot)}" style="width:${pctUnpaid.toFixed(2)}%;background:var(--warning);"></div>
+          <div title="Overdue ${fmtGBP(overdueTot)}" style="width:${pctOverdue.toFixed(2)}%;background:var(--danger);"></div>
+        </div>
+        <div style="display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:10px;color:var(--text-2);">
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;"></span>Paid</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--warning);border-radius:2px;"></span>Pending</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--danger);border-radius:2px;"></span>Overdue</span>
+        </div>
+      </div>
       <div style="padding:0 16px 16px;">
-        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;margin-top:12px;">Monthly breakdown</div>
-        <div style="display:flex;align-items:flex-end;gap:2px;height:80px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:8px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
+          <span>Monthly breakdown</span>
+          <span style="font-weight:500;text-transform:none;letter-spacing:0;font-size:10px;color:var(--text-3);">Last 12 months</span>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:4px;height:110px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px 8px 22px;position:relative;">
           ${(earnings.monthly_breakdown || []).map(m => {
-            const max = Math.max(...(earnings.monthly_breakdown || []).map(x => x.earnings));
-            const height = Math.min(100, (m.earnings / (max || 1)) * 100);
-            return `<div style="flex:1;background:var(--success);border-radius:2px;height:${Math.max(4, height)}%;opacity:${m.status === 'forecast' ? 0.4 : 1};" title="£${m.earnings}"></div>`;
+            const max = Math.max(...(earnings.monthly_breakdown || []).map(x => Number(x.earnings) || 0));
+            const val = Number(m.earnings) || 0;
+            const height = Math.min(100, (val / (max || 1)) * 100);
+            const isForecast = m.status === 'forecast';
+            const label = m.label || m.month || '';
+            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end;">
+              <div style="font-size:9px;color:var(--text-2);line-height:1;white-space:nowrap;">${val > 0 ? fmtBar(val) : ''}</div>
+              <div style="width:100%;background:var(--success);border-radius:2px;height:${Math.max(4, height)}%;opacity:${isForecast ? 0.4 : 1};" title="${escapeHtml(label)}: £${val}"></div>
+              <div style="font-size:8px;color:var(--text-3);line-height:1;">${escapeHtml((label || '').slice(0, 3))}</div>
+            </div>`;
           }).join('')}
+        </div>
+        <div style="display:flex;justify-content:center;gap:14px;margin-top:6px;font-size:10px;color:var(--text-2);">
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;opacity:1;"></span>Confirmed</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;opacity:0.4;"></span>Forecast</span>
         </div>
       </div>
       <div style="padding:0 16px 16px;">
@@ -5020,10 +5085,42 @@ async function renderFinanceCategoryBreakdown() {
   }
 }
 
-function saveSong(songId) {
-  // TODO: implement save song
-  alert('Save song coming soon');
-  closePanel('song-form-panel');
+async function saveSong(songId) {
+  const titleEl = document.getElementById('songTitle');
+  const title = (titleEl?.value || '').trim();
+  if (!title) {
+    alert('Title is required');
+    titleEl?.focus();
+    return;
+  }
+  const payload = {
+    title,
+    artist: (document.getElementById('songArtist')?.value || '').trim() || null,
+    key: (document.getElementById('songKey')?.value || '').trim() || null,
+    tempo: parseInt(document.getElementById('songTempo')?.value, 10) || null,
+    duration: parseInt(document.getElementById('songDuration')?.value, 10) || null,
+    genre: (document.getElementById('songGenre')?.value || '').trim() || null,
+    tags: (document.getElementById('songTags')?.value || '').trim() || null,
+    lyrics: (document.getElementById('songLyrics')?.value || '').trim() || null,
+  };
+  try {
+    const url = songId ? `/api/songs/${encodeURIComponent(songId)}` : '/api/songs';
+    const method = songId ? 'PATCH' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Save failed');
+    }
+    closePanel('song-form-panel');
+    if (typeof openRepertoirePanel === 'function') openRepertoirePanel();
+  } catch (e) {
+    console.error('Save song error:', e);
+    alert('Could not save song: ' + (e.message || 'unknown error'));
+  }
 }
 
 function renderContactsList() {
@@ -5155,11 +5252,158 @@ function filterSongs() {
 }
 
 function switchRepertoireTab(tab) {
-  document.getElementById('songsTab').style.display = tab === 'songs' ? 'block' : 'none';
-  document.getElementById('setlistsTab').style.display = tab === 'setlists' ? 'block' : 'none';
-  document.querySelectorAll('#repertoireContent .tb').forEach((t, i) => {
-    t.classList.toggle('ac', (i === 0 && tab === 'songs') || (i === 1 && tab === 'setlists'));
+  const songsEl = document.getElementById('songsTab');
+  const setlistsEl = document.getElementById('setlistsTab');
+  const importEl = document.getElementById('importTab');
+  if (songsEl) songsEl.style.display = tab === 'songs' ? 'block' : 'none';
+  if (setlistsEl) setlistsEl.style.display = tab === 'setlists' ? 'block' : 'none';
+  if (importEl) importEl.style.display = tab === 'import' ? 'block' : 'none';
+  document.querySelectorAll('#repertoireContent .tb, #panel-repertoire .tb').forEach((t) => {
+    const label = (t.textContent || '').trim().toLowerCase();
+    t.classList.toggle('ac', label === tab);
   });
+}
+
+// ─── ChordPro parser & import ─────────────────────────────────────────────────
+// Parses a single ChordPro document. Supports {title}, {artist}, {key}, {tempo},
+// {capo}, {comment}/{c} directives, inline [chord] tags, verse/chorus markers.
+function parseChordPro(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  let title = '', artist = '', key = '', tempo = null;
+  const contentLines = [];
+  const chordSet = new Set();
+  for (const raw of lines) {
+    const line = raw || '';
+    // Directive: {name: value} or {name}
+    const dir = line.match(/^\s*\{([^:}]+)(?::\s*(.*?))?\}\s*$/);
+    if (dir) {
+      const name = dir[1].trim().toLowerCase();
+      const value = (dir[2] || '').trim();
+      if (!title && (name === 'title' || name === 't')) { title = value; continue; }
+      if (!artist && (name === 'artist' || name === 'subtitle' || name === 'st')) { artist = value; continue; }
+      if (!key && name === 'key') { key = value; continue; }
+      if (!tempo && name === 'tempo') { const n = parseInt(value, 10); if (!isNaN(n)) tempo = n; continue; }
+      // Skip structural directives so they don't pollute the lyrics body.
+      if (['start_of_chorus','soc','end_of_chorus','eoc','start_of_verse','sov','end_of_verse','eov','start_of_bridge','sob','end_of_bridge','eob','capo','comment','c','chorus','verse','bridge'].includes(name)) {
+        continue;
+      }
+      // Unknown directive: drop it.
+      continue;
+    }
+    // Collect chords referenced inline
+    const matches = line.match(/\[([^\]]+)\]/g);
+    if (matches) matches.forEach(m => chordSet.add(m.slice(1, -1)));
+    contentLines.push(line);
+  }
+  // If no title directive, fall back to first non-blank line.
+  if (!title) {
+    const firstReal = contentLines.find(l => l.trim());
+    if (firstReal) title = firstReal.replace(/\[[^\]]+\]/g, '').trim().slice(0, 120);
+  }
+  // Trim leading/trailing blank lines
+  while (contentLines.length && !contentLines[0].trim()) contentLines.shift();
+  while (contentLines.length && !contentLines[contentLines.length - 1].trim()) contentLines.pop();
+  return {
+    title: title || 'Untitled',
+    artist: artist || '',
+    key: key || '',
+    tempo,
+    lyrics: contentLines.join('\n'),
+    chords: Array.from(chordSet).join(', '),
+  };
+}
+
+// Cache parsed files until user confirms import.
+window._chordProPending = [];
+
+async function parseChordProFiles(event) {
+  const files = Array.from(event?.target?.files || []);
+  if (!files.length) return;
+  const parsed = [];
+  for (const f of files) {
+    try {
+      const text = await f.text();
+      const song = parseChordPro(text);
+      parsed.push({ ...song, _filename: f.name });
+    } catch (e) {
+      console.error('ChordPro parse error for', f.name, e);
+    }
+  }
+  window._chordProPending = parsed;
+  renderChordProPreview();
+}
+
+function renderChordProPreview() {
+  const container = document.getElementById('chordProPreview');
+  if (!container) return;
+  const list = window._chordProPending || [];
+  if (!list.length) {
+    container.innerHTML = '';
+    return;
+  }
+  let html = `<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Ready to import (${list.length})</div>`;
+  html += `<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-bottom:12px;">`;
+  list.forEach((s, i) => {
+    html += `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 0;${i < list.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}">
+      <div style="flex:1;min-width:0;padding-right:8px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.title)}</div>
+        <div style="font-size:11px;color:var(--text-2);">${escapeHtml(s.artist || 'Unknown artist')}${s.key ? ' · Key ' + escapeHtml(s.key) : ''}${s.tempo ? ' · ' + s.tempo + ' BPM' : ''}</div>
+        <div style="font-size:10px;color:var(--text-3);margin-top:2px;">${escapeHtml(s._filename || '')}</div>
+      </div>
+      <button onclick="removeChordProItem(${i})" style="background:none;border:none;color:var(--text-3);font-size:18px;line-height:1;cursor:pointer;padding:0 4px;">×</button>
+    </div>`;
+  });
+  html += `</div>
+    <div style="display:flex;gap:8px;">
+      <button onclick="importChordProSongs()" class="pill-g" style="flex:1;">Import ${list.length} song${list.length === 1 ? '' : 's'}</button>
+      <button onclick="cancelChordProImport()" class="pill-o">Cancel</button>
+    </div>`;
+  container.innerHTML = html;
+}
+
+function removeChordProItem(i) {
+  if (!Array.isArray(window._chordProPending)) return;
+  window._chordProPending.splice(i, 1);
+  renderChordProPreview();
+}
+
+function cancelChordProImport() {
+  window._chordProPending = [];
+  const f = document.getElementById('chordProFile');
+  if (f) f.value = '';
+  renderChordProPreview();
+}
+
+async function importChordProSongs() {
+  const list = (window._chordProPending || []).map(s => ({
+    title: s.title,
+    artist: s.artist || null,
+    key: s.key || null,
+    tempo: s.tempo || null,
+    lyrics: s.lyrics || null,
+    chords: s.chords || null,
+  }));
+  if (!list.length) return;
+  try {
+    const res = await fetch('/api/songs/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ songs: list }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Import failed');
+    }
+    const out = await res.json();
+    window._chordProPending = [];
+    const f = document.getElementById('chordProFile');
+    if (f) f.value = '';
+    alert(`Imported ${out.count} song${out.count === 1 ? '' : 's'}.`);
+    openRepertoirePanel();
+  } catch (e) {
+    console.error('ChordPro import error:', e);
+    alert('Could not import songs: ' + (e.message || 'unknown error'));
+  }
 }
 
 function markInvoiceAsPaid(invoiceId) {

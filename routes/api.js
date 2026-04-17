@@ -1101,6 +1101,55 @@ router.get('/songs', async (req, res) => {
   }
 });
 
+router.get('/songs/:id', async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM songs WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Song not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Get song error:', error);
+    res.status(500).json({ error: 'Failed to fetch song' });
+  }
+});
+
+// Bulk import (used by ChordPro import). Body: { songs: [{ title, artist, key, lyrics, chords, tags }, ...] }
+router.post('/songs/bulk', async (req, res) => {
+  try {
+    const { songs } = req.body || {};
+    if (!Array.isArray(songs) || songs.length === 0) {
+      return res.status(400).json({ error: 'songs array required' });
+    }
+    const inserted = [];
+    for (const s of songs) {
+      if (!s || !s.title) continue;
+      const r = await db.query(
+        `INSERT INTO songs (user_id, title, artist, key, tempo, duration, genre, tags, lyrics, chords)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [
+          req.user.id,
+          String(s.title).slice(0, 200),
+          s.artist || null,
+          s.key || null,
+          s.tempo || null,
+          s.duration || null,
+          s.genre || null,
+          s.tags || null,
+          s.lyrics || null,
+          s.chords || null,
+        ]
+      );
+      inserted.push(r.rows[0]);
+    }
+    res.json({ count: inserted.length, songs: inserted });
+  } catch (error) {
+    console.error('Bulk import songs error:', error);
+    res.status(500).json({ error: 'Failed to import songs' });
+  }
+});
+
 router.post('/songs', async (req, res) => {
   try {
     const { title, artist, key, tempo, duration, genre, tags, lyrics, chords } = req.body;
