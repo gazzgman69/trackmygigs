@@ -234,4 +234,165 @@ router.get('/epk/:slug', async (req, res) => {
   }
 });
 
+// ── Public calendar feed (token-gated) ───────────────────────────────────────
+// /cal/:token — friendly HTML calendar (like /share/:slug but token-based)
+// /cal/:token.ics — RFC 5545 ICS feed for subscribe-in-calendar-app
+
+async function findUserByShareToken(token) {
+  if (!token) return null;
+  const r = await db.query(
+    'SELECT * FROM users WHERE share_token = $1 AND share_token_enabled = true',
+    [token]
+  );
+  return r.rows[0] || null;
+}
+
+function escIcs(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function toIcsDate(date, time) {
+  // date is a JS Date or yyyy-mm-dd; time is "HH:MM" or null
+  const d = date instanceof Date ? date : new Date(date);
+  const y = d.getFullYear();
+  const m = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  if (!time) {
+    return { value: `${y}${m}${day}`, allDay: true };
+  }
+  const [hh, mm] = String(time).split(':');
+  return { value: `${y}${m}${day}T${pad(hh || 0)}${pad(mm || 0)}00`, allDay: false };
+}
+
+router.get('/cal/:token.ics', async (req, res) => {
+  try {
+    const user = await findUserByShareToken(req.params.token);
+    if (!user) return res.status(404).type('text/plain').send('Not found');
+
+    const gigsR = await db.query(
+      `SELECT id, date, start_time, end_time, venue_name FROM gigs
+       WHERE user_id = $1 AND date >= CURRENT_DATE - INTERVAL '30 days' AND date <= CURRENT_DATE + INTERVAL '365 days'
+       ORDER BY date ASC`,
+      [user.id]
+    );
+
+    const stamp = new Date();
+    const dtstamp = `${stamp.getUTCFullYear()}${pad(stamp.getUTCMonth() + 1)}${pad(stamp.getUTCDate())}T${pad(stamp.getUTCHours())}${pad(stamp.getUTCMinutes())}${pad(stamp.getUTCSeconds())}Z`;
+
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//TrackMyGigs//Availability Feed//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      `X-WR-CALNAME:${escIcs((user.display_name || user.name || 'Artist') + ' - Busy')}`,
+      'X-PUBLISHED-TTL:PT1H',
+    ];
+
+    for (const g of gigsR.rows) {
+      const start = toIcsDate(g.date, g.start_time);
+      const endBase = toIcsDate(g.date, g.end_time || g.start_time || null);
+      // If no start_time at all, make it an all-day event
+      lines.push('BEGIN:VEVENT');
+      lines.push(`UID:gig-${g.id}@trackmygigs.app`);
+      lines.push(`DTSTAMP:${dtstamp}`);
+      if (start.allDay) {
+        lines.push(`DTSTART;VALUE=DATE:${start.value}`);
+        // all-day end is exclusive; add 1 day
+        const d = new Date(g.date); d.setDate(d.getDate() + 1);
+        lines.push(`DTEND;VALUE=DATE:${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`);
+      } else {
+        lines.push(`DTSTART:${start.value}`);
+        lines.push(`DTEND:${endBase.value}`);
+      }
+      lines.push('SUMMARY:Busy');
+      lines.push('TRANSP:OPAQUE');
+      lines.push('END:VEVENT');
+    }
+
+    lines.push('END:VCALENDAR');
+
+    res.set('Content-Type', 'text/calendar; charset=utf-8');
+    res.set('Cache-Control', 'no-cache, max-age=0');
+    res.send(lines.join('\r\n'));
+  } catch (err) {
+    console.error('ICS feed error:', err);
+    res.status(500).type('text/plain').send('Error');
+  }
+});
+
+router.get('/cal/:token', async (req, res) => {
+  try {
+    const user = await findUserByShareToken(req.params.token);
+    if (!user) {
+      res.status(404).set('Content-Type', 'text/html').send(pageHtml('Not found', `<div class="empty"><h1>Not found</h1><p class="sub">This link is no longer active.</p></div>`));
+      return;
+    }
+
+    const displayName = user.display_name || user.name || 'Artist';
+
+    const [gigsR, blockedR] = await Promise.all([
+      db.query(
+        `SELECT date FROM gigs
+         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '120 days'`,
+        [user.id]
+      ),
+      db.query(
+        `SELECT date FROM blocked_dates
+         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '120 days'`,
+        [user.id]
+      ).catch(() => ({ rows: [] })),
+    ]);
+
+    const bookedSet = new Set(gigsR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
+    const blockedSet = new Set(blockedR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
+
+    const today = new Date();
+    const monthsHtml = [0, 1, 2].map(offset => {
+      const first = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+      const monthLabel = first.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+      const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+      const firstDow = (first.getDay() + 6) % 7;
+      let cells = '';
+      cells += ['Mo','Tu','We','Th','Fr','Sa','Su'].map(d => `<div class="cal-hd">${d}</div>`).join('');
+      for (let i = 0; i < firstDow; i++) cells += `<div></div>`;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const dateObj = new Date(dateStr);
+        const isPast = dateObj < new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        let cls = 'free';
+        if (bookedSet.has(dateStr)) cls = 'booked';
+        else if (blockedSet.has(dateStr)) cls = 'blocked';
+        if (isPast) cls += ' past';
+        cells += `<div class="cal-cell ${cls}">${d}</div>`;
+      }
+      return `<div class="cal-month">${esc(monthLabel)}</div><div class="cal-grid">${cells}</div>`;
+    }).join('');
+
+    const icsUrl = `/cal/${esc(req.params.token)}.ics`;
+
+    const body = `
+      <div class="avatar">${esc((displayName[0] || 'M').toUpperCase())}</div>
+      <h1 style="text-align:center;">${esc(displayName)}</h1>
+      <p class="sub" style="text-align:center;">Availability &mdash; next 3 months</p>
+      <div class="legend">
+        <span><span class="legend-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
+        <span><span class="legend-dot" style="background:var(--danger);"></span>Booked</span>
+        <span><span class="legend-dot" style="background:#6E7681;"></span>Unavailable</span>
+      </div>
+      <div class="card">${monthsHtml}</div>
+      <div style="text-align:center;margin-top:20px;">
+        <a class="btn btn-o" href="${icsUrl}">Subscribe (ICS)</a>
+      </div>`;
+
+    res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} Availability`, body));
+  } catch (err) {
+    console.error('Public /cal error:', err);
+    res.status(500).set('Content-Type', 'text/html').send(pageHtml('Error', `<div class="empty"><h1>Something went wrong</h1><p class="sub">Please try again.</p></div>`));
+  }
+});
+
 module.exports = router;

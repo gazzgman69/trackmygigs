@@ -645,16 +645,27 @@ router.get('/earnings', async (req, res) => {
     const { period = 'month', date } = req.query;
     const centerDate = date ? new Date(date) : new Date();
 
-    // Calculate tax year
+    // Calculate current + prior tax year (UK: starts 6 April)
     const now = new Date();
     const currentMonth = now.getMonth() + 1;
     const currentDay = now.getDate();
-    let taxYearStart;
+    let taxYearStart, taxYearEnd, taxYearLabel;
     if (currentMonth > 4 || (currentMonth === 4 && currentDay >= 6)) {
-      taxYearStart = `${now.getFullYear()}-04-06`;
+      const y = now.getFullYear();
+      taxYearStart = `${y}-04-06`;
+      taxYearEnd = `${y + 1}-04-05`;
+      taxYearLabel = `${String(y).slice(-2)}/${String(y + 1).slice(-2)}`;
     } else {
-      taxYearStart = `${now.getFullYear() - 1}-04-06`;
+      const y = now.getFullYear();
+      taxYearStart = `${y - 1}-04-06`;
+      taxYearEnd = `${y}-04-05`;
+      taxYearLabel = `${String(y - 1).slice(-2)}/${String(y).slice(-2)}`;
     }
+    // Previous tax year for year-over-year
+    const prevYearStart = new Date(taxYearStart);
+    prevYearStart.setFullYear(prevYearStart.getFullYear() - 1);
+    const prevYearEnd = new Date(taxYearEnd);
+    prevYearEnd.setFullYear(prevYearEnd.getFullYear() - 1);
 
     // Monthly breakdown (past 12 months)
     const monthlyResult = await db.query(
@@ -668,22 +679,36 @@ router.get('/earnings', async (req, res) => {
        FROM gigs
        WHERE user_id = $1 AND date >= DATE_TRUNC('month', NOW()) - INTERVAL '12 months'
        GROUP BY month_start, month, year
-       ORDER BY year DESC, month DESC`,
+       ORDER BY year ASC, month ASC`,
       [userId]
     );
 
     // Expenses total this tax year
     const expensesResult = await db.query(
       `SELECT COALESCE(SUM(amount), 0) as total FROM receipts
-       WHERE user_id = $1 AND date >= $2`,
-      [userId, taxYearStart]
+       WHERE user_id = $1 AND date >= $2 AND date <= $3`,
+      [userId, taxYearStart, taxYearEnd]
     );
 
     // Mileage total this tax year
     const mileageResult = await db.query(
       `SELECT COALESCE(SUM(mileage_miles), 0) as total FROM gigs
-       WHERE user_id = $1 AND date >= $2`,
-      [userId, taxYearStart]
+       WHERE user_id = $1 AND date >= $2 AND date <= $3`,
+      [userId, taxYearStart, taxYearEnd]
+    );
+
+    // Earnings + gig count this tax year
+    const currentYearResult = await db.query(
+      `SELECT COALESCE(SUM(fee), 0) as total, COUNT(*) as count FROM gigs
+       WHERE user_id = $1 AND date >= $2 AND date <= $3 AND status = 'confirmed'`,
+      [userId, taxYearStart, taxYearEnd]
+    );
+
+    // Previous tax year earnings for YoY comparison
+    const prevYearResult = await db.query(
+      `SELECT COALESCE(SUM(fee), 0) as total FROM gigs
+       WHERE user_id = $1 AND date >= $2 AND date <= $3 AND status = 'confirmed'`,
+      [userId, prevYearStart.toISOString().slice(0, 10), prevYearEnd.toISOString().slice(0, 10)]
     );
 
     // Invoice summary
@@ -698,17 +723,38 @@ router.get('/earnings', async (req, res) => {
     );
 
     const mileageClaimable = parseFloat(mileageResult.rows[0]?.total || 0) * 0.45;
+    const totalEarnings = parseFloat(currentYearResult.rows[0]?.total || 0);
+    const totalExpenses = parseFloat(expensesResult.rows[0]?.total || 0);
+    const totalGigs = parseInt(currentYearResult.rows[0]?.count || 0);
+    const totalMiles = parseFloat(mileageResult.rows[0]?.total || 0);
+    const prevEarnings = parseFloat(prevYearResult.rows[0]?.total || 0);
+    const yoyPct = prevEarnings > 0
+      ? Math.round(((totalEarnings - prevEarnings) / prevEarnings) * 100)
+      : null;
+
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthly_breakdown = monthlyResult.rows.map(row => ({
+      month: row.month,
+      year: row.year,
+      month_label: `${monthNames[row.month - 1]} ${String(row.year).slice(-2)}`,
+      earnings: parseFloat(row.confirmed_total),
+      confirmed_total: parseFloat(row.confirmed_total),
+      enquiry_total: parseFloat(row.enquiry_total),
+      gig_count: parseInt(row.gig_count),
+    }));
 
     res.json({
-      monthly_breakdown: monthlyResult.rows.map(row => ({
-        month: row.month,
-        year: row.year,
-        confirmed_total: parseFloat(row.confirmed_total),
-        enquiry_total: parseFloat(row.enquiry_total),
-        gig_count: parseInt(row.gig_count),
-      })),
-      expenses_total: parseFloat(expensesResult.rows[0]?.total || 0),
-      mileage_total: parseFloat(mileageResult.rows[0]?.total || 0),
+      // Fields used by the new finance panel
+      tax_year: taxYearLabel,
+      total_earnings: totalEarnings,
+      total_gigs: totalGigs,
+      total_expenses: totalExpenses,
+      total_miles: totalMiles,
+      year_over_year_pct: yoyPct,
+      monthly_breakdown,
+      // Legacy fields (kept for existing callers)
+      expenses_total: totalExpenses,
+      mileage_total: totalMiles,
       mileage_claimable: mileageClaimable,
       invoice_summary: {
         paid: parseFloat(invoiceSummaryResult.rows[0]?.paid || 0),
@@ -720,6 +766,125 @@ router.get('/earnings', async (req, res) => {
   } catch (error) {
     console.error('Get earnings error:', error);
     res.status(500).json({ error: 'Failed to fetch earnings' });
+  }
+});
+
+// ── Public share token (calendar ICS feed) ───────────────────────────────────
+// GET returns { token, enabled }; POST toggles on/off and generates a token on demand.
+router.get('/share-token', async (req, res) => {
+  try {
+    const r = await db.query(
+      'SELECT share_token, share_token_enabled FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const row = r.rows[0] || {};
+    res.json({
+      token: row.share_token_enabled ? (row.share_token || null) : null,
+      enabled: !!row.share_token_enabled,
+    });
+  } catch (error) {
+    console.error('Get share-token error:', error);
+    res.status(500).json({ error: 'Failed to fetch share token' });
+  }
+});
+
+router.post('/share-token', async (req, res) => {
+  try {
+    const { enabled } = req.body || {};
+    if (!enabled) {
+      await db.query(
+        'UPDATE users SET share_token_enabled = false WHERE id = $1',
+        [req.user.id]
+      );
+      return res.json({ token: null, enabled: false });
+    }
+    // Enabling: ensure a token exists (rotate-safe: only generates if missing)
+    const existing = await db.query(
+      'SELECT share_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    let token = existing.rows[0]?.share_token;
+    if (!token) {
+      // 32-char url-safe token
+      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      token = Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    }
+    await db.query(
+      'UPDATE users SET share_token = $1, share_token_enabled = true WHERE id = $2',
+      [token, req.user.id]
+    );
+    res.json({ token, enabled: true });
+  } catch (error) {
+    console.error('Set share-token error:', error);
+    res.status(500).json({ error: 'Failed to update share token' });
+  }
+});
+
+// ── Threads / Chat inbox ────────────────────────────────────────────────────
+// Returns an array shaped for the chat inbox panel. Dep threads are distinguished
+// so the inbox can split them into "Active deps" vs "Gig bands".
+router.get('/threads', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const result = await db.query(
+      `SELECT
+         t.id,
+         t.thread_type,
+         t.kind,
+         t.created_at,
+         g.id as gig_id,
+         g.band_name,
+         g.venue_name,
+         g.date as gig_date,
+         (
+           SELECT content FROM messages m
+           WHERE m.thread_id = t.id ORDER BY m.created_at DESC LIMIT 1
+         ) as last_message,
+         (
+           SELECT created_at FROM messages m
+           WHERE m.thread_id = t.id ORDER BY m.created_at DESC LIMIT 1
+         ) as last_message_at,
+         (
+           SELECT COUNT(*)::int FROM messages m
+           WHERE m.thread_id = t.id
+             AND m.sender_id <> $1::uuid
+             AND NOT COALESCE(m.read_by, ARRAY[]::uuid[]) @> ARRAY[$1::uuid]
+         ) as unread
+       FROM threads t
+       LEFT JOIN gigs g ON g.id = t.gig_id
+       WHERE t.participant_ids @> ARRAY[$1::uuid]
+       ORDER BY COALESCE((
+         SELECT MAX(created_at) FROM messages m WHERE m.thread_id = t.id
+       ), t.created_at) DESC`,
+      [userId]
+    );
+
+    const now = Date.now();
+    const timeAgo = (d) => {
+      if (!d) return '';
+      const diff = Math.max(0, now - new Date(d).getTime());
+      const m = Math.floor(diff / 60000);
+      if (m < 1) return 'now';
+      if (m < 60) return `${m}m`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}h`;
+      const days = Math.floor(h / 24);
+      if (days < 7) return `${days}d`;
+      return `${Math.floor(days / 7)}w`;
+    };
+
+    res.json(result.rows.map(r => ({
+      id: r.id,
+      kind: r.kind || (r.thread_type === 'dep' ? 'dep' : 'gig'),
+      title: r.band_name || r.venue_name || 'Untitled',
+      last_message: r.last_message || '',
+      time_ago: timeAgo(r.last_message_at || r.created_at),
+      unread: parseInt(r.unread || 0),
+      gig_id: r.gig_id,
+    })));
+  } catch (error) {
+    console.error('Get threads error:', error);
+    res.status(500).json({ error: 'Failed to fetch threads' });
   }
 });
 

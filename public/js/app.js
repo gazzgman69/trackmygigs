@@ -1018,13 +1018,32 @@ async function renderCalendarScreen() {
 function buildCalendarView(content, gigsData, blockedData) {
   const view = window._calViewMode || 'month';
   const currentDate = window._calDate || new Date();
+  const layers = getCalendarLayers();
 
   let html = `
     <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
       <div style="font-size:24px;font-weight:700;color:var(--text);">Calendar</div>
       <div style="display:flex;gap:8px;">
+        <div onclick="toggleCalendarLayers()" title="Layers" style="width:32px;height:32px;border-radius:16px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;">&#x2630;</div>
+        <div onclick="openPanel('pub-cal-share')" title="Share" style="width:32px;height:32px;border-radius:16px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;">&#x1F517;</div>
         <div onclick="toggleCalendarMenu()" style="width:32px;height:32px;border-radius:16px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;">&#8943;</div>
       </div>
+    </div>
+    <div id="calendarLayers" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;">
+      <div style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Layers</div>
+      ${[
+        ['gigs', 'Gigs', 'var(--success)'],
+        ['blocked', 'Blocked dates', 'var(--danger)'],
+        ['travel', 'Travel + pack-down', 'var(--accent)'],
+        ['events', 'Other events', 'var(--info)'],
+        ['google', 'Google Calendar', '#4285F4'],
+      ].map(([id, label, color]) => `
+        <label style="display:flex;align-items:center;gap:10px;padding:6px 0;cursor:pointer;">
+          <input type="checkbox" ${layers[id] ? 'checked' : ''} onchange="toggleCalendarLayer('${id}', this.checked)" style="accent-color:${color};width:16px;height:16px;">
+          <span style="width:10px;height:10px;border-radius:2px;background:${color};"></span>
+          <span style="font-size:13px;color:var(--text);">${label}</span>
+        </label>
+      `).join('')}
     </div>
     <div id="calendarMenu" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px;z-index:10;">
       <div onclick="handleCalendarAction('add-gig')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;">Add gig</div>
@@ -1054,6 +1073,33 @@ function toggleCalendarMenu() {
     menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
     menu.style.flexDirection = 'column';
   }
+}
+
+function getCalendarLayers() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('calendarLayers') || '{}');
+    return {
+      gigs: saved.gigs !== false,
+      blocked: saved.blocked !== false,
+      travel: saved.travel !== false,
+      events: saved.events !== false,
+      google: saved.google === true,
+    };
+  } catch (e) {
+    return { gigs: true, blocked: true, travel: true, events: true, google: false };
+  }
+}
+
+function toggleCalendarLayers() {
+  const el = document.getElementById('calendarLayers');
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleCalendarLayer(id, checked) {
+  const layers = getCalendarLayers();
+  layers[id] = !!checked;
+  localStorage.setItem('calendarLayers', JSON.stringify(layers));
+  renderCalendarScreen();
 }
 
 function handleCalendarAction(action) {
@@ -1206,7 +1252,12 @@ function renderCalendarWeek(currentDate, gigs, blocked) {
 
 function renderCalendarDay(currentDate, gigs, blocked) {
   const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
-  const dayGigs = gigs.filter(g => g.date === dateStr).sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+  const layers = getCalendarLayers();
+  const dayGigs = layers.gigs
+    ? gigs.filter(g => g.date === dateStr).sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''))
+    : [];
+  const today = new Date();
+  const isToday = currentDate.toDateString() === today.toDateString();
 
   let html = `<div style="padding:16px;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -1216,13 +1267,22 @@ function renderCalendarDay(currentDate, gigs, blocked) {
     </div>
     <button onclick="goCalendarToday()" style="width:100%;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);color:var(--accent);border-radius:6px;padding:8px;font-size:12px;font-weight:600;margin-bottom:12px;cursor:pointer;">Today</button>`;
 
+  if (isToday) {
+    const nowLabel = today.toTimeString().substring(0, 5);
+    html += `<div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
+      <div style="width:8px;height:8px;border-radius:50%;background:#ff3b30;flex-shrink:0;"></div>
+      <div style="flex:1;height:2px;background:#ff3b30;"></div>
+      <div style="font-size:10px;font-weight:700;color:#ff3b30;">Now · ${nowLabel}</div>
+    </div>`;
+  }
+
   if (dayGigs.length === 0) {
     html += `<div style="text-align:center;padding:40px 20px;color:var(--text-2);">No gigs scheduled for this day</div>`;
   } else {
     html += `<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Gigs today</div>`;
 
     // Auto-blocks for the day: soft pre/post windows from travel + load-in + pack-down
-    const autoBlocks = (typeof computeAutoBlocksForGigs === 'function')
+    const autoBlocks = (layers.travel && typeof computeAutoBlocksForGigs === 'function')
       ? computeAutoBlocksForGigs(dayGigs).filter(b => {
           const bs = new Date(b.start);
           return `${bs.getFullYear()}-${String(bs.getMonth() + 1).padStart(2, '0')}-${String(bs.getDate()).padStart(2, '0')}` === dateStr;
@@ -2605,6 +2665,9 @@ function openPanel(id) {
   // Trigger render for panels that need dynamic content
   if (id === 'profile-panel') renderProfileScreen();
   if (id === 'panel-notifications') renderNotificationsPanel();
+  if (id === 'pub-cal-share') renderPubCalShare();
+  if (id === 'finance-panel') renderFinancePanel();
+  if (id === 'chat-inbox') renderChatInbox();
 }
 
 // ── Notifications Panel ─────────────────────────────────────────────────────
@@ -2749,6 +2812,247 @@ function clearAllNotifications() {
 window.dismissNotification = dismissNotification;
 window.clearAllNotifications = clearAllNotifications;
 window.renderNotificationsPanel = renderNotificationsPanel;
+
+// ── Public Calendar Share Panel ─────────────────────────────────────────────
+async function renderPubCalShare() {
+  const body = document.getElementById('pubCalShareBody');
+  if (!body) return;
+
+  try {
+    const resp = await fetch('/api/share-token');
+    const { token, enabled } = await resp.json();
+    const origin = window.location.origin;
+    const icsUrl = token ? `${origin}/cal/${token}.ics` : '';
+    const pubUrl = token ? `${origin}/cal/${token}` : '';
+
+    body.innerHTML = `
+      <div style="padding:14px;">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <div style="font-size:14px;font-weight:600;color:var(--text);">Public availability</div>
+            <label style="position:relative;display:inline-block;width:40px;height:22px;">
+              <input type="checkbox" id="pubCalToggle" ${enabled ? 'checked' : ''} onchange="togglePubCal(this.checked)" style="opacity:0;width:0;height:0;">
+              <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:${enabled ? 'var(--accent)' : 'var(--border)'};border-radius:22px;transition:.2s;"></span>
+              <span style="position:absolute;height:18px;width:18px;left:${enabled ? '20px' : '2px'};top:2px;background:white;border-radius:50%;transition:.2s;"></span>
+            </label>
+          </div>
+          <div style="font-size:12px;color:var(--text-2);line-height:1.5;">Let bookers check your availability without exposing personal details. Only the word "Busy" and date ranges are shared.</div>
+        </div>
+
+        ${enabled && token ? `
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
+          <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Public link</div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <input type="text" value="${pubUrl}" readonly style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:12px;color:var(--text);">
+            <button onclick="copyToClipboard('${pubUrl}')" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;">Copy</button>
+          </div>
+        </div>
+
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
+          <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Subscribe (ICS feed)</div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <input type="text" value="${icsUrl}" readonly style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:12px;color:var(--text);">
+            <button onclick="copyToClipboard('${icsUrl}')" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;">Copy</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:6px;">Add this to Google Calendar, Apple Calendar, or Outlook.</div>
+        </div>
+        ` : ''}
+      </div>`;
+  } catch (err) {
+    console.error('Pub cal share error:', err);
+    body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load share settings.</div>`;
+  }
+}
+
+async function togglePubCal(enabled) {
+  try {
+    await fetch('/api/share-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    renderPubCalShare();
+  } catch (e) { console.error(e); }
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => toast('Copied'));
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    toast('Copied');
+  }
+}
+
+function toast(msg) {
+  let t = document.getElementById('toastMessage');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toastMessage';
+    t.style.cssText = 'position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:8px;font-size:13px;font-weight:600;z-index:9999;opacity:0;transition:opacity .2s;';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 1800);
+}
+
+window.togglePubCal = togglePubCal;
+window.copyToClipboard = copyToClipboard;
+window.toast = toast;
+
+// ── Finance Panel ───────────────────────────────────────────────────────────
+async function renderFinancePanel() {
+  const body = document.getElementById('financePanelBody');
+  if (!body) return;
+
+  try {
+    const resp = await fetch('/api/earnings?period=year');
+    const data = await resp.json();
+    const taxYear = data.tax_year || '2026/27';
+    const earnings = data.total_earnings || 0;
+    const gigs = data.total_gigs || 0;
+    const expenses = data.total_expenses || 0;
+    const net = earnings - expenses;
+    const monthly = data.monthly_breakdown || [];
+    const taxEstimate = estimateTax(net);
+    const yoyPct = data.year_over_year_pct || null;
+
+    body.innerHTML = `
+      <div style="padding:14px;">
+        <!-- Hero tax year -->
+        <div style="background:linear-gradient(135deg,rgba(63,185,80,.1),rgba(63,185,80,.02));border:1px solid rgba(63,185,80,.3);border-radius:var(--r);padding:16px;margin-bottom:12px;">
+          <div style="font-size:10px;font-weight:600;color:var(--success);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Tax year ${taxYear}</div>
+          <div style="font-size:28px;font-weight:800;color:var(--text);">&pound;${earnings.toLocaleString()}</div>
+          <div style="font-size:12px;color:var(--text-2);margin-top:4px;">${gigs} gig${gigs === 1 ? '' : 's'}${yoyPct !== null ? ` &middot; ${yoyPct >= 0 ? '+' : ''}${yoyPct}% YoY` : ''}</div>
+        </div>
+
+        <!-- Row: expenses + net -->
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <div onclick="renderExpenseBreakdown()" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:12px;cursor:pointer;">
+            <div style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Expenses</div>
+            <div style="font-size:16px;font-weight:700;color:var(--danger);">&pound;${expenses.toLocaleString()}</div>
+            <div style="font-size:10px;color:var(--text-3);margin-top:2px;">deductible</div>
+          </div>
+          <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:12px;">
+            <div style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Net</div>
+            <div style="font-size:16px;font-weight:700;color:var(--success);">&pound;${net.toLocaleString()}</div>
+            <div style="font-size:10px;color:var(--text-3);margin-top:2px;">earnings &minus; expenses</div>
+          </div>
+        </div>
+
+        <!-- Tax estimate -->
+        <div style="background:var(--warning-dim);border:1px solid rgba(240,165,0,.3);border-radius:var(--r);padding:14px;margin-bottom:12px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <span style="font-size:14px;">&#x1F4DD;</span>
+            <span style="font-size:11px;font-weight:700;color:var(--warning);text-transform:uppercase;letter-spacing:.5px;">Tax estimate</span>
+          </div>
+          <div style="font-size:20px;font-weight:800;color:var(--text);">&pound;${taxEstimate.toLocaleString()}</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:4px;">Rough estimate for self-employed sole trader. Talk to an accountant before filing.</div>
+        </div>
+
+        <!-- Mileage -->
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">Mileage</div>
+            <div style="font-size:10px;color:var(--text-3);">45p/mile HMRC rate</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--text);">${(data.total_miles || 0).toLocaleString()} mi</div>
+          <div style="font-size:12px;color:var(--success);margin-top:2px;">&pound;${((data.total_miles || 0) * 0.45).toFixed(0)} claimable</div>
+        </div>
+
+        <!-- Monthly chart -->
+        ${monthly.length > 0 ? `
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Monthly breakdown</div>
+          <div style="display:flex;align-items:flex-end;gap:3px;height:60px;">
+            ${monthly.map((m) => {
+              const max = Math.max(...monthly.map(x => x.earnings || 0)) || 1;
+              const h = Math.max(4, ((m.earnings || 0) / max) * 100);
+              return `<div title="${m.month_label || ''}: &pound;${m.earnings || 0}" style="flex:1;background:var(--success);opacity:.8;border-radius:2px 2px 0 0;height:${h}%;"></div>`;
+            }).join('')}
+          </div>
+        </div>` : ''}
+      </div>`;
+  } catch (err) {
+    console.error('Finance panel error:', err);
+    body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load finance data.</div>`;
+  }
+}
+
+function estimateTax(net) {
+  // UK 2026/27 self-employed rough estimate: personal allowance 12,570
+  // 20% basic rate to 50,270, 40% to 125,140, 45% above
+  // Plus Class 4 NI: 6% between 12,570 and 50,270
+  if (net <= 12570) return 0;
+  let tax = 0, ni = 0;
+  const a = Math.min(net, 50270) - 12570;
+  if (a > 0) { tax += a * 0.20; ni += a * 0.06; }
+  const b = Math.min(net, 125140) - 50270;
+  if (b > 0) { tax += b * 0.40; ni += b * 0.02; }
+  const c = net - 125140;
+  if (c > 0) { tax += c * 0.45; ni += c * 0.02; }
+  return Math.round(tax + ni);
+}
+
+window.renderFinancePanel = renderFinancePanel;
+
+// ── Chat Inbox Panel ────────────────────────────────────────────────────────
+async function renderChatInbox() {
+  const body = document.getElementById('chatInboxBody');
+  if (!body) return;
+
+  try {
+    const resp = await fetch('/api/threads');
+    const threads = await resp.json();
+    const list = Array.isArray(threads) ? threads : [];
+
+    // Split: dep threads vs gig-band threads
+    const depThreads = list.filter(t => t.kind === 'dep');
+    const gigThreads = list.filter(t => t.kind !== 'dep');
+
+    const renderThread = (t) => `
+      <div onclick="openChatThread('${t.id}')" style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;">
+        <div style="width:36px;height:36px;border-radius:18px;background:${t.kind === 'dep' ? 'rgba(136,87,255,.15)' : 'var(--info-dim)'};display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:${t.kind === 'dep' ? '#A78BFA' : 'var(--info)'};flex-shrink:0;">${(t.title || 'G')[0]}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title || 'Untitled')}</span>
+            ${t.unread > 0 ? `<span style="background:var(--accent);color:#000;font-size:9px;font-weight:800;min-width:16px;height:16px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;">${t.unread}</span>` : ''}
+          </div>
+          <div style="font-size:11px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">${escapeHtml(t.last_message || '')}</div>
+        </div>
+        <span style="font-size:10px;color:var(--text-3);flex-shrink:0;">${t.time_ago || ''}</span>
+      </div>`;
+
+    body.innerHTML = `
+      ${depThreads.length > 0 ? `
+      <div style="padding:12px 14px 6px;font-size:11px;font-weight:700;color:#A78BFA;text-transform:uppercase;letter-spacing:1px;">Active deps</div>
+      ${depThreads.map(renderThread).join('')}` : ''}
+      ${gigThreads.length > 0 ? `
+      <div style="padding:12px 14px 6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Gig bands</div>
+      ${gigThreads.map(renderThread).join('')}` : ''}
+      ${list.length === 0 ? `
+      <div style="padding:60px 24px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:12px;">&#x1F4AC;</div>
+        <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px;">No messages yet</div>
+        <div style="font-size:13px;color:var(--text-2);">Chat threads with bandleaders and deps will show up here.</div>
+      </div>` : ''}`;
+  } catch (err) {
+    console.error('Chat inbox error:', err);
+    body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load messages.</div>`;
+  }
+}
+
+function openChatThread(id) {
+  // Placeholder; thread view comes in Batch 4
+  toast('Thread view coming soon');
+}
+
+window.renderChatInbox = renderChatInbox;
+window.openChatThread = openChatThread;
 
 function closePanel(id) {
   document.getElementById(id).classList.remove('open');
