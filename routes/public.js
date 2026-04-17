@@ -187,6 +187,25 @@ router.get('/epk/:slug', async (req, res) => {
 
     const instruments = Array.isArray(user.instruments) ? user.instruments.join(', ') : (user.instruments || '');
 
+    // Rate card (all optional; show the section only if at least one value is set)
+    const rateStandard = user.rate_standard != null ? Number(user.rate_standard) : null;
+    const ratePremium = user.rate_premium != null ? Number(user.rate_premium) : null;
+    const rateDep = user.rate_dep != null ? Number(user.rate_dep) : null;
+    const rateDepositPct = user.rate_deposit_pct != null ? Number(user.rate_deposit_pct) : null;
+    const rateNotes = user.rate_notes || '';
+    const hasRateCard = rateStandard != null || ratePremium != null || rateDep != null || rateDepositPct != null || rateNotes;
+    const gbp = (n) => '\u00a3' + (Math.round(Number(n) * 100) / 100).toFixed(2).replace(/\.00$/, '');
+    const rateRow = (label, value, note) => `<div class="row"><div style="flex:1;"><div>${esc(label)}</div>${note ? `<div style="color:var(--text-3);font-size:12px;">${esc(note)}</div>` : ''}</div><div style="font-weight:700;color:var(--accent);">${value}</div></div>`;
+    const rateCardHtml = hasRateCard
+      ? `<div class="section-label">Rates</div><div class="card">
+          ${rateStandard != null ? rateRow('Standard rate', gbp(rateStandard), 'Typical booking') : ''}
+          ${ratePremium != null ? rateRow('Premium rate', gbp(ratePremium), 'Weekends, peak season, black-tie') : ''}
+          ${rateDep != null ? rateRow('Dep rate', gbp(rateDep), 'When depping with another band') : ''}
+          ${rateDepositPct != null ? rateRow('Deposit', rateDepositPct + '%', 'Payable on booking to secure the date') : ''}
+          ${rateNotes ? `<div style="padding:10px 0;color:var(--text-2);font-size:13px;line-height:1.5;white-space:pre-wrap;">${esc(rateNotes)}</div>` : ''}
+        </div>`
+      : '';
+
     let videoEmbed = '';
     if (videoUrl) {
       // Try to extract a YouTube/Vimeo ID for an iframe; otherwise just link it
@@ -213,6 +232,8 @@ router.get('/epk/:slug', async (req, res) => {
       ${videoEmbed ? `<div class="section-label">Video</div>${videoEmbed}` : ''}
 
       ${audioUrl ? `<div class="section-label">Listen</div><div class="card"><audio class="media" controls src="${esc(audioUrl)}"></audio></div>` : ''}
+
+      ${rateCardHtml}
 
       ${recentR.rows.length
         ? `<div class="section-label">Recent performances</div><div class="card">${recentR.rows.map(r => {
