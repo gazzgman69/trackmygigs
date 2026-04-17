@@ -3261,7 +3261,7 @@ async function renderFinancePanel() {
 
         <!-- Monthly chart -->
         ${monthly.length > 0 ? `
-        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
           <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Monthly breakdown</div>
           <div style="display:flex;align-items:flex-end;gap:3px;height:60px;">
             ${monthly.map((m) => {
@@ -3271,6 +3271,15 @@ async function renderFinancePanel() {
             }).join('')}
           </div>
         </div>` : ''}
+
+        <!-- Export -->
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Export</div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <button class="pill-g" onclick="exportGigsCSV()">Export gigs (CSV)</button>
+          <button class="pill-g" onclick="exportExpensesCSV()">Export expenses (CSV)</button>
+          <button class="pill-o" onclick="exportGigsPDF()">Export gigs (PDF)</button>
+          <button class="pill-o" onclick="exportFinancePDF()">Export finance summary (PDF)</button>
+        </div>
       </div>`;
   } catch (err) {
     console.error('Finance panel error:', err);
