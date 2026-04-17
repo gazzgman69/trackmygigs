@@ -2576,7 +2576,151 @@ function openPanel(id) {
   document.getElementById(id).classList.add('open');
   // Trigger render for panels that need dynamic content
   if (id === 'profile-panel') renderProfileScreen();
+  if (id === 'panel-notifications') renderNotificationsPanel();
 }
+
+// ── Notifications Panel ─────────────────────────────────────────────────────
+async function renderNotificationsPanel() {
+  const body = document.getElementById('notificationsPanelBody');
+  if (!body) return;
+
+  try {
+    const resp = await fetch('/api/notifications');
+    const notifications = await resp.json();
+
+    if (!Array.isArray(notifications) || notifications.length === 0) {
+      body.innerHTML = `
+        <div style="padding:60px 24px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:12px;">🔔</div>
+          <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px;">You're all caught up</div>
+          <div style="font-size:13px;color:var(--text-2);line-height:1.5;">New gig offers, upcoming gigs and payment updates will show up here.</div>
+        </div>`;
+      const dot = document.getElementById('notificationDot');
+      if (dot) dot.style.display = 'none';
+      return;
+    }
+
+    // Hide dismissed ones from local storage
+    const dismissed = JSON.parse(localStorage.getItem('dismissedNotifications') || '[]');
+    const visible = notifications.filter((n) => !dismissed.includes(notifKey(n)));
+
+    if (visible.length === 0) {
+      body.innerHTML = `
+        <div style="padding:60px 24px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:12px;">🔔</div>
+          <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px;">You're all caught up</div>
+          <div style="font-size:13px;color:var(--text-2);line-height:1.5;">Cleared notifications will come back when something new happens.</div>
+        </div>`;
+      return;
+    }
+
+    // Sort by timestamp desc
+    visible.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    body.innerHTML = `<div style="padding:10px 14px;">${visible.map(buildNotifCard).join('')}</div>`;
+  } catch (err) {
+    console.error('Notifications panel error:', err);
+    body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load notifications. Pull to retry.</div>`;
+  }
+}
+
+function notifKey(n) {
+  return `${n.type}:${n.action_type || ''}:${n.action_id || ''}:${n.timestamp || ''}`;
+}
+
+function buildNotifCard(n) {
+  const key = notifKey(n);
+  const ts = formatNotifTime(n.timestamp);
+  let icon = '🔔';
+  let borderColor = 'var(--border)';
+  let bg = 'var(--card)';
+  let actionHTML = '';
+
+  switch (n.type) {
+    case 'gig':
+      icon = '📅';
+      borderColor = 'rgba(88,166,255,.25)';
+      actionHTML = n.action_id
+        ? `<button onclick="openGigDetail('${n.action_id}');closePanel('panel-notifications');" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">View gig</button>`
+        : '';
+      break;
+    case 'invoice':
+      icon = '💷';
+      borderColor = 'rgba(248,81,73,.35)';
+      bg = 'linear-gradient(135deg,rgba(248,81,73,.08),transparent)';
+      actionHTML = n.action_id
+        ? `<button onclick="openInvoiceDetail('${n.action_id}');closePanel('panel-notifications');" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">View invoice</button>`
+        : '';
+      break;
+    case 'offer':
+      icon = '💤';
+      borderColor = 'rgba(240,165,0,.4)';
+      bg = 'linear-gradient(135deg,rgba(240,165,0,.08),transparent)';
+      actionHTML = `<button onclick="showScreen('offers');closePanel('panel-notifications');" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">View offer</button>`;
+      break;
+  }
+
+  return `
+    <div style="position:relative;background:${bg};border:1px solid ${borderColor};border-radius:12px;padding:12px 14px;margin-bottom:10px;">
+      <button onclick="dismissNotification('${escapeHtml(key)}')" style="position:absolute;top:8px;right:10px;background:none;border:none;color:var(--text-3);font-size:14px;cursor:pointer;">✕</button>
+      <div style="font-size:22px;margin-bottom:6px;">${icon}</div>
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(n.title || '')}</div>
+      <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:8px;">${escapeHtml(n.subtitle || '')}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        ${actionHTML || '<div></div>'}
+        <div style="font-size:11px;color:var(--text-3);">${ts}</div>
+      </div>
+    </div>`;
+}
+
+function formatNotifTime(ts) {
+  if (!ts) return '';
+  try {
+    const d = new Date(ts);
+    const now = new Date();
+    const diffMs = now - d;
+    const diffHours = Math.abs(diffMs) / (1000 * 60 * 60);
+    if (diffMs < 0) {
+      const futureDays = Math.ceil(-diffMs / (1000 * 60 * 60 * 24));
+      if (futureDays <= 2) return `in ${futureDays} day${futureDays === 1 ? '' : 's'}`;
+      return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    }
+    if (diffHours < 1) return 'Just now';
+    if (diffHours < 24) return `${Math.floor(diffHours)}h ago`;
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  } catch (e) {
+    return '';
+  }
+}
+
+function dismissNotification(key) {
+  const dismissed = JSON.parse(localStorage.getItem('dismissedNotifications') || '[]');
+  if (!dismissed.includes(key)) {
+    dismissed.push(key);
+    localStorage.setItem('dismissedNotifications', JSON.stringify(dismissed));
+  }
+  renderNotificationsPanel();
+}
+
+function clearAllNotifications() {
+  // Get current list, mark all visible keys as dismissed
+  fetch('/api/notifications').then((r) => r.json()).then((list) => {
+    if (!Array.isArray(list)) return;
+    const dismissed = JSON.parse(localStorage.getItem('dismissedNotifications') || '[]');
+    list.forEach((n) => {
+      const k = notifKey(n);
+      if (!dismissed.includes(k)) dismissed.push(k);
+    });
+    localStorage.setItem('dismissedNotifications', JSON.stringify(dismissed));
+    const dot = document.getElementById('notificationDot');
+    if (dot) dot.style.display = 'none';
+    renderNotificationsPanel();
+  }).catch(() => {});
+}
+
+window.dismissNotification = dismissNotification;
+window.clearAllNotifications = clearAllNotifications;
+window.renderNotificationsPanel = renderNotificationsPanel;
 
 function closePanel(id) {
   document.getElementById(id).classList.remove('open');

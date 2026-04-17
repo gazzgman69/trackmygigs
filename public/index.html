@@ -68,7 +68,7 @@
           </div>
         </div>
         <div class="header-right">
-          <button class="notification-bell" id="notificationBell" onclick="showScreen('notifications')">
+          <button class="notification-bell" id="notificationBell" onclick="openPanel('panel-notifications')">
             🔔
             <span class="notification-dot" id="notificationDot"></span>
           </button>
@@ -186,6 +186,18 @@
   <div class="panel-overlay" id="profile-panel">
     <div class="panel-body" id="profilePanelBody" style="overflow-y:auto;">
       <div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading profile...</div>
+    </div>
+  </div>
+
+  <!-- Notifications Panel -->
+  <div class="panel-overlay" id="panel-notifications">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-notifications')">‹ Back</button>
+      <div class="panel-title">Notifications</div>
+      <button class="panel-action" id="notifClearAll" onclick="clearAllNotifications()" style="background:none;border:none;color:var(--text-2);font-size:12px;cursor:pointer;">Clear all</button>
+    </div>
+    <div class="panel-body" id="notificationsPanelBody" style="overflow-y:auto;">
+      <div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading notifications...</div>
     </div>
   </div>
 
