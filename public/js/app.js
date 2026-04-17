@@ -78,8 +78,6 @@ async function prefetchAllData() {
   if (statsRes.status === 'fulfilled' && statsRes.value.ok) {
     window._cachedStats = await statsRes.value.json();
     window._cachedStatsTime = now;
-    // Update the offers badge from stats.offer_count
-    updateOffersBadge(window._cachedStats.offer_count);
     // Re-render home if it's showing, now with real data
     if (currentScreen === 'home') {
       const content = document.getElementById('homeScreen');
@@ -100,6 +98,11 @@ async function prefetchAllData() {
     window._cachedOffers = await offersRes.value.json();
     window._cachedOffersTime = now;
   }
+  // Keep the nav Offers badge consistent with the Offers screen:
+  // derive it from the actual pending offers list rather than a
+  // separately-counted server stat that can drift.
+  const pendingOffersCount = (window._cachedOffers || []).filter(o => o.status === 'pending').length;
+  updateOffersBadge(pendingOffersCount);
 
   if (profileRes.status === 'fulfilled' && profileRes.value.ok) {
     window._cachedProfile = await profileRes.value.json();
@@ -1360,7 +1363,7 @@ function buildInvoicesHTML(content, invoices) {
         <div class="inv-dot" style="background:${dotColor};"></div>
         <div style="flex:1;min-width:0;">
           <div class="inv-t">${escapeHtml(inv.band_name || 'Unnamed')}</div>
-          <div class="inv-m">INV-${String(inv.id).padStart(3, '0')} &middot; ${formatDateShort(inv.created_at || inv.date)}</div>
+          <div class="inv-m">${escapeHtml(inv.invoice_number || `INV-${String(inv.id).slice(0, 6)}`)} &middot; ${formatDateShort(inv.created_at || inv.date)}</div>
         </div>
         <div style="text-align:right;flex-shrink:0;">
           <div class="inv-a" style="color:var(--success);">&pound;${parseFloat(inv.amount).toFixed(0)}</div>
@@ -1407,7 +1410,7 @@ async function openInvoiceDetail(invoiceId) {
       <div style="padding:0 16px 16px;border-bottom:1px solid var(--border);margin-bottom:12px;">
         <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
           <span style="color:var(--text-2);font-size:12px;">Invoice number</span>
-          <span style="font-weight:600;color:var(--text);">INV-${String(invoice.id).padStart(3, '0')}</span>
+          <span style="font-weight:600;color:var(--text);">${escapeHtml(invoice.invoice_number || `INV-${String(invoice.id).slice(0, 6)}`)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
           <span style="color:var(--text-2);font-size:12px;">Date created</span>
@@ -4097,8 +4100,11 @@ async function refreshOffersAndBadge() {
     if (statsRes.ok) {
       window._cachedStats = await statsRes.json();
       window._cachedStatsTime = Date.now();
-      updateOffersBadge(window._cachedStats.offer_count);
     }
+    // Derive badge count directly from the offers list so it never drifts
+    // from what the Offers screen actually shows.
+    const pendingCount = (window._cachedOffers || []).filter(o => o.status === 'pending').length;
+    updateOffersBadge(pendingCount);
     if (currentScreen === 'offers') {
       renderOffersScreen();
     }
