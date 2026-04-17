@@ -5868,6 +5868,83 @@ function updateInvoicePreview() {
   }
 }
 
+// ── Invoice PDF Preview ─────────────────────────────────────────────────────
+// Show a fullscreen "paper" preview that looks like the PDF we would export.
+// Currently client-only: populates the panel from the invoice form state so
+// the user can visually check layout, wording, and payment details before
+// clicking Send. A real PDF export can be added later by rendering this same
+// markup with html-to-pdf.
+function openInvoicePdfPreview() {
+  const billTo = (document.getElementById('invBillTo')?.value || '').trim() || '--';
+  const desc = (document.getElementById('invDesc')?.value || '').trim() || 'Performance fee';
+  const amount = parseFloat(document.getElementById('invAmount')?.value) || 0;
+  const dueDate = document.getElementById('invDueDate')?.value || '';
+  const invNum = (document.getElementById('invInvoiceNumber')?.value || 'INV-001').trim();
+  const bankNotes = (document.getElementById('invNotes')?.value || '').trim();
+  const fmt = '\u00A3' + amount.toFixed(2);
+
+  // From block — pull name, phone, email, postcode from current user
+  const u = window._currentUser || {};
+  const fromName = u.display_name || u.name || u.email || 'Your Name';
+  const fromMetaParts = [];
+  if (u.email) fromMetaParts.push(u.email);
+  if (u.phone) fromMetaParts.push(u.phone);
+  if (u.home_postcode) fromMetaParts.push(u.home_postcode);
+  const fromMeta = fromMetaParts.join('\n');
+
+  // Venue line — pull from linked gig if present
+  const gigId = document.getElementById('invLinkedGig')?.value;
+  let venueText = '';
+  if (gigId) {
+    const gigs = window._cachedGigs || [];
+    const gig = gigs.find(g => g.id === gigId);
+    if (gig) {
+      const parts = [gig.venue_name, gig.venue_address, gig.date ? formatDate(gig.date) : null].filter(Boolean);
+      venueText = parts.join(' · ');
+    }
+  }
+
+  const byId = (id) => document.getElementById(id);
+  byId('pdfFromName').textContent = fromName;
+  byId('pdfFromMeta').textContent = fromMeta;
+  byId('pdfInvNum').textContent = invNum;
+  byId('pdfInvDate').textContent = 'Issued ' + formatDateShort(new Date().toISOString().slice(0, 10));
+  byId('pdfBillTo').textContent = billTo;
+  byId('pdfDueDate').textContent = dueDate ? formatDate(dueDate) : 'On receipt';
+  byId('pdfDesc').textContent = desc;
+  byId('pdfAmount').textContent = fmt;
+  byId('pdfTotal').textContent = fmt;
+
+  const venueRow = byId('pdfVenueRow');
+  const venueEl = byId('pdfVenue');
+  if (venueText && venueRow && venueEl) {
+    venueEl.textContent = venueText;
+    venueRow.style.display = '';
+  } else if (venueRow) {
+    venueRow.style.display = 'none';
+  }
+
+  const bankBlock = byId('pdfBankBlock');
+  const bankEl = byId('pdfBank');
+  if (bankNotes && bankBlock && bankEl) {
+    bankEl.textContent = bankNotes;
+    bankBlock.style.display = '';
+  } else if (bankBlock) {
+    bankBlock.style.display = 'none';
+  }
+
+  openPanel('panel-invoice-pdf');
+}
+window.openInvoicePdfPreview = openInvoicePdfPreview;
+
+function sendInvoiceFromPdfPreview() {
+  // Close the preview and trigger the normal Send flow
+  closePanel('panel-invoice-pdf');
+  const btn = document.getElementById('sendInvoiceBtn');
+  if (btn) btn.click();
+}
+window.sendInvoiceFromPdfPreview = sendInvoiceFromPdfPreview;
+
 async function submitInvoice() {
   const billTo = document.getElementById('invBillTo').value.trim();
   const amount = parseFloat(document.getElementById('invAmount').value);
@@ -6042,15 +6119,63 @@ async function submitDepOffer() {
 
 // ── Receipts Panel ────────────────────────────────────────────────────────────
 
+// Client-side filter state — we keep the full list in memory and re-render on
+// category change, rather than re-querying the server each time.
+let _receiptsCache = [];
+let _receiptsActiveCategory = 'All';
+
 async function initReceiptPanel() {
-  document.getElementById('receiptDate').valueAsDate = new Date();
+  const d1 = document.getElementById('receiptDate'); if (d1) d1.valueAsDate = new Date();
+  const d2 = document.getElementById('receiptSnapDate'); if (d2) d2.valueAsDate = new Date();
   await loadReceipts();
 }
 
 function showReceiptForm(type) {
-  document.getElementById('receiptManualForm').style.display = 'block';
+  // Toggle the correct form open and hide the other
+  const snap = document.getElementById('receiptSnapForm');
+  const manual = document.getElementById('receiptManualForm');
+  if (type === 'snap') {
+    if (manual) manual.style.display = 'none';
+    if (snap) snap.style.display = 'block';
+  } else {
+    if (snap) snap.style.display = 'none';
+    if (manual) manual.style.display = 'block';
+  }
 }
 window.showReceiptForm = showReceiptForm;
+
+function hideReceiptForm(type) {
+  if (type === 'snap') {
+    const snap = document.getElementById('receiptSnapForm');
+    if (snap) snap.style.display = 'none';
+  } else {
+    const manual = document.getElementById('receiptManualForm');
+    if (manual) manual.style.display = 'none';
+  }
+}
+window.hideReceiptForm = hideReceiptForm;
+
+function handleReceiptSnap(event) {
+  // Preview the selected photo inline inside the Snap form. We do not upload
+  // the photo yet — the backend expense endpoint doesn't accept file uploads,
+  // so the photo currently lives only in the browser until the user picks Save.
+  const file = event && event.target && event.target.files && event.target.files[0];
+  if (!file) return;
+  const preview = document.getElementById('receiptSnapPreview');
+  const icon = document.getElementById('receiptSnapPreviewIcon');
+  const hint = document.getElementById('receiptSnapHint');
+  const reader = new FileReader();
+  reader.onload = function (ev) {
+    if (preview) {
+      preview.src = ev.target.result;
+      preview.style.display = 'block';
+    }
+    if (icon) icon.style.display = 'none';
+    if (hint) hint.textContent = 'Tap to retake';
+  };
+  reader.readAsDataURL(file);
+}
+window.handleReceiptSnap = handleReceiptSnap;
 
 async function loadReceipts() {
   try {
@@ -6058,31 +6183,73 @@ async function loadReceipts() {
     if (!res.ok) return;
     const data = await res.json();
     const expenses = data.expenses || [];
+    _receiptsCache = expenses;
+    renderReceiptCategoryPills();
+    renderReceiptList();
     const total = expenses.reduce((s, e) => s + parseFloat(e.amount || 0), 0);
-
     document.getElementById('receiptTotalExpenses').textContent = '£' + total.toFixed(0);
     document.getElementById('receiptClaimable').textContent = '£' + total.toFixed(0);
     document.getElementById('receiptCount').textContent = expenses.length + ' receipt' + (expenses.length !== 1 ? 's' : '');
-
-    const list = document.getElementById('receiptList');
-    list.innerHTML = expenses.length ? expenses.map((e) => `
-      <div class="receipt-item">
-        <div>
-          <div style="font-size:14px;font-weight:600;color:var(--text)">${escapeHtml(e.description || 'Expense')}</div>
-          <div style="font-size:12px;color:var(--text-2)">${escapeHtml(e.category || '')} · ${formatDate(e.date)}</div>
-        </div>
-        <div style="font-size:15px;font-weight:700;color:var(--text)">£${parseFloat(e.amount).toFixed(2)}</div>
-      </div>`).join('') : '<div style="text-align:center;color:var(--text-2);padding:20px;font-size:14px">No expenses yet</div>';
   } catch {
     // silently ignore
   }
 }
 
-async function submitReceipt() {
-  const amount = parseFloat(document.getElementById('receiptAmount').value);
-  const desc = document.getElementById('receiptDesc').value.trim();
-  const date = document.getElementById('receiptDate').value;
-  const category = document.getElementById('receiptCategory').value;
+function renderReceiptCategoryPills() {
+  const container = document.getElementById('receiptCategoryPills');
+  if (!container) return;
+  const counts = { All: _receiptsCache.length };
+  _receiptsCache.forEach(e => {
+    const k = (e.category || 'Other').trim() || 'Other';
+    counts[k] = (counts[k] || 0) + 1;
+  });
+  // Ensure All goes first then the rest in descending count order
+  const cats = Object.keys(counts).filter(k => k !== 'All').sort((a, b) => counts[b] - counts[a]);
+  const order = ['All', ...cats];
+  container.innerHTML = order.map(cat => {
+    const active = (_receiptsActiveCategory === cat);
+    const style = active
+      ? 'background:var(--accent);color:#000;border:none;border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0;'
+      : 'background:var(--card);border:1px solid var(--border);color:var(--text-2);border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0;';
+    return `<button style="${style}" onclick="setReceiptCategory('${escapeAttr(cat)}')">${escapeHtml(cat)} (${counts[cat]})</button>`;
+  }).join('');
+}
+
+function setReceiptCategory(cat) {
+  _receiptsActiveCategory = cat;
+  renderReceiptCategoryPills();
+  renderReceiptList();
+}
+window.setReceiptCategory = setReceiptCategory;
+
+function renderReceiptList() {
+  const list = document.getElementById('receiptList');
+  if (!list) return;
+  const filtered = (_receiptsActiveCategory === 'All')
+    ? _receiptsCache
+    : _receiptsCache.filter(e => ((e.category || 'Other').trim() || 'Other') === _receiptsActiveCategory);
+  list.innerHTML = filtered.length ? filtered.map((e) => `
+    <div class="receipt-item">
+      <div>
+        <div style="font-size:14px;font-weight:600;color:var(--text)">${escapeHtml(e.description || 'Expense')}</div>
+        <div style="font-size:12px;color:var(--text-2)">${escapeHtml(e.category || '')} · ${formatDate(e.date)}</div>
+      </div>
+      <div style="font-size:15px;font-weight:700;color:var(--text)">£${parseFloat(e.amount).toFixed(2)}</div>
+    </div>`).join('') : '<div style="text-align:center;color:var(--text-2);padding:20px;font-size:14px">No expenses in this category</div>';
+}
+
+async function submitReceipt(source) {
+  // source === 'snap' uses the snap-form fields; anything else uses manual form
+  const isSnap = source === 'snap';
+  const amountEl = document.getElementById(isSnap ? 'receiptSnapAmount' : 'receiptAmount');
+  const descEl = document.getElementById(isSnap ? 'receiptSnapDesc' : 'receiptDesc');
+  const dateEl = document.getElementById(isSnap ? 'receiptSnapDate' : 'receiptDate');
+  const catEl = document.getElementById(isSnap ? 'receiptSnapCategory' : 'receiptCategory');
+
+  const amount = parseFloat(amountEl && amountEl.value);
+  const desc = (descEl && descEl.value || '').trim();
+  const date = dateEl && dateEl.value;
+  const category = catEl && catEl.value;
 
   if (!amount || amount <= 0) { showToast('Enter an amount'); return; }
   if (!desc) { showToast('Enter a description'); return; }
@@ -6094,11 +6261,22 @@ async function submitReceipt() {
       body: JSON.stringify({ amount, description: desc, date, category }),
     });
     if (res.ok) {
-      document.getElementById('receiptAmount').value = '';
-      document.getElementById('receiptDesc').value = '';
-      document.getElementById('receiptManualForm').style.display = 'none';
+      if (amountEl) amountEl.value = '';
+      if (descEl) descEl.value = '';
+      // Reset the snap photo preview if that was the source
+      if (isSnap) {
+        const preview = document.getElementById('receiptSnapPreview');
+        const icon = document.getElementById('receiptSnapPreviewIcon');
+        const hint = document.getElementById('receiptSnapHint');
+        const fileInput = document.getElementById('receiptSnapPhoto');
+        if (preview) { preview.src = ''; preview.style.display = 'none'; }
+        if (icon) icon.style.display = '';
+        if (hint) hint.textContent = 'Tap to take photo or choose from gallery';
+        if (fileInput) fileInput.value = '';
+      }
+      hideReceiptForm(isSnap ? 'snap' : 'manual');
       await loadReceipts();
-      showToast('Expense saved!');
+      showToast(isSnap ? 'Receipt saved!' : 'Expense saved!');
     } else {
       showToast('Failed to save expense');
     }

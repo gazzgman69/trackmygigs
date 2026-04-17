@@ -278,7 +278,75 @@
       </div>
       <div class="form-group"><div class="form-label">Bank / payment details</div><textarea class="form-input" id="invNotes" rows="3" placeholder="Sort code, account number..." style="resize:vertical;min-height:60px;"></textarea><div style="font-size:10px;color:var(--text-3);margin-top:3px;">Auto-filled from profile. Edit here for this invoice only.</div></div>
       <button class="btn-pill" id="sendInvoiceBtn">Send invoice</button>
-      <button class="btn-pill-outline" style="margin-top:10px">Preview as PDF</button>
+      <button class="btn-pill-outline" style="margin-top:10px" id="invoicePdfPreviewBtn" onclick="openInvoicePdfPreview()">Preview as PDF</button>
+    </div>
+  </div>
+
+  <!-- Invoice PDF Preview Panel -->
+  <div class="panel-overlay" id="panel-invoice-pdf">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-invoice-pdf')">&#8249; Back</button>
+      <div class="panel-title">PDF Preview</div>
+      <div class="panel-action"></div>
+    </div>
+    <div class="panel-body" id="invoicePdfBody" style="background:#e9ebee;padding:16px;">
+      <div style="max-width:680px;margin:0 auto;background:#fff;color:#111;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.35);padding:32px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;">
+          <div>
+            <div id="pdfFromName" style="font-size:22px;font-weight:800;color:#111;">Your Name</div>
+            <div id="pdfFromMeta" style="font-size:11px;color:#555;margin-top:4px;white-space:pre-line;"></div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:28px;font-weight:900;letter-spacing:2px;color:#111;">INVOICE</div>
+            <div id="pdfInvNum" style="font-size:12px;color:#555;margin-top:4px;">INV-001</div>
+            <div id="pdfInvDate" style="font-size:11px;color:#555;margin-top:2px;"></div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px;padding:12px;background:#f6f7f9;border-radius:6px;">
+          <div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#777;">Bill to</div>
+            <div id="pdfBillTo" style="font-size:13px;font-weight:600;color:#111;margin-top:4px;">--</div>
+          </div>
+          <div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#777;">Payment due</div>
+            <div id="pdfDueDate" style="font-size:13px;font-weight:600;color:#111;margin-top:4px;">--</div>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:18px;">
+          <thead>
+            <tr style="border-bottom:2px solid #111;">
+              <th style="text-align:left;padding:8px 6px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#555;">Description</th>
+              <th style="text-align:right;padding:8px 6px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#555;width:110px;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom:1px solid #e5e7eb;">
+              <td id="pdfDesc" style="padding:12px 6px;font-size:13px;color:#111;">Performance fee</td>
+              <td id="pdfAmount" style="padding:12px 6px;text-align:right;font-size:13px;color:#111;font-weight:600;">&pound;0.00</td>
+            </tr>
+            <tr id="pdfVenueRow" style="display:none;">
+              <td colspan="2" style="padding:4px 6px 12px;font-size:11px;color:#666;" id="pdfVenue"></td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td style="padding:14px 6px 4px;text-align:right;font-size:13px;color:#555;">Total due</td>
+              <td id="pdfTotal" style="padding:14px 6px 4px;text-align:right;font-size:20px;font-weight:800;color:#111;">&pound;0.00</td>
+            </tr>
+          </tfoot>
+        </table>
+        <div id="pdfBankBlock" style="display:none;margin-top:18px;padding:12px;background:#f6f7f9;border-radius:6px;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#777;margin-bottom:6px;">Payment details</div>
+          <div id="pdfBank" style="font-size:12px;color:#111;white-space:pre-line;line-height:1.5;"></div>
+        </div>
+        <div style="margin-top:22px;padding-top:14px;border-top:1px solid #e5e7eb;font-size:10px;color:#888;text-align:center;">
+          Generated with TrackMyGigs &middot; trackmygigs.app
+        </div>
+      </div>
+      <div style="max-width:680px;margin:14px auto 0;display:flex;gap:10px;">
+        <button onclick="closePanel('panel-invoice-pdf')" class="btn-pill-outline" style="flex:1;">Back to edit</button>
+        <button onclick="sendInvoiceFromPdfPreview()" class="btn-pill" style="flex:1;">Send invoice</button>
+      </div>
     </div>
   </div>
 
@@ -423,8 +491,39 @@
           <div style="font-size:9px;color:var(--text-3);margin-top:2px">Type it in yourself</div>
         </button>
       </div>
+      <!-- Snap receipt flow: photo picker + fields + AI upsell -->
+      <div id="receiptSnapForm" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px">📸 Snap a receipt</div>
+        <label for="receiptSnapPhoto" style="display:block;background:var(--surface);border:2px dashed var(--border);border-radius:var(--radius-s,10px);padding:22px;text-align:center;margin-bottom:10px;cursor:pointer;">
+          <div id="receiptSnapPreviewIcon" style="font-size:28px;margin-bottom:6px">📷</div>
+          <div id="receiptSnapHint" style="font-size:12px;color:var(--text-2)">Tap to take photo or choose from gallery</div>
+          <img id="receiptSnapPreview" alt="" style="display:none;max-width:100%;max-height:200px;border-radius:8px;margin-top:6px;">
+        </label>
+        <input type="file" id="receiptSnapPhoto" accept="image/*" capture="environment" style="display:none" onchange="handleReceiptSnap(event)">
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:10px">After snapping, fill in amount, category, and description below.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div><div class="form-label">Amount (£)</div><input type="number" class="form-input" id="receiptSnapAmount" placeholder="0.00"></div>
+          <div><div class="form-label">Date</div><input type="date" class="form-input" id="receiptSnapDate"></div>
+        </div>
+        <div class="form-group"><div class="form-label">Description</div><input type="text" class="form-input" id="receiptSnapDesc" placeholder="e.g. Shell petrol M6"></div>
+        <div class="form-group"><div class="form-label">Category</div>
+          <select class="form-input" id="receiptSnapCategory">
+            <option>Travel</option><option>Equipment</option><option>Accommodation</option>
+            <option>Food &amp; Drink</option><option>Marketing</option><option>Other</option>
+          </select>
+        </div>
+        <div style="background:linear-gradient(135deg,rgba(240,165,0,.08),transparent);border:1px solid rgba(240,165,0,.3);border-radius:var(--radius-s,10px);padding:10px 12px;margin-bottom:12px;">
+          <div style="font-size:11px;color:var(--warning,#f0a500);font-weight:600;">&#10024; Premium: AI auto-fill</div>
+          <div style="font-size:10px;color:var(--text-3);margin-top:2px;">Upgrade to have AI read the receipt and fill in amount, date &amp; category automatically.</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="hideReceiptForm('snap')" class="btn-pill-outline" style="flex:1;">Cancel</button>
+          <button onclick="submitReceipt('snap')" class="btn-pill" style="flex:1;">Save receipt</button>
+        </div>
+      </div>
+      <!-- Manual entry form -->
       <div id="receiptManualForm" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px">
-        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px">Add expense</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px">&#9998;&#65039; Manual entry</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
           <div><div class="form-label">Amount (£)</div><input type="number" class="form-input" id="receiptAmount" placeholder="0.00"></div>
           <div><div class="form-label">Date</div><input type="date" class="form-input" id="receiptDate"></div>
@@ -436,8 +535,13 @@
             <option>Food &amp; Drink</option><option>Marketing</option><option>Other</option>
           </select>
         </div>
-        <button class="btn-pill" onclick="submitReceipt()" style="margin-top:4px">Save expense</button>
+        <div style="display:flex;gap:8px;margin-top:4px;">
+          <button onclick="hideReceiptForm('manual')" class="btn-pill-outline" style="flex:1;">Cancel</button>
+          <button class="btn-pill" onclick="submitReceipt('manual')" style="flex:1;">Save expense</button>
+        </div>
       </div>
+      <!-- Category filter pills -->
+      <div id="receiptCategoryPills" style="display:flex;gap:6px;margin-bottom:16px;overflow-x:auto;padding-bottom:4px;"></div>
       <div id="receiptList"></div>
     </div>
   </div>
