@@ -2208,9 +2208,9 @@ function buildProfileHTML(content, profile) {
         <div id="connected-section" style="display:none;background:var(--card);padding:8px 14px;border-bottom:1px solid var(--border);">
           <div style="font-size:12px;color:var(--text-2);padding:6px 0;">Musician Tracker · ClientFlow CRM</div>
         </div>
-        <div style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
+        <div onclick="openGigNudge()" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
           <span style="color:var(--text);font-size:14px;">Google Calendar</span>
-          <input type="checkbox" style="cursor:pointer;" onchange="toggleCalendarSync()">
+          <span style="color:var(--accent);font-size:16px;">\u203A</span>
         </div>
         <div style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);">
           <div style="font-size:14px;color:var(--text);margin-bottom:10px;">Colour theme</div>
@@ -3565,7 +3565,7 @@ async function openGigDetail(gigId) {
       <div style="font-size:22px;font-weight:700;color:var(--text);margin-bottom:16px;">${escapeHtml(gig.venue_name || 'No venue')}</div>
       <div style="font-size:14px;color:var(--text-2);margin-bottom:6px;">\uD83D\uDCC5 ${formatDateLong(gig.date)}</div>
       ${gig.start_time ? `<div style="font-size:14px;color:var(--text-2);margin-bottom:6px;">\uD83D\uDD56 ${formatTime(gig.start_time)}${gig.end_time ? '\u2013' + formatTime(gig.end_time) : ''}${gig.load_in_time ? ' \u00B7 Load-in: ' + formatTime(gig.load_in_time) : ''}</div>` : ''}
-      ${gig.venue_address ? `<div style="font-size:14px;color:var(--text-2);margin-bottom:6px;">\uD83D\uDCCD ${escapeHtml(gig.venue_address)}</div>` : ''}
+      ${gig.venue_address ? `<div onclick="openDirections('${escapeHtml(gig.venue_address).replace(/'/g, '&#39;')}')" style="font-size:14px;color:var(--text-2);margin-bottom:6px;cursor:pointer;"><span style="color:var(--accent);">\uD83D\uDCCD</span> ${escapeHtml(gig.venue_address)} <span style="color:var(--accent);font-size:12px;font-weight:600;margin-left:4px;">Open in Maps \u203A</span></div>` : ''}
       <div style="font-size:14px;color:var(--text-2);">\uD83D\uDCB7 ${gig.fee ? '\u00A3' + parseFloat(gig.fee).toFixed(0) : 'No fee set'} <span class="badge badge-${statusBadgeClass(gig.status)}" style="margin-left:6px;">${statusLabel(gig.status)}</span></div>
       <div id="gigDetailMileage" style="margin-top:8px;"></div>
       <!-- Completeness tracker -->
@@ -4574,11 +4574,6 @@ async function setColourTheme(colour) {
   } catch (e) { /* silent */ }
 }
 
-function toggleCalendarSync() {
-  // TODO: implement calendar sync toggle
-  alert('Calendar sync coming soon');
-}
-
 async function openNetworkPanel() {
   const body = document.getElementById('networkBody');
   if (!body) return;
@@ -5012,7 +5007,6 @@ async function openFinancePanel() {
         <button class="pill-g" onclick="exportExpensesCSV()">Export expenses (CSV)</button>
         <button class="pill-o" onclick="exportGigsPDF()">Export gigs (PDF)</button>
         <button class="pill-o" onclick="exportFinancePDF()">Export finance summary (PDF)</button>
-        <button class="pill-o" onclick="alert('Receipts ZIP coming soon.')">Receipts ZIP</button>
       </div>`;
 
     body.innerHTML = html;
@@ -5233,18 +5227,49 @@ async function toggleFavourite(contactId, e) {
 }
 
 function sendDepOffer(contactId) {
-  // TODO: implement send dep offer
-  alert('Send dep offer coming soon');
+  // Remember which contact the user started from so the dep picker can
+  // prefill them once a gig is chosen. For now we just open the picker —
+  // the deeper prefill happens inside selectGigForDep.
+  window._depPrefillContactId = contactId;
+  closePanel('contact-detail-panel');
+  openDepPicker();
 }
 
-function messageContact(contactId) {
-  // TODO: implement message contact
-  alert('Message coming soon');
+async function messageContact(contactId) {
+  try {
+    const res = await fetch(`/api/contacts/${encodeURIComponent(contactId)}`);
+    if (!res.ok) throw new Error('Failed to load contact');
+    const contact = await res.json();
+    // Prefer SMS if we have a phone number, fall back to email.
+    if (contact.phone) {
+      window.location.href = `sms:${contact.phone.replace(/\s+/g, '')}`;
+      return;
+    }
+    if (contact.email) {
+      window.location.href = `mailto:${contact.email}`;
+      return;
+    }
+    alert('No phone or email saved for this contact.');
+  } catch (e) {
+    console.error('Message contact error:', e);
+    alert('Could not open messaging: ' + (e.message || 'unknown error'));
+  }
 }
 
-function callContact(contactId) {
-  // TODO: implement call contact
-  alert('Call coming soon');
+async function callContact(contactId) {
+  try {
+    const res = await fetch(`/api/contacts/${encodeURIComponent(contactId)}`);
+    if (!res.ok) throw new Error('Failed to load contact');
+    const contact = await res.json();
+    if (!contact.phone) {
+      alert('No phone number saved for this contact.');
+      return;
+    }
+    window.location.href = `tel:${contact.phone.replace(/\s+/g, '')}`;
+  } catch (e) {
+    console.error('Call contact error:', e);
+    alert('Could not place call: ' + (e.message || 'unknown error'));
+  }
 }
 
 function filterSongs() {
@@ -5406,9 +5431,27 @@ async function importChordProSongs() {
   }
 }
 
-function markInvoiceAsPaid(invoiceId) {
-  // TODO: implement mark as paid
-  alert('Mark as paid coming soon');
+async function markInvoiceAsPaid(invoiceId) {
+  if (!confirm('Mark this invoice as paid?')) return;
+  try {
+    const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'paid' }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to update invoice');
+    }
+    // Invalidate cache so the invoices list reflects the change next render
+    window._cachedInvoices = null;
+    window._cachedInvoicesTime = 0;
+    // Re-open the invoice detail so the status chip and buttons update
+    await openInvoiceDetail(invoiceId);
+  } catch (e) {
+    console.error('Mark as paid error:', e);
+    alert('Could not mark invoice as paid: ' + (e.message || 'unknown error'));
+  }
 }
 
 function downloadInvoicePDF(invoiceId) {
@@ -5417,9 +5460,31 @@ function downloadInvoicePDF(invoiceId) {
   window.open(`/api/print/invoice/${encodeURIComponent(invoiceId)}`, '_blank');
 }
 
-function chaseInvoicePayment(invoiceId) {
-  // TODO: implement chase payment
-  alert('Chase payment coming soon');
+async function chaseInvoicePayment(invoiceId) {
+  try {
+    const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`);
+    if (!res.ok) throw new Error('Failed to load invoice');
+    const invoice = await res.json();
+    const invNum = invoice.invoice_number || `INV-${String(invoice.id).slice(0, 6)}`;
+    const amount = parseFloat(invoice.amount || 0).toFixed(2);
+    const due = invoice.due_date ? formatDateShort(invoice.due_date) : '';
+    const band = invoice.band_name || 'your booking';
+    const subject = `Payment reminder: ${invNum}`;
+    const bodyLines = [
+      `Hi,`,
+      ``,
+      `Just a friendly reminder that invoice ${invNum} for £${amount} (${band}) is outstanding${due ? ` and was due on ${due}` : ''}.`,
+      ``,
+      `If you have already arranged payment, please ignore this note. Otherwise a quick reply with an expected payment date would be much appreciated.`,
+      ``,
+      `Thanks,`,
+    ];
+    const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+    window.location.href = mailto;
+  } catch (e) {
+    console.error('Chase invoice error:', e);
+    alert('Could not build reminder email: ' + (e.message || 'unknown error'));
+  }
 }
 
 async function acceptOffer(offerId) {

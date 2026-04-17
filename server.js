@@ -171,6 +171,9 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rate_notes TEXT`);
     // Onboarding: has the user seen the welcome tour yet?
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_completed_at TIMESTAMP`);
+    // Invoice metadata: business address and VAT number printed on invoice PDFs.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS business_address TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS vat_number VARCHAR(64)`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);
