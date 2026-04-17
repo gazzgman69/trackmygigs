@@ -105,6 +105,7 @@ CREATE TABLE contacts (
   phone VARCHAR(20),
   instruments TEXT[],
   notes TEXT,
+  location TEXT,
   is_favourite BOOLEAN DEFAULT FALSE,
   gig_count INT DEFAULT 0,
   last_gig_date DATE,

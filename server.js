@@ -207,6 +207,9 @@ async function runMigrations() {
       UNIQUE (user_id, notif_key)
     )`);
     await db.query(`CREATE INDEX IF NOT EXISTS notif_dismiss_user_idx ON notification_dismissals (user_id)`);
+    // Stage-4 QA fix: contacts.location was referenced by POST /api/contacts but
+    // the column was never added — every contact create returned 500.
+    await db.query(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS location TEXT`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);
