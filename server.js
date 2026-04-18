@@ -264,6 +264,18 @@ async function runMigrations() {
   }
 }
 
+// Safety net: a rejected promise inside a route handler that isn't caught by
+// a try/catch will otherwise crash the whole Node process under Replit's
+// supervisor. We'd rather log and keep serving. An earlier deep-test run of
+// the AI routes took the server down because one SQL query referenced a
+// non-existent column and the rejection escaped.
+process.on('unhandledRejection', (reason) => {
+  console.error('[process] unhandledRejection:', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[process] uncaughtException:', err && err.stack ? err.stack : err);
+});
+
 runMigrations().then(() => {
   app.listen(PORT, () => {
     console.log(`TrackMyGigs server running on port ${PORT} (build ${BUILD_ID})`);

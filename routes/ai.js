@@ -210,7 +210,7 @@ router.post('/generate-setlist', async (req, res) => {
   const mood = String(req.body?.mood || '').slice(0, 200);
 
   const songs = await db.query(
-    `SELECT id, title, artist, key, tempo, duration_seconds, tags
+    `SELECT id, title, artist, key, tempo, duration, tags
      FROM songs WHERE user_id = $1 ORDER BY title ASC`,
     [req.user.id]
   );
@@ -220,7 +220,7 @@ router.post('/generate-setlist', async (req, res) => {
   }
 
   const songList = songs.rows
-    .map(s => `  {"id": ${s.id}, "title": ${JSON.stringify(s.title)}, "artist": ${JSON.stringify(s.artist || '')}, "key": ${JSON.stringify(s.key || '')}, "tempo": ${s.tempo || 'null'}, "duration_seconds": ${s.duration_seconds || 'null'}}`)
+    .map(s => `  {"id": ${s.id}, "title": ${JSON.stringify(s.title)}, "artist": ${JSON.stringify(s.artist || '')}, "key": ${JSON.stringify(s.key || '')}, "tempo": ${s.tempo || 'null'}, "duration_seconds": ${s.duration || 'null'}}`)
     .join(',\n');
 
   const system = `You build a musician's live set from their existing repertoire.
