@@ -183,6 +183,10 @@ async function logout() {
       localStorage.removeItem('showWhileAway');
       localStorage.removeItem('dismissedNotifications');
       localStorage.removeItem('calendarLayers');
+      // Cached API responses that persist across sessions — must clear so the
+      // next user on this browser never sees the logged-out user's data.
+      localStorage.removeItem('tmg_cachedStats_v1');
+      localStorage.removeItem('tmg_cachedCalendar_v1');
     } catch (_) { /* storage may be unavailable, not fatal */ }
     location.reload();
   } catch (error) {

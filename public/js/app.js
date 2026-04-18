@@ -75,6 +75,43 @@ function persistCachedStats() {
   } catch (_) { /* quota / privacy mode — ignore */ }
 }
 
+// Hydrate _cachedGigs and _cachedBlocked from localStorage at script parse
+// time so the Calendar screen paints instantly on a cold open instead of
+// running through the 3-5s skeleton + fetch path every time. Stale-while-
+// revalidate refresh happens in renderCalendarScreen().
+// Keyed by user id so switching accounts never leaks calendar data.
+try {
+  const raw = localStorage.getItem('tmg_cachedCalendar_v1');
+  if (raw) {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.userId && parsed.time) {
+      window._cachedGigs = parsed.gigs || null;
+      window._cachedBlocked = parsed.blocked || null;
+      window._cachedBlockedTime = parsed.time;
+      window._cachedCalendarUser = parsed.userId;
+    }
+  }
+} catch (_) { /* corrupt localStorage entry — ignore */ }
+
+function persistCachedCalendar() {
+  try {
+    const userId = window._currentUser?.id || window._cachedCalendarUser || null;
+    if (!userId) return;
+    window._cachedCalendarUser = userId;
+    // Only persist if we have at least one piece of data worth keeping
+    if (!window._cachedGigs && !window._cachedBlocked) {
+      localStorage.removeItem('tmg_cachedCalendar_v1');
+      return;
+    }
+    localStorage.setItem('tmg_cachedCalendar_v1', JSON.stringify({
+      gigs: window._cachedGigs || null,
+      blocked: window._cachedBlocked || null,
+      userId,
+      time: window._cachedBlockedTime || Date.now(),
+    }));
+  } catch (_) { /* quota / privacy mode — ignore */ }
+}
+
 function initApp(user) {
   currentUser = user;
   window._currentUser = user;
@@ -165,6 +202,7 @@ async function prefetchAllData() {
 
   if (gigsRes.status === 'fulfilled' && gigsRes.value.ok) {
     window._cachedGigs = await gigsRes.value.json();
+    persistCachedCalendar();
   }
 
   if (invoicesRes.status === 'fulfilled' && invoicesRes.value.ok) {
@@ -203,6 +241,7 @@ async function prefetchAllData() {
   if (blockedRes.status === 'fulfilled' && blockedRes.value.ok) {
     window._cachedBlocked = await blockedRes.value.json();
     window._cachedBlockedTime = now;
+    persistCachedCalendar();
   }
 
   // Show onboarding tour on very first load (profile has no onboarded_at yet).
@@ -714,6 +753,7 @@ async function renderGigsScreen() {
     if (!response.ok) throw new Error('Failed to fetch');
     const gigs = await response.json();
     window._cachedGigs = gigs;
+    persistCachedCalendar();
     renderGigsList(gigs);
   } catch (err) {
     console.error('Load gigs error:', err);
@@ -1222,24 +1262,47 @@ function statusLabel(status) {
 async function renderCalendarScreen() {
   const content = document.getElementById('calendarScreen');
   const now = Date.now();
+  const currentUserId = window._currentUser?.id || null;
+  const cacheMatchesUser = !window._cachedCalendarUser
+    || !currentUserId
+    || window._cachedCalendarUser === currentUserId;
 
-  // Cache-first: render instantly if both caches are fresh
-  if (window._cachedGigs && window._cachedBlocked && (now - (window._cachedBlockedTime || 0)) < DATA_CACHE_TTL) {
+  // Stale-while-revalidate: if we have BOTH cached gigs and blocked dates for
+  // this user (in-memory or hydrated from localStorage), paint them
+  // immediately. The Calendar used to show a 3-5s "Loading calendar..."
+  // skeleton on every cold open because the in-memory cache started empty on
+  // each page load. Now we paint from localStorage first, then refresh
+  // silently in the background.
+  // Requiring BOTH caches preserves the existing "set _cachedGigs = null after
+  // an edit" pattern used throughout the app to force a full refetch.
+  if (cacheMatchesUser && window._cachedGigs && window._cachedBlocked) {
     buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+    // Fire pin fetch even on the instant-paint path so Google Calendar pins
+    // show up once the request lands.
+    loadGoogleCalendarPins().catch(() => {});
+
+    const isStale = (now - (window._cachedBlockedTime || 0)) >= DATA_CACHE_TTL;
+    if (isStale) {
+      refreshCalendarDataInBackground(content, currentUserId).catch((err) => {
+        console.error('Background calendar refresh failed:', err);
+      });
+    }
     return;
   }
 
-  // Show skeleton only if we have no cached data at all
-  if (!window._cachedGigs && !window._cachedBlocked) {
-    content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading calendar...</div>';
-  }
+  // No cache at all (first ever load, freshly logged-in user, or cache
+  // belonged to a different user) — show the skeleton while we fetch.
+  content.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading calendar...</div>';
 
   try {
     // Wait for in-flight prefetch first instead of firing duplicate requests
     if (window._prefetchPromise && (!window._cachedGigs || !window._cachedBlocked)) {
       await window._prefetchPromise;
-      if (window._cachedGigs && window._cachedBlocked) {
-        buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+      if (window._cachedGigs || window._cachedBlocked) {
+        window._cachedCalendarUser = currentUserId;
+        persistCachedCalendar();
+        buildCalendarView(content, window._cachedGigs || [], window._cachedBlocked || []);
+        loadGoogleCalendarPins().catch(() => {});
         return;
       }
     }
@@ -1267,6 +1330,8 @@ async function renderCalendarScreen() {
         window._cachedBlockedTime = Date.now();
       }
     }
+    window._cachedCalendarUser = currentUserId;
+    persistCachedCalendar();
 
     buildCalendarView(content, window._cachedGigs || [], window._cachedBlocked || []);
     // Fire-and-forget pin fetch; when it returns, re-render so pins show up.
@@ -1280,6 +1345,41 @@ async function renderCalendarScreen() {
         <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
       </div>`;
   }
+}
+
+// Companion to renderCalendarScreen's SWR path: refetch gigs and blocked
+// dates in the background, then re-render only if the user is still on the
+// calendar screen so we don't yank focus from another view.
+async function refreshCalendarDataInBackground(content, userId) {
+  if (window._inflightCalendarRefresh) return window._inflightCalendarRefresh;
+  const p = (async () => {
+    const [gigsRes, blockedRes] = await Promise.allSettled([
+      fetch('/api/gigs'),
+      fetch('/api/blocked-dates'),
+    ]);
+    let changed = false;
+    if (gigsRes.status === 'fulfilled' && gigsRes.value.ok) {
+      window._cachedGigs = await gigsRes.value.json();
+      changed = true;
+    }
+    if (blockedRes.status === 'fulfilled' && blockedRes.value.ok) {
+      window._cachedBlocked = await blockedRes.value.json();
+      window._cachedBlockedTime = Date.now();
+      changed = true;
+    }
+    if (changed) {
+      window._cachedCalendarUser = userId;
+      persistCachedCalendar();
+      if (currentScreen === 'calendar') {
+        buildCalendarView(content, window._cachedGigs || [], window._cachedBlocked || []);
+        loadGoogleCalendarPins().catch(() => {});
+      }
+    }
+  })().finally(() => {
+    window._inflightCalendarRefresh = null;
+  });
+  window._inflightCalendarRefresh = p;
+  return p;
 }
 
 async function loadGoogleCalendarPins() {
@@ -3297,6 +3397,7 @@ async function submitGigWizard() {
 
     if (response.ok) {
       window._cachedGigs = null;
+      persistCachedCalendar();
       showScreen('gigs');
       showToast('Gig saved!');
     } else {
@@ -3488,6 +3589,7 @@ function renderFullGigForm() {
 
       if (response.ok) {
         window._cachedGigs = null;
+        persistCachedCalendar();
         showScreen('gigs');
         showToast('Gig saved!');
       } else {
@@ -4438,6 +4540,7 @@ async function markGigDetailsComplete(gigId) {
     window._cachedGigs = (window._cachedGigs || []).map(g =>
       g.id === gigId ? { ...g, details_complete: true } : g
     );
+    persistCachedCalendar();
     openGigDetail(gigId);
     showToast('Marked as complete');
   } catch (e) {
@@ -4465,6 +4568,7 @@ async function deleteGig(gigId) {
     // Clear caches so every screen re-fetches fresh data
     window._cachedGigs = (window._cachedGigs || []).filter((g) => g.id !== gigId);
     window._cachedStats = null;
+    persistCachedCalendar();
     // Re-render the active screen so homepage/gigs/calendar all update
     showScreen(currentScreen || 'gigs');
     showToast('Gig deleted');
@@ -4659,6 +4763,7 @@ async function saveEditGig(gigId) {
     // Update cache and invalidate stats so homepage refreshes
     window._cachedGigs = (window._cachedGigs || []).map(g => g.id === gigId ? { ...g, ...data, id: gigId } : g);
     window._cachedStats = null;
+    persistCachedCalendar();
     closePanel('panel-edit-gig');
     renderGigsList(window._cachedGigs);
     // S1-04: if the gig detail panel is still open underneath the edit panel, it is
@@ -6355,6 +6460,7 @@ async function openDepPicker() {
       const resp = await fetch('/api/gigs');
       gigs = await resp.json();
       window._cachedGigs = gigs;
+      persistCachedCalendar();
     }
     const today = new Date().toISOString().slice(0, 10);
     const upcoming = (gigs || [])
@@ -6473,6 +6579,7 @@ async function createGigAndSendDep() {
     const gig = await resp.json();
     // Clear gig cache so next picker load refreshes
     window._cachedGigs = null;
+    persistCachedCalendar();
     toast('Gig saved');
     selectGigForDep(gig.id);
     // Pre-fill the role on the send-dep form
@@ -7027,6 +7134,7 @@ async function quickImportNudge(index) {
     }
 
     window._cachedGigs = null;
+    persistCachedCalendar();
     _nudgeEvents[index].already_imported = true;
     recordNudgeFeedback('calendar_import', 'imported', e.id);
   } catch (err) {
@@ -7059,6 +7167,7 @@ async function importNudgeFromDetail(index) {
     });
 
     window._cachedGigs = null;
+    persistCachedCalendar();
     _nudgeEvents[index].already_imported = true;
     recordNudgeFeedback('calendar_import', 'imported', e.id);
     closePanel('panel-nudge-detail');
@@ -8031,6 +8140,7 @@ async function initDepPanel() {
         const data = await r.json();
         gigs = data.gigs || data || [];
         window._cachedGigs = gigs;
+        persistCachedCalendar();
       }
     } catch {}
   }
