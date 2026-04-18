@@ -13,23 +13,55 @@ router.use(authMiddleware);
 
 let _anthropicClient = null;
 let _anthropicDisabled = false;
+let _anthropicSource = null; // 'replit' | 'direct' | null
+
+// Inspect env to decide how (and whether) to reach Anthropic. Replit's AI
+// integration proxy is preferred when present: it lets the app call Claude
+// without the app owner managing a key or billing, because Replit handles
+// auth behind the proxy and bills usage to the Replit account. If that isn't
+// configured, fall back to a direct ANTHROPIC_API_KEY so the classifier still
+// works in non-Replit environments. If neither is set, classifier disables
+// itself and the deterministic keyword scorer takes over.
+function resolveAnthropicConfig() {
+  const replitBaseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  const replitApiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  if (replitBaseUrl && replitApiKey) {
+    return { source: 'replit', config: { apiKey: replitApiKey, baseURL: replitBaseUrl } };
+  }
+  const directKey = process.env.ANTHROPIC_API_KEY;
+  if (directKey) {
+    return { source: 'direct', config: { apiKey: directKey } };
+  }
+  return null;
+}
 
 function getAnthropic() {
   if (_anthropicClient) return _anthropicClient;
   if (_anthropicDisabled) return null;
-  if (!process.env.ANTHROPIC_API_KEY) {
+  const resolved = resolveAnthropicConfig();
+  if (!resolved) {
     _anthropicDisabled = true;
     return null;
   }
   try {
     const Anthropic = require('@anthropic-ai/sdk');
-    _anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    _anthropicClient = new Anthropic(resolved.config);
+    _anthropicSource = resolved.source;
+    console.log(`[ai] Anthropic classifier enabled via ${resolved.source} path`);
     return _anthropicClient;
   } catch (e) {
     console.error('[ai] Failed to init Anthropic SDK:', e.message || e);
     _anthropicDisabled = true;
     return null;
   }
+}
+
+// Lets /status report which route is live without re-initialising the client.
+function getAnthropicSource() {
+  if (_anthropicSource) return _anthropicSource;
+  if (_anthropicDisabled) return null;
+  const resolved = resolveAnthropicConfig();
+  return resolved ? resolved.source : null;
 }
 
 function eventSummaryForAI(event, index) {
@@ -90,7 +122,9 @@ Return ONLY the JSON array. No markdown fences. No prose. No explanation.`;
 
   try {
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      // Short alias: works on both direct Anthropic API and Replit's proxy.
+      // Replit proxy only accepts the short form; direct API accepts both.
+      model: 'claude-haiku-4-5',
       max_tokens: 2048,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
@@ -270,12 +304,66 @@ router.get('/status', async (req, res) => {
     [req.user.id]
   );
   const row = result.rows[0] || {};
+  const aiSource = getAnthropicSource();
   res.json({
     connected: !!row.google_access_token,
     calendar_email: row.google_calendar_email || null,
     last_synced_at: row.google_last_pull_at || null,
-    ai_enabled: !!process.env.ANTHROPIC_API_KEY,
+    ai_enabled: !!aiSource,
+    ai_source: aiSource, // 'replit' | 'direct' | null
   });
+});
+
+// Minimal end-to-end test of the AI classifier path. Fires a tiny prompt
+// (16 tokens max) and reports whether the proxy/SDK responded. Useful after
+// changing env vars, rotating keys, or debugging a dead classifier without
+// having to wait for a calendar event to trigger it.
+router.get('/ai-ping', async (req, res) => {
+  const source = getAnthropicSource();
+  if (!source) {
+    return res.json({
+      ok: false,
+      ai_enabled: false,
+      ai_source: null,
+      error: 'No Anthropic config: neither AI_INTEGRATIONS_ANTHROPIC_* nor ANTHROPIC_API_KEY is set',
+    });
+  }
+  const client = getAnthropic();
+  if (!client) {
+    return res.json({
+      ok: false,
+      ai_enabled: false,
+      ai_source: source,
+      error: 'SDK failed to initialise (check server logs)',
+    });
+  }
+  const start = Date.now();
+  try {
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'Reply with exactly the word: pong' }],
+    });
+    const reply = response.content?.[0]?.text || '';
+    res.json({
+      ok: true,
+      ai_enabled: true,
+      ai_source: source,
+      model: 'claude-haiku-4-5',
+      latency_ms: Date.now() - start,
+      reply: reply.trim(),
+    });
+  } catch (err) {
+    res.json({
+      ok: false,
+      ai_enabled: true,
+      ai_source: source,
+      model: 'claude-haiku-4-5',
+      latency_ms: Date.now() - start,
+      error: err.message || String(err),
+      status: err.status || null,
+    });
+  }
 });
 
 // Disconnect the linked Google Calendar.
