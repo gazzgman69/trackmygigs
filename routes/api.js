@@ -1122,16 +1122,13 @@ router.get('/stats', async (req, res) => {
       nextGigResult,
       thisMonthResult,
       taxYearResult,
-      overdueResult,
-      draftResult,
+      overdueCombinedResult,
+      draftCombinedResult,
       unreadResult,
-      offersResult,
+      offersCombinedResult,
       activeDepResult,
       monthlyBreakdownResult,
       recentMessagesResult,
-      networkOffersResult,
-      overdueCountResult,
-      draftCountResult,
     ] = await Promise.all([
       // Next gig
       db.query(
@@ -1151,18 +1148,29 @@ router.get('/stats', async (req, res) => {
          WHERE user_id = $1 AND date >= $2 AND status = 'confirmed'`,
         [userId, taxYearStart]
       ),
-      // Overdue invoice
+      // Overdue invoices: preview row (first overdue) + total count + total amount
+      // in a single round-trip instead of two separate queries.
       db.query(
-        `SELECT id, amount, band_name FROM invoices
-         WHERE user_id = $1 AND status = 'sent' AND due_date < $2
-         ORDER BY due_date ASC LIMIT 1`,
+        `SELECT
+           (SELECT COUNT(*) FROM invoices WHERE user_id = $1 AND status = 'sent' AND due_date < $2)::int AS count,
+           (SELECT COALESCE(SUM(amount), 0) FROM invoices WHERE user_id = $1 AND status = 'sent' AND due_date < $2) AS total,
+           (SELECT row_to_json(i) FROM (
+              SELECT id, amount, band_name FROM invoices
+              WHERE user_id = $1 AND status = 'sent' AND due_date < $2
+              ORDER BY due_date ASC LIMIT 1
+           ) i) AS preview`,
         [userId, today]
       ),
-      // Draft invoice
+      // Draft invoices: preview row + count + total in a single round-trip.
       db.query(
-        `SELECT id, amount, band_name FROM invoices
-         WHERE user_id = $1 AND status = 'draft'
-         ORDER BY created_at DESC LIMIT 1`,
+        `SELECT
+           (SELECT COUNT(*) FROM invoices WHERE user_id = $1 AND status = 'draft')::int AS count,
+           (SELECT COALESCE(SUM(amount), 0) FROM invoices WHERE user_id = $1 AND status = 'draft') AS total,
+           (SELECT row_to_json(i) FROM (
+              SELECT id, amount, band_name FROM invoices
+              WHERE user_id = $1 AND status = 'draft'
+              ORDER BY created_at DESC LIMIT 1
+           ) i) AS preview`,
         [userId]
       ),
       // Unread messages
@@ -1172,9 +1180,12 @@ router.get('/stats', async (req, res) => {
          AND NOT (read_by @> ARRAY[$1::uuid])`,
         [userId]
       ),
-      // Pending offers
+      // Pending offers + dep-specific (network) subset in a single round-trip.
       db.query(
-        `SELECT COUNT(*) as count FROM offers
+        `SELECT
+           COUNT(*)::int AS total_count,
+           COUNT(*) FILTER (WHERE offer_type = 'dep')::int AS dep_count
+         FROM offers
          WHERE recipient_id = $1 AND status = 'pending'`,
         [userId]
       ),
@@ -1236,29 +1247,13 @@ router.get('/stats', async (req, res) => {
          LIMIT 3`,
         [userId]
       ),
-      // Network offers (pending dep offers sent to the user - same as offer_count,
-      // but kept separately so the UI chip can read the expected key)
-      db.query(
-        `SELECT COUNT(*) as count FROM offers
-         WHERE recipient_id = $1 AND status = 'pending' AND offer_type = 'dep'`,
-        [userId]
-      ),
-      // Real overdue invoice count (not the LIMIT-1 proxy)
-      db.query(
-        `SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total FROM invoices
-         WHERE user_id = $1 AND status = 'sent' AND due_date < $2`,
-        [userId, today]
-      ),
-      // Real draft invoice count (not the LIMIT-1 proxy)
-      db.query(
-        `SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total FROM invoices
-         WHERE user_id = $1 AND status = 'draft'`,
-        [userId]
-      ),
     ]);
 
-    const overdueInvoice = overdueResult.rows[0] || null;
-    const draftInvoice = draftResult.rows[0] || null;
+    const overdueRow = overdueCombinedResult.rows[0] || {};
+    const draftRow = draftCombinedResult.rows[0] || {};
+    const offersRow = offersCombinedResult.rows[0] || {};
+    const overdueInvoice = overdueRow.preview || null;
+    const draftInvoice = draftRow.preview || null;
     const activeDep = activeDepResult.rows[0] || null;
 
     // Compute hours remaining from deadline (fallback: until gig start)
@@ -1302,6 +1297,11 @@ router.get('/stats', async (req, res) => {
       band_name: r.band_name,
     }));
 
+    const overdueCount = parseInt(overdueRow.count || 0);
+    const draftCount = parseInt(draftRow.count || 0);
+    const pendingOfferCount = parseInt(offersRow.total_count || 0);
+    const unreadMessageCount = parseInt(unreadResult.rows[0]?.count || 0);
+
     res.json({
       next_gig: nextGigResult.rows[0] || null,
       // Field names matching frontend expectations
@@ -1309,10 +1309,10 @@ router.get('/stats', async (req, res) => {
       month_gigs: parseInt(thisMonthResult.rows[0]?.count || 0),
       year_earnings: parseFloat(taxYearResult.rows[0]?.earnings || 0),
       year_gigs: parseInt(taxYearResult.rows[0]?.count || 0),
-      overdue_invoices: parseInt(overdueCountResult.rows[0]?.count || 0),
-      overdue_total: parseFloat(overdueCountResult.rows[0]?.total || 0),
-      draft_invoices: parseInt(draftCountResult.rows[0]?.count || 0),
-      draft_total: parseFloat(draftCountResult.rows[0]?.total || 0),
+      overdue_invoices: overdueCount,
+      overdue_total: parseFloat(overdueRow.total || 0),
+      draft_invoices: draftCount,
+      draft_total: parseFloat(draftRow.total || 0),
       overdue_invoice_preview: overdueInvoice || null,
       draft_invoice_preview: draftInvoice || null,
       // S11-05: unread_notifications is a superset of unread_messages.
@@ -1320,13 +1320,10 @@ router.get('/stats', async (req, res) => {
       // header dot lights up for anything the user needs to attend to, not
       // just chat. Previously both fields were identical which meant paid
       // invoices, incoming offers, and calendar imports never triggered the dot.
-      unread_notifications:
-        parseInt(unreadResult.rows[0]?.count || 0) +
-        parseInt(offersResult.rows[0]?.count || 0) +
-        parseInt(overdueCountResult.rows[0]?.count || 0),
-      unread_messages: parseInt(unreadResult.rows[0]?.count || 0),
-      offer_count: parseInt(offersResult.rows[0]?.count || 0),
-      network_offers: parseInt(networkOffersResult.rows[0]?.count || 0),
+      unread_notifications: unreadMessageCount + pendingOfferCount + overdueCount,
+      unread_messages: unreadMessageCount,
+      offer_count: pendingOfferCount,
+      network_offers: parseInt(offersRow.dep_count || 0),
       monthly_breakdown: monthlyBreakdown,
       recent_messages: recentMessages,
       active_dep_request: activeDepRequest,

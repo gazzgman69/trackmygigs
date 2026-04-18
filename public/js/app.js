@@ -40,9 +40,40 @@ window._calViewMode = 'month';
 window._calDate = new Date();
 
 // Cache TTL in ms
-const STATS_CACHE_TTL = 30000;
+// Home stats can be up to 5min old before we show a skeleton instead of stale
+// data. renderHomeScreen() uses stale-while-revalidate regardless — it always
+// renders the cache first, then refetches silently in the background — so this
+// TTL really only bounds how old we'll allow the very first paint to be.
+const STATS_CACHE_TTL = 300000;
 const PROFILE_CACHE_TTL = 60000;
 const DATA_CACHE_TTL = 30000;
+
+// Hydrate _cachedStats from localStorage on module load so the first open of the
+// app after a cold boot paints real-looking data instantly instead of a skeleton.
+// The background fetch in renderHomeScreen() then refreshes to live data.
+// Keyed by user id so switching accounts never surfaces another user's stats.
+try {
+  const raw = localStorage.getItem('tmg_cachedStats_v1');
+  if (raw) {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.stats && parsed.userId && parsed.time) {
+      window._cachedStats = parsed.stats;
+      window._cachedStatsTime = parsed.time;
+      window._cachedStatsUser = parsed.userId;
+    }
+  }
+} catch (_) { /* corrupt localStorage entry — ignore */ }
+
+function persistCachedStats() {
+  try {
+    if (!window._cachedStats || !window._cachedStatsUser) return;
+    localStorage.setItem('tmg_cachedStats_v1', JSON.stringify({
+      stats: window._cachedStats,
+      userId: window._cachedStatsUser,
+      time: window._cachedStatsTime || Date.now(),
+    }));
+  } catch (_) { /* quota / privacy mode — ignore */ }
+}
 
 function initApp(user) {
   currentUser = user;
@@ -108,9 +139,15 @@ function initApp(user) {
 }
 
 async function prefetchAllData() {
-  // Fire all fetches at once - don't await sequentially
-  const [statsRes, gigsRes, invoicesRes, offersRes, profileRes, blockedRes] = await Promise.allSettled([
-    fetch('/api/stats'),
+  // /api/stats is fetched by renderHomeScreen() already via fetchStatsWithCache
+  // (which dedupes concurrent callers), so we just grab its promise here rather
+  // than opening a second connection. The other fetches fire in parallel.
+  const statsPromise = fetchStatsWithCache(false).catch((err) => {
+    console.error('prefetch stats failed:', err);
+    return null;
+  });
+
+  const [gigsRes, invoicesRes, offersRes, profileRes, blockedRes] = await Promise.allSettled([
     fetch('/api/gigs'),
     fetch('/api/invoices'),
     fetch('/api/offers'),
@@ -120,14 +157,10 @@ async function prefetchAllData() {
 
   const now = Date.now();
 
-  if (statsRes.status === 'fulfilled' && statsRes.value.ok) {
-    window._cachedStats = await statsRes.value.json();
-    window._cachedStatsTime = now;
-    // Re-render home if it's showing, now with real data
-    if (currentScreen === 'home') {
-      const content = document.getElementById('homeScreen');
-      buildHomeHTML(content, window._cachedStats);
-    }
+  const stats = await statsPromise;
+  if (stats && currentScreen === 'home') {
+    const content = document.getElementById('homeScreen');
+    if (content) buildHomeHTML(content, stats);
   }
 
   if (gigsRes.status === 'fulfilled' && gigsRes.value.ok) {
@@ -356,13 +389,25 @@ async function fetchStatsWithCache(forceRefresh) {
   if (!forceRefresh && cacheMatchesUser && window._cachedStats && (now - window._cachedStatsTime) < STATS_CACHE_TTL) {
     return window._cachedStats;
   }
-  const res = await fetch('/api/stats');
-  if (!res.ok) throw new Error('Failed to fetch stats');
-  const stats = await res.json();
-  window._cachedStats = stats;
-  window._cachedStatsTime = now;
-  window._cachedStatsUser = currentUserId;
-  return stats;
+  // Dedupe concurrent fetches: if we're already refetching, reuse the pending
+  // promise instead of opening a second network request. This matters because
+  // /api/stats runs 13 parallel DB queries and is expensive on Neon.
+  if (window._inflightStatsPromise) {
+    return window._inflightStatsPromise;
+  }
+  const p = fetch('/api/stats').then(async (res) => {
+    if (!res.ok) throw new Error('Failed to fetch stats');
+    const stats = await res.json();
+    window._cachedStats = stats;
+    window._cachedStatsTime = Date.now();
+    window._cachedStatsUser = currentUserId;
+    persistCachedStats();
+    return stats;
+  }).finally(() => {
+    window._inflightStatsPromise = null;
+  });
+  window._inflightStatsPromise = p;
+  return p;
 }
 
 async function renderHomeScreen() {
@@ -370,13 +415,25 @@ async function renderHomeScreen() {
   const currentUserId = window._currentUser?.id || null;
   const cacheMatchesUser = window._cachedStatsUser && window._cachedStatsUser === currentUserId;
 
-  // If we have fresh cached stats for THIS user, render immediately (no loading flash)
-  if (cacheMatchesUser && window._cachedStats && (Date.now() - window._cachedStatsTime) < STATS_CACHE_TTL) {
+  // Stale-while-revalidate: if ANY cached stats exist for this user, paint
+  // them immediately so the home page never shows a skeleton after the very
+  // first load. If the cache is older than STATS_CACHE_TTL we still refetch
+  // in the background and swap in the new data when it lands.
+  if (cacheMatchesUser && window._cachedStats) {
     buildHomeHTML(content, window._cachedStats);
+    const isStale = (Date.now() - window._cachedStatsTime) >= STATS_CACHE_TTL;
+    if (isStale) {
+      fetchStatsWithCache(true)
+        .then((stats) => {
+          // Only re-render if the user hasn't navigated away in the meantime
+          if (currentScreen === 'home') buildHomeHTML(content, stats);
+        })
+        .catch((err) => console.error('Background stats refresh failed:', err));
+    }
     return;
   }
 
-  // Show skeleton loading state - looks like real content, feels fast
+  // No cache (first ever load, or freshly logged-in user) — show skeleton.
   content.innerHTML = buildSkeletonHTML();
 
   try {
@@ -6266,6 +6323,8 @@ async function refreshOffersAndBadge() {
     if (statsRes.ok) {
       window._cachedStats = await statsRes.json();
       window._cachedStatsTime = Date.now();
+      window._cachedStatsUser = window._currentUser?.id || null;
+      if (typeof persistCachedStats === 'function') persistCachedStats();
     }
     // Derive badge count directly from the offers list so it never drifts
     // from what the Offers screen actually shows.
