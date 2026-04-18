@@ -267,8 +267,12 @@ Build the set.`;
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/draft-invoice-chase', async (req, res) => {
   if (!aiGuard(res)) return;
-  const invoiceId = parseInt(req.body?.invoiceId, 10);
+  const invoiceId = String(req.body?.invoiceId || '').trim();
   if (!invoiceId) return res.status(400).json({ error: 'Pass an invoiceId.' });
+  // Validate UUID shape so Postgres doesn't throw type errors
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(invoiceId)) {
+    return res.status(400).json({ error: 'invoiceId must be a UUID.' });
+  }
 
   const r = await db.query(
     `SELECT id, invoice_number, band_name, amount, due_date, status, recipient_email, notes
