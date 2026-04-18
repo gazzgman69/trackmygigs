@@ -1305,8 +1305,9 @@ function buildCalendarView(content, gigsData, blockedData) {
         const linkedEmail = window._googleCalendarEmail || prof.google_calendar_email || null;
         if (isConnected) {
           return `
-            <div style="margin-top:10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-2);">
-              Connected${linkedEmail ? ' as <span style="color:var(--text);font-weight:600;">' + linkedEmail + '</span>' : ''}
+            <div style="margin-top:10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-2);display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Connected${linkedEmail ? ' as <span style="color:var(--text);font-weight:600;">' + linkedEmail + '</span>' : ''}</span>
+              <button onclick="disconnectGoogleCalendar()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--danger);font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0;">Disconnect</button>
             </div>`;
         }
         if (isDisconnected) {
@@ -1400,7 +1401,8 @@ async function disconnectGoogleCalendar() {
     window._googlePinsKey = null;
     // Update the cached profile in place so the next renderProfileScreen()
     // (which is cache-first) shows the disconnected state instead of stale
-    // token data.
+    // token data. Also invalidate the cache timestamp so a subsequent
+    // refresh refetches from the server.
     if (window._cachedProfile) {
       window._cachedProfile.google_access_token = null;
       window._cachedProfile.google_refresh_token = null;
@@ -1409,11 +1411,16 @@ async function disconnectGoogleCalendar() {
       window._cachedProfile.calendar_connected = false;
       window._cachedProfile.calendar_email = null;
     }
-    // Re-render the profile panel body directly if it's open, which bypasses
-    // any panel-visibility checks that renderProfileScreen might skip.
-    const profileBody = document.getElementById('profilePanelBody') || document.getElementById('profileScreen');
+    window._cachedProfileTime = 0;
+    // Re-render the profile panel body directly if it's open, bypassing
+    // renderProfileScreen's cache-first short-circuit.
+    const profileBody = document.getElementById('profilePanelBody');
     if (profileBody && typeof buildProfileHTML === 'function' && window._cachedProfile) {
-      try { buildProfileHTML(profileBody, window._cachedProfile); } catch (e) { /* ignore */ }
+      try { buildProfileHTML(profileBody, window._cachedProfile); } catch (e) { console.warn('profile re-render failed', e); }
+    }
+    const profileScreen = document.getElementById('profileScreen');
+    if (profileScreen && typeof buildProfileHTML === 'function' && window._cachedProfile) {
+      try { buildProfileHTML(profileScreen, window._cachedProfile); } catch (e) { /* ignore */ }
     }
     // Re-render the calendar screen too in case the ... menu / layers are open.
     const calScreen = document.getElementById('calendarScreen');
