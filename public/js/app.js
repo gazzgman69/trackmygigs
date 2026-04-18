@@ -2564,6 +2564,7 @@ async function openInvoiceDetail(invoiceId) {
         ${invoice.status !== 'paid' ? `<button onclick="markInvoiceAsPaid('${invoice.id}')" class="pill-o">Mark as paid</button>` : ''}
         <button onclick="downloadInvoicePDF('${invoice.id}')" class="pill-g">Download PDF</button>
         ${invoice.status === 'sent' ? `<button onclick="chaseInvoicePayment('${invoice.id}')" class="pill-g">Chase payment</button>` : ''}
+        ${(invoice.status === 'sent' || invoice.status === 'overdue') ? `<button onclick="window.aiInvoiceChase && window.aiInvoiceChase('${invoice.id}')" style="background:var(--accent-dim, rgba(240,165,0,.18));color:var(--accent,#f0a500);border:1px solid rgba(240,165,0,.4);border-radius:16px;padding:10px 16px;font-weight:600;font-size:13px;cursor:pointer;">&#10024; AI draft chase email</button>` : ''}
         <button onclick="deleteInvoice('${invoice.id}')" style="background:none;border:1px solid var(--danger);color:var(--danger);padding:10px;border-radius:var(--r);font-weight:600;font-size:13px;cursor:pointer;margin-top:4px;">Delete invoice</button>
       </div>`;
 
@@ -2800,6 +2801,9 @@ function buildOffersHTML(content, offers) {
         <div class="o-acts" style="display:flex;gap:8px;">
           <button onclick="acceptOffer('${offer.id}')" class="o-acc" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">&#x2713; Accept</button>
           <button onclick="declineOffer('${offer.id}')" class="o-dec" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">&#x2715; Decline</button>
+        </div>
+        <div style="margin-top:8px;text-align:right;">
+          <button type="button" onclick="window.aiDepReplyDrafter && window.aiDepReplyDrafter(${JSON.stringify(`${offer.offer_type === 'dep' ? 'Dep' : 'Lineup'} request from ${senderName} for ${offer.band_name || 'Gig'} at ${offer.venue_name || 'venue'} on ${offer.gig_date}${offer.start_time ? ' starting ' + offer.start_time.slice(0,5) : ''}. Fee £${parseFloat(offer.fee || 0).toFixed(0)}.${offer.dress_code ? ' Dress: ' + offer.dress_code + '.' : ''}`).replace(/"/g, '&quot;')})" style="background:none;border:none;color:var(--accent,#f0a500);font-size:11px;font-weight:600;cursor:pointer;padding:4px 8px;">&#10024; Draft reply with AI</button>
         </div>
       </div>`;
     });
@@ -3138,7 +3142,10 @@ function renderCreateGigScreen() {
       <div class="wizard-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface);">
         <button onclick="showScreen('gigs')" style="color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;background:none;border:none;">&#8249; Back</button>
         <div class="wizard-title" style="font-size:16px;font-weight:700;">New Gig</div>
-        <div onclick="renderFullGigForm()" style="font-size:12px;color:var(--text-3);cursor:pointer;">Show full form</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button type="button" onclick="window.aiSmartPasteGig && window.aiSmartPasteGig()" title="Paste booking text and I will fill the form" style="background:var(--accent-dim, rgba(240,165,0,.18));color:var(--accent,#f0a500);border:1px solid rgba(240,165,0,.4);border-radius:12px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;">&#10024; Smart Paste</button>
+          <div onclick="renderFullGigForm()" style="font-size:12px;color:var(--text-3);cursor:pointer;">Show full form</div>
+        </div>
       </div>
       <div style="display:flex;gap:4px;padding:0 20px;margin-bottom:20px;" id="wizardProgress">
         <div id="wizardDot1" style="flex:1;height:3px;border-radius:2px;background:var(--accent);transition:background .3s;"></div>
@@ -3699,6 +3706,31 @@ async function submitGigWizard() {
         if (!ok) return;
         gigWizardData._forcedThroughAutoBlock = true;
       }
+    }
+  } catch (_) { /* non-fatal */ }
+
+  // AI Sanity Check — lightweight pre-flight (date in past? red-flag venue? unusually low/high fee?).
+  // Fails silently to normal save if AI is disabled or errors.
+  try {
+    if (!gigWizardData._forcedThroughSanityCheck && typeof window.aiSanityCheck === 'function' && window.__aiEnabled) {
+      const proceed = await new Promise((resolve) => {
+        try {
+          window.aiSanityCheck(
+            {
+              date: gigWizardData.date,
+              start_time: gigWizardData.start_time,
+              end_time: gigWizardData.end_time,
+              venue_name: gigWizardData.venue_name,
+              venue_address: gigWizardData.venue_address,
+              fee: gigWizardData.fee ? parseFloat(gigWizardData.fee) : null,
+              gig_type: gigWizardData.gig_type,
+            },
+            (ok) => resolve(!!ok)
+          );
+        } catch (_) { resolve(true); }
+      });
+      if (!proceed) return;
+      gigWizardData._forcedThroughSanityCheck = true;
     }
   } catch (_) { /* non-fatal */ }
 
@@ -4455,6 +4487,15 @@ async function renderFinancePanel() {
         </div>
       </div>
 
+      <!-- AI Monthly Insight (rendered async below) -->
+      <div style="padding:0 16px 16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">AI monthly insight</div>
+          <button type="button" onclick="(function(){var d=new Date();window.aiMonthlyInsight && window.aiMonthlyInsight(d.getFullYear(), d.getMonth()+1);})()" style="background:none;border:none;color:var(--accent,#f0a500);font-size:11px;cursor:pointer;font-weight:600;">Refresh</button>
+        </div>
+        <div id="aiInsightSlot"></div>
+      </div>
+
       <!-- HMRC category breakdown (rendered async below) -->
       <div id="financeCategoryBreakdown" style="padding:0 16px 16px;"></div>
 
@@ -4471,6 +4512,14 @@ async function renderFinancePanel() {
 
     body.innerHTML = html;
     if (typeof renderFinanceCategoryBreakdown === 'function') renderFinanceCategoryBreakdown();
+    // Kick off AI monthly insight in the background — it fails silently if
+    // AI is disabled, so the panel renders normally either way.
+    try {
+      const d = new Date();
+      if (typeof window.aiMonthlyInsight === 'function') {
+        window.aiMonthlyInsight(d.getFullYear(), d.getMonth() + 1);
+      }
+    } catch (_) { /* noop */ }
   } catch (err) {
     console.error('Finance panel error:', err);
     body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load finance data.</div>`;
@@ -5345,7 +5394,10 @@ function buildEPKEditor() {
       </p>
 
       <div style="margin-bottom:14px;">
-        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Bio</label>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+          <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Bio</label>
+          <button type="button" onclick="window.aiBioWriter && window.aiBioWriter({ onApply: function(d){ var t=document.getElementById('epkBio'); if(t && d && d.medium){ t.value = d.medium; } } })" style="background:var(--accent-dim, rgba(240,165,0,.18));color:var(--accent,#f0a500);border:1px solid rgba(240,165,0,.4);border-radius:12px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;">&#10024; Write with AI</button>
+        </div>
         <textarea id="epkBio" rows="5" placeholder="A short bio promoters can read at a glance. Style of music, notable gigs, what makes you worth booking." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;font-family:inherit;">${escapeHtml(profile.epk_bio || '')}</textarea>
       </div>
 
@@ -5706,7 +5758,10 @@ async function openRepertoirePanel() {
 
     // Setlists tab
     html += `<div id="setlistsTab" style="display:none;">
-      <button onclick="openPanel('panel-create-setlist')" class="pill" style="margin-bottom:12px;">+ Create Setlist</button>
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+        <button onclick="openPanel('panel-create-setlist')" class="pill">+ Create Setlist</button>
+        <button type="button" onclick="window.aiSetListGenerator && window.aiSetListGenerator()" style="background:var(--accent-dim, rgba(240,165,0,.18));color:var(--accent,#f0a500);border:1px solid rgba(240,165,0,.4);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;">&#10024; Generate with AI</button>
+      </div>
       ${setlists.map(setlist => `
       <div style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
         <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(setlist.name)}</div>
@@ -5723,6 +5778,11 @@ async function openRepertoirePanel() {
       <input type="file" id="chordProFile" accept=".chopro,.chordpro,.cho,text/plain" multiple
         onchange="parseChordProFiles(event)"
         style="display:block;width:100%;padding:12px;background:var(--card);border:1px dashed var(--border);border-radius:var(--rs);color:var(--text-2);font-size:12px;cursor:pointer;margin-bottom:12px;" />
+      <div style="margin:10px 0 14px;padding:10px 12px;border:1px solid rgba(240,165,0,.35);background:rgba(240,165,0,.08);border-radius:10px;">
+        <div style="font-size:12px;font-weight:700;color:var(--accent,#f0a500);margin-bottom:4px;">&#10024; No ChordPro file? Paste messy text</div>
+        <div style="font-size:11px;color:var(--text-2);line-height:1.5;margin-bottom:8px;">Paste any chart, lyrics-with-chords-above, or transcription and I will convert it to proper ChordPro with title, key and tempo.</div>
+        <button type="button" onclick="window.aiChordProNormalise && window.aiChordProNormalise({ onApply: function(d){ if(!d) return; var item = { title: d.title || 'Untitled', artist: d.artist || '', key: d.key || '', tempo: d.tempo || '', time_signature: d.time_signature || '', lyrics: d.cleaned || '', _filename: 'AI cleaned' }; if(!Array.isArray(window._chordProPending)) window._chordProPending = []; window._chordProPending.push(item); if(typeof renderChordProPreview==='function') renderChordProPreview(); } })" style="background:var(--accent,#f0a500);color:#000;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;">Clean up with AI</button>
+      </div>
       <div id="chordProPreview"></div>
       <div style="font-size:10px;color:var(--text-3);line-height:1.5;margin-top:16px;">
         Tip: most ChordPro files include {title}, {artist} and {key} directives. Anything we can't read will show as blank so you can fill it in before saving.
@@ -8677,6 +8737,31 @@ function handleReceiptSnap(event) {
   reader.readAsDataURL(file);
 }
 window.handleReceiptSnap = handleReceiptSnap;
+
+// Apply AI-scanned receipt data to the manual-entry form. Called from
+// public/js/ai.js after the user confirms the scan preview. Everything is
+// editable before save — AI output is a draft, not gospel.
+function applyAIScannedReceipt(data) {
+  if (!data) return;
+  showReceiptForm('manual');
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+  setVal('receiptMerchant', data.merchant || '');
+  setVal('receiptAmount', data.amount != null ? data.amount : '');
+  setVal('receiptVat', data.vat != null ? data.vat : '');
+  if (data.date) setVal('receiptDate', data.date);
+  const catSel = document.getElementById('receiptCategory');
+  if (catSel && data.category) {
+    // Soft match category name against the dropdown. If no exact match, leave
+    // the default — the user picks manually.
+    const opts = Array.from(catSel.options).map((o) => o.value);
+    const hit = opts.find((v) => v.toLowerCase() === String(data.category).toLowerCase())
+             || opts.find((v) => v.toLowerCase().includes(String(data.category).toLowerCase().split(' ')[0]));
+    if (hit) catSel.value = hit;
+  }
+  setVal('receiptNotes', data.notes || '');
+  if (typeof showToast === 'function') showToast('Receipt scanned. Review and save.', 'success');
+}
+window.applyAIScannedReceipt = applyAIScannedReceipt;
 
 // S13-10: Categories that map to HMRC SA103 deductible boxes. 'Other' and
 // anything uncategorised does not roll up into the claimable total.

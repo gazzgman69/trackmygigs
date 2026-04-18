@@ -11,6 +11,7 @@ const apiRoutes = require('./routes/api');
 const calendarRoutes = require('./routes/calendar');
 const chatRoutes = require('./routes/chat');
 const publicRoutes = require('./routes/public');
+const aiRoutes = require('./routes/ai');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -56,11 +57,6 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 app.use('/auth', authRoutes);
-app.use('/api', apiRoutes);
-app.use('/api/calendar', calendarRoutes);
-app.use('/api/chat', chatRoutes);
-// Public share and EPK routes (no auth) — mounted at /share and /epk via the same router
-app.use('/', publicRoutes);
 
 // ── Admin reload endpoint ────────────────────────────────────────────────────
 // Lets Claude trigger a git pull + restart with a single curl after pushing
@@ -71,6 +67,10 @@ app.use('/', publicRoutes);
 // Protected by RELOAD_SECRET env var. Accepts GET and POST so plain `curl URL`
 // works; the key travels in the query string. Responds with the git output so
 // it's obvious whether the pull actually fetched new commits.
+//
+// CRITICAL: these routes must be registered BEFORE `app.use('/api', apiRoutes)`
+// so they bypass the auth middleware mounted inside apiRoutes. Otherwise every
+// reload attempt returns 401 from authMiddleware before the handler runs.
 function handleReload(req, res) {
   const expected = process.env.RELOAD_SECRET;
   if (!expected) {
@@ -88,14 +88,21 @@ function handleReload(req, res) {
     console.log('[reload] git pull output:\n' + stdout);
     res.json({ ok: true, output: stdout.trim() });
     // nodemon will detect the file changes from the pull and restart the
-    // process automatically — no process.exit() needed. If someone later
-    // switches the run command back to plain `node server.js`, this endpoint
-    // still succeeds in pulling code but the process won't restart; falling
-    // back to the Replit Console Stop/Run flow is fine in that case.
+    // process automatically. If someone later switches the run command back to
+    // plain `node server.js`, this endpoint still succeeds in pulling code but
+    // the process won't restart; falling back to the Replit Console flow is
+    // fine in that case.
   });
 }
 app.get('/api/admin/reload', handleReload);
 app.post('/api/admin/reload', handleReload);
+
+app.use('/api/ai', aiRoutes);
+app.use('/api', apiRoutes);
+app.use('/api/calendar', calendarRoutes);
+app.use('/api/chat', chatRoutes);
+// Public share and EPK routes (no auth) — mounted at /share and /epk via the same router
+app.use('/', publicRoutes);
 
 // Serve sw.js with BUILD_ID injected so the service worker cache name changes
 // on every server restart — forcing browsers to install the new worker and

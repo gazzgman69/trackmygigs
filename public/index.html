@@ -68,6 +68,7 @@
           </div>
         </div>
         <div class="header-right">
+          <button id="aiToolsBtn" onclick="window.aiToolsHub && window.aiToolsHub()" title="AI tools" style="background:none;border:none;color:var(--accent,#f0a500);font-size:18px;cursor:pointer;padding:4px 6px;line-height:1;">&#10024;</button>
           <button class="notification-bell" id="notificationBell" onclick="openPanel('panel-notifications')">
             🔔
             <span class="notification-dot" id="notificationDot"></span>
@@ -475,6 +476,11 @@
         <div style="border-top:1px solid var(--border);padding-top:10px;font-size:13px;color:var(--text)" id="receiptCount">0 receipts</div>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button onclick="window.aiScanReceipt && window.aiScanReceipt({ onApply: window.applyAIScannedReceipt })" class="receipt-add-btn" style="border:1px solid rgba(240,165,0,.45);">
+          <div style="font-size:20px">✨</div>
+          <div style="font-size:11px;font-weight:600;color:var(--accent,#f0a500);margin-top:4px">Scan with AI</div>
+          <div style="font-size:9px;color:var(--text-3);margin-top:2px">Photo or paste → auto-fill</div>
+        </button>
         <button onclick="showReceiptForm('snap')" class="receipt-add-btn">
           <div style="font-size:20px">📸</div>
           <div style="font-size:11px;font-weight:600;color:var(--text);margin-top:4px">Snap receipt</div>
@@ -796,5 +802,6 @@
   <script>window.GOOGLE_CLIENT_ID = "775009954166-8ngl19vdj033jv0mbquoll385c8cd58t.apps.googleusercontent.com";</script>
   <script src="/js/app.js" defer></script>
   <script src="/js/auth.js" defer></script>
+  <script src="/js/ai.js" defer></script>
 </body>
 </html>
