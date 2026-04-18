@@ -364,7 +364,31 @@ router.post('/google', async (req, res) => {
 
 // ---- GOOGLE CALENDAR OAUTH (Authorization Code Flow) ----
 
-// Redirect user to Google consent screen with Calendar scope
+// Resolve the currently logged-in user from the session cookie, or null.
+// Used by /google/callback to distinguish "link calendar to existing account"
+// from "sign in with Google". authMiddleware isn't mounted on /auth/* routes
+// (they must be reachable pre-login), so we resolve the session inline here.
+async function resolveSessionUser(req) {
+  const token = req.cookies && req.cookies.sessionToken;
+  if (!token) return null;
+  try {
+    const result = await db.query(
+      `SELECT u.* FROM sessions s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.token = $1 AND s.expires_at > NOW()`,
+      [token]
+    );
+    return result.rows[0] || null;
+  } catch (err) {
+    console.error('resolveSessionUser error:', err);
+    return null;
+  }
+}
+
+// Redirect user to Google consent screen with Calendar scope.
+// Scope note (2026-04-18): upgraded from calendar.readonly to calendar.events
+// because routes/calendar.js performs events.insert/update/delete for two-way
+// sync. readonly tokens were causing silent 403s on every push.
 router.get('/google/calendar', (req, res) => {
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
@@ -372,13 +396,20 @@ router.get('/google/calendar', (req, res) => {
     scope: [
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/userinfo.profile',
-      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/calendar.events',
     ],
   });
   res.redirect(authUrl);
 });
 
-// Handle the OAuth callback
+// Handle the OAuth callback. Two modes:
+//   (1) Link mode: user is already logged in (valid session cookie). We attach
+//       the Google Calendar tokens to their existing user record and preserve
+//       their session. The Google account they authenticated with can be
+//       different from their app login email. That's intentional (e.g. a
+//       musician whose band-admin Google account holds the shared calendar).
+//   (2) Sign-in mode: no valid session. This OAuth acts as identity. We
+//       find-or-create the user by Google email and start a session.
 router.get('/google/callback', async (req, res) => {
   try {
     const { code } = req.query;
@@ -387,7 +418,27 @@ router.get('/google/callback', async (req, res) => {
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
 
-    // Get user info from Google
+    const currentUser = await resolveSessionUser(req);
+
+    if (currentUser) {
+      // Link mode: attach tokens to the current user, leave session alone.
+      await db.query(
+        `UPDATE users SET
+          google_access_token = $1,
+          google_refresh_token = COALESCE($2, google_refresh_token),
+          google_token_expires_at = $3
+         WHERE id = $4`,
+        [
+          tokens.access_token,
+          tokens.refresh_token || null,
+          tokens.expiry_date ? new Date(tokens.expiry_date) : null,
+          currentUser.id,
+        ]
+      );
+      return res.redirect('/?calendar_connected=true');
+    }
+
+    // Sign-in mode: no existing session, treat as identity.
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const userInfo = await oauth2.userinfo.get();
     const { id: googleId, email, name, picture } = userInfo.data;
@@ -396,7 +447,6 @@ router.get('/google/callback', async (req, res) => {
 
     const user = await findOrCreateUser(email, name, picture, googleId);
 
-    // Store Google tokens on user record
     await db.query(
       `UPDATE users SET
         google_access_token = $1,
