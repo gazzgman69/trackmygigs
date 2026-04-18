@@ -894,6 +894,40 @@ function formatRelativeTime(dateStr) {
   return `${days}d ago`;
 }
 
+// Loads the AI-scored "likely gig" events and caches them as both an array
+// and an id-keyed map. Also keeps the global _nudgeEvents in sync so the
+// existing openNudgeDetail / quickImportNudge / dismissNudge helpers (which
+// index into _nudgeEvents) work from any entry point. Uses a 60s cache so
+// opening Gigs and Calendar back-to-back doesn't double-fetch.
+async function loadCalendarNudges({ force = false } = {}) {
+  const fresh = (Date.now() - (window._calendarNudgesFetchedAt || 0)) < 60 * 1000;
+  if (!force && fresh && Array.isArray(window._calendarNudges)) {
+    return window._calendarNudges;
+  }
+  try {
+    const resp = await fetch('/api/calendar/events');
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data.connected) {
+      window._calendarNudges = [];
+      window._calendarNudgesById = {};
+      window._calendarNudgesFetchedAt = Date.now();
+      return [];
+    }
+    const toReview = (data.events || []).filter(e => !e.already_imported);
+    const byId = {};
+    toReview.forEach(e => { if (e.id) byId[e.id] = e; });
+    window._calendarNudges = toReview;
+    window._calendarNudgesById = byId;
+    window._calendarNudgesFetchedAt = Date.now();
+    // Keep the legacy array in sync so index-based helpers still work.
+    _nudgeEvents = toReview;
+    return toReview;
+  } catch (_) {
+    return null;
+  }
+}
+
 async function checkCalendarNudges() {
   // Fire inbound sync first so existing gigs reflect Google changes before we
   // compute nudges from the remaining "unknown" events.
@@ -901,22 +935,212 @@ async function checkCalendarNudges() {
 
   const bar = document.getElementById('calendarNudgeBar');
   if (!bar) return;
-  try {
-    const resp = await fetch('/api/calendar/events');
-    if (!resp.ok) return;
-    const data = await resp.json();
-    if (!data.connected) return;
-    const toReview = (data.events || []).filter(e => !e.already_imported);
-    if (toReview.length === 0) {
-      bar.style.display = 'none';
-      return;
-    }
-    window._calendarNudges = toReview;
-    bar.style.display = 'block';
-    bar.innerHTML = renderImportsBarHtml(toReview);
-  } catch (e) {
-    // Silent fail - calendar nudges are optional
+  const toReview = await loadCalendarNudges({ force: true });
+  if (!Array.isArray(toReview)) return;
+  if (toReview.length === 0) {
+    bar.style.display = 'none';
+    return;
   }
+  bar.style.display = 'block';
+  bar.innerHTML = renderImportsBarHtml(toReview);
+}
+
+// Companion to checkCalendarNudges for the Calendar screen's own banner.
+// Paints an amber "X events look like gigs" card above the grid, re-renders
+// the grid to colour likely-gig pin dots amber, and refreshes the pin list
+// sections so cards show the "Gig? Tap to import" tag + actions.
+async function loadCalendarScreenNudges() {
+  const toReview = await loadCalendarNudges({ force: true });
+  if (!Array.isArray(toReview)) return;
+  paintCalendarScreenNudgeBanner(toReview);
+  // Re-render the calendar view so pin cards + grid dots pick up nudge
+  // enrichment. Only refresh if the user is still on the calendar screen.
+  if (currentScreen === 'calendar') {
+    const content = document.getElementById('calendarScreen');
+    if (content && window._cachedGigs && window._cachedBlocked) {
+      buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+    }
+  }
+}
+
+function paintCalendarScreenNudgeBanner(toReview) {
+  const bar = document.getElementById('calScreenNudgeBar');
+  if (!bar) return;
+  if (!Array.isArray(toReview) || toReview.length === 0) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  const count = toReview.length;
+  const previewCount = Math.min(count, 3);
+  const titles = toReview.slice(0, previewCount).map(e => {
+    const t = (e.title || 'Calendar event');
+    return t.length > 32 ? t.slice(0, 30).trim() + '…' : t;
+  }).join(', ');
+  const extra = count > previewCount ? ` and ${count - previewCount} more` : '';
+  const headline = `${count} event${count !== 1 ? 's' : ''} look${count === 1 ? 's' : ''} like a gig`;
+  bar.style.display = 'block';
+  bar.innerHTML = `
+    <div onclick="openGigNudge()" style="margin:0 16px 12px;padding:12px 14px;background:linear-gradient(135deg,rgba(240,165,0,.18),rgba(240,165,0,.06));border:1px solid rgba(240,165,0,.35);border-radius:12px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+      <div style="width:36px;height:36px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">&#x1F3B5;</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">${headline}</div>
+        <div style="font-size:11px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(titles)}${extra}</div>
+      </div>
+      <div style="font-size:11px;font-weight:600;color:var(--accent);flex-shrink:0;">Review &rsaquo;</div>
+    </div>
+  `;
+}
+
+// Opens the nudge detail panel by Google-Calendar event id. Used by the
+// "Gig? Tap to import" tag on pin cards in the Calendar screen. Falls back
+// silently if the id isn't in the nudge set.
+function openCalendarNudgeByEventId(eventId) {
+  const nudges = Array.isArray(window._calendarNudges) ? window._calendarNudges : [];
+  const idx = nudges.findIndex(e => e.id === eventId);
+  if (idx < 0) return;
+  // Ensure _nudgeEvents is in sync so the existing openNudgeDetail path works.
+  _nudgeEvents = nudges;
+  openNudgeDetail(idx);
+}
+window.openCalendarNudgeByEventId = openCalendarNudgeByEventId;
+
+function quickImportNudgeByEventId(eventId) {
+  const nudges = Array.isArray(window._calendarNudges) ? window._calendarNudges : [];
+  const idx = nudges.findIndex(e => e.id === eventId);
+  if (idx < 0) return;
+  _nudgeEvents = nudges;
+  quickImportNudge(idx).then(() => {
+    // Drop from the cached nudges so the banner + pin tags refresh.
+    if (window._calendarNudges) {
+      window._calendarNudges = window._calendarNudges.filter(e => e.id !== eventId);
+      if (window._calendarNudgesById) delete window._calendarNudgesById[eventId];
+    }
+    paintCalendarScreenNudgeBanner(window._calendarNudges || []);
+    if (currentScreen === 'calendar') {
+      // Also drop the matching pin so the imported event flips into the gigs list.
+      if (Array.isArray(window._googlePins)) {
+        window._googlePins = window._googlePins.filter(p => p.id !== eventId);
+      }
+      window._googlePinsKey = null;
+      const content = document.getElementById('calendarScreen');
+      if (content && window._cachedGigs && window._cachedBlocked) {
+        buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+      }
+      // Refresh gigs cache in the background so the newly-imported gig appears.
+      fetch('/api/gigs').then(r => r.ok ? r.json() : null).then(g => {
+        if (g) {
+          window._cachedGigs = g;
+          persistCachedCalendar();
+          if (currentScreen === 'calendar' && content) {
+            buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+          }
+        }
+      }).catch(() => {});
+    }
+  });
+}
+window.quickImportNudgeByEventId = quickImportNudgeByEventId;
+
+function dismissNudgeByEventId(eventId) {
+  const nudges = Array.isArray(window._calendarNudges) ? window._calendarNudges : [];
+  const idx = nudges.findIndex(e => e.id === eventId);
+  if (idx < 0) return;
+  _nudgeEvents = nudges;
+  dismissNudge(idx).then(() => {
+    // Drop from nudge set so the tag disappears. Pin stays visible but loses
+    // its amber "Gig?" treatment (it's just a regular calendar event now).
+    if (window._calendarNudges) {
+      window._calendarNudges = window._calendarNudges.filter(e => e.id !== eventId);
+      if (window._calendarNudgesById) delete window._calendarNudgesById[eventId];
+    }
+    paintCalendarScreenNudgeBanner(window._calendarNudges || []);
+    if (currentScreen === 'calendar') {
+      const content = document.getElementById('calendarScreen');
+      if (content && window._cachedGigs && window._cachedBlocked) {
+        buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+      }
+    }
+  });
+}
+window.dismissNudgeByEventId = dismissNudgeByEventId;
+
+// Renders a Google Calendar pin card used inside the Calendar screen's Month /
+// Week / Day views. If the pin matches a current nudge (likely gig), the card
+// picks up amber styling, a "Gig? Tap to import" tag, and inline Import / Skip
+// buttons. Otherwise it falls back to the plain Google-blue treatment so non-
+// gig events still render clearly.
+//   mode: 'month' | 'week' | 'day' — controls the date column layout.
+function renderGooglePinCard(p, { mode = 'month' } = {}) {
+  const isNudge = !!(window._calendarNudgesById && window._calendarNudgesById[p.id]);
+  const nudge = isNudge ? window._calendarNudgesById[p.id] : null;
+  const d = new Date(p.date);
+  const accent = isNudge ? 'var(--accent)' : '#4285F4';
+  const bg = isNudge
+    ? 'linear-gradient(135deg,rgba(240,165,0,.10),rgba(240,165,0,.02))'
+    : 'var(--card)';
+  const safeId = (p.id || '').replace(/'/g, "\\'");
+  const cardClick = isNudge ? `onclick="openCalendarNudgeByEventId('${safeId}')"` : '';
+  const cursor = isNudge ? 'cursor:pointer;' : '';
+
+  let dateColHtml = '';
+  if (mode === 'day') {
+    dateColHtml = `
+      <div style="min-width:44px;text-align:center;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);">${p.all_day ? 'All' : (p.start_time ? formatTime(p.start_time) : '')}</div>
+        ${p.all_day ? '<div style="font-size:9px;color:var(--text-2);">DAY</div>' : ''}
+      </div>`;
+  } else if (mode === 'week') {
+    dateColHtml = `
+      <div style="min-width:36px;text-align:center;">
+        <div style="font-size:18px;font-weight:700;color:var(--text);">${d.getDate()}</div>
+        <div style="font-size:9px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">${d.toLocaleDateString('en-GB', { weekday: 'short' }).toUpperCase()}</div>
+      </div>`;
+  } else {
+    dateColHtml = `
+      <div style="min-width:36px;text-align:center;">
+        <div style="font-size:18px;font-weight:700;color:var(--text);">${d.getDate()}</div>
+        <div style="font-size:9px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">${d.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase()}</div>
+      </div>`;
+  }
+
+  const metaBits = [];
+  if (mode === 'day') {
+    if (p.location) metaBits.push(escapeHtml(p.location));
+  } else {
+    if (p.all_day) metaBits.push('All day');
+    else if (p.start_time) metaBits.push(formatTime(p.start_time));
+    if (p.location) metaBits.push(escapeHtml(p.location));
+  }
+  const metaHtml = metaBits.length ? `<div style="font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${metaBits.join(' \u00B7 ')}</div>` : '';
+
+  const reasonTags = (isNudge && Array.isArray(nudge.reasons) && nudge.reasons.length)
+    ? `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;">
+        ${nudge.reasons.slice(0, 3).map(r => `<span style="font-size:9px;font-weight:600;color:var(--accent);background:rgba(240,165,0,.12);border:1px solid rgba(240,165,0,.25);border-radius:6px;padding:2px 6px;">${escapeHtml(r)}</span>`).join('')}
+       </div>`
+    : '';
+
+  const nudgeTag = isNudge
+    ? `<div style="display:inline-flex;align-items:center;gap:4px;margin-top:6px;font-size:10px;font-weight:700;color:var(--accent);background:rgba(240,165,0,.14);border:1px solid rgba(240,165,0,.3);border-radius:8px;padding:2px 8px;">&#x1F3B5; Gig? Tap to import</div>`
+    : '';
+
+  const actionButtons = isNudge
+    ? `<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+        <button onclick="event.stopPropagation();quickImportNudgeByEventId('${safeId}')" title="Import as gig" style="width:32px;height:32px;border-radius:16px;background:var(--success);border:none;color:#000;font-size:14px;font-weight:700;cursor:pointer;">&#x2713;</button>
+        <button onclick="event.stopPropagation();dismissNudgeByEventId('${safeId}')" title="Not a gig" style="width:32px;height:32px;border-radius:16px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&#x2715;</button>
+      </div>`
+    : '';
+
+  return `<div ${cardClick} style="display:flex;align-items:flex-start;gap:14px;padding:10px 12px;background:${bg};border:1px solid var(--border);border-left:3px solid ${accent};border-radius:var(--r);margin-bottom:6px;${cursor}">
+    ${dateColHtml}
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(p.title || 'Calendar event')}</div>
+      ${metaHtml}
+      ${nudgeTag}
+      ${reasonTags}
+    </div>
+    ${actionButtons}
+  </div>`;
 }
 
 // Collapsible imports-to-review bar with inline items (matches mockup lines 396-417)
@@ -1383,12 +1607,18 @@ async function renderCalendarScreen() {
   // an edit" pattern used throughout the app to force a full refetch.
   if (cacheMatchesUser && window._cachedGigs && window._cachedBlocked) {
     buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+    // Paint the nudge banner immediately from cached nudges if we have them,
+    // so the amber bar doesn't flicker in after the grid renders.
+    paintCalendarScreenNudgeBanner(window._calendarNudges || []);
     // Fire pin fetch even on the instant-paint path so Google Calendar pins
     // show up once the request lands.
     loadGoogleCalendarPins().catch(() => {});
     // Also fire an inbound pull so any changes made in Google Calendar since
     // the last sync flow into the app while the user is looking at the calendar.
     maybePullCalendarOnOpen();
+    // Refresh nudges in the background; the loader repaints the banner and
+    // re-renders the grid if anything changed.
+    loadCalendarScreenNudges().catch(() => {});
 
     const isStale = (now - (window._cachedBlockedTime || 0)) >= DATA_CACHE_TTL;
     if (isStale) {
@@ -1411,7 +1641,9 @@ async function renderCalendarScreen() {
         window._cachedCalendarUser = currentUserId;
         persistCachedCalendar();
         buildCalendarView(content, window._cachedGigs || [], window._cachedBlocked || []);
+        paintCalendarScreenNudgeBanner(window._calendarNudges || []);
         loadGoogleCalendarPins().catch(() => {});
+        loadCalendarScreenNudges().catch(() => {});
         return;
       }
     }
@@ -1443,9 +1675,11 @@ async function renderCalendarScreen() {
     persistCachedCalendar();
 
     buildCalendarView(content, window._cachedGigs || [], window._cachedBlocked || []);
+    paintCalendarScreenNudgeBanner(window._calendarNudges || []);
     // Fire-and-forget pin fetch; when it returns, re-render so pins show up.
     loadGoogleCalendarPins().catch(() => {});
     maybePullCalendarOnOpen();
+    loadCalendarScreenNudges().catch(() => {});
   } catch (err) {
     console.error('Calendar error:', err);
     content.innerHTML = `
@@ -1605,7 +1839,8 @@ function buildCalendarView(content, gigsData, blockedData) {
       <div class="tb ${view === 'day' ? 'ac' : ''}" onclick="switchCalendarView('day')">Day</div>
       <div class="tb ${view === 'week' ? 'ac' : ''}" onclick="switchCalendarView('week')">Week</div>
       <div class="tb ${view === 'month' ? 'ac' : ''}" onclick="switchCalendarView('month')">Month</div>
-    </div>`;
+    </div>
+    <div id="calScreenNudgeBar" style="margin-top:12px;"></div>`;
 
   const googlePins = (layers.google && Array.isArray(window._googlePins)) ? window._googlePins : [];
   if (view === 'month') {
@@ -1806,7 +2041,7 @@ function renderCalendarMonth(currentDate, gigs, blocked, googlePins = []) {
       <div class="cd-dots">
         ${gigsOnDay.slice(0, 3).map(() => `<div class="cd-dot" style="background:var(--success);"></div>`).join('')}
         ${blockedOnDay ? `<div class="cd-dot" style="background:var(--danger);"></div>` : ''}
-        ${pinsOnDay.slice(0, 2).map(() => `<div class="cd-dot" style="background:#4285F4;"></div>`).join('')}
+        ${pinsOnDay.slice(0, 2).map(p => `<div class="cd-dot" style="background:${(window._calendarNudgesById && window._calendarNudgesById[p.id]) ? 'var(--accent)' : '#4285F4'};"></div>`).join('')}
       </div>` : ''}
     </div>`;
   }
@@ -1836,29 +2071,17 @@ function renderCalendarMonth(currentDate, gigs, blocked, googlePins = []) {
     html += `</div>`;
   }
 
-  // List Google Calendar pins this month
+  // List Google Calendar pins this month. Pins that match a current nudge get
+  // the amber "Gig? Tap to import" treatment via renderGooglePinCard.
   const monthPins = googlePins.filter(p => (p.date || '').slice(0, 7) === `${year}-${String(month + 1).padStart(2, '0')}`);
   if (monthPins.length > 0) {
+    const hasNudge = monthPins.some(p => window._calendarNudgesById && window._calendarNudgesById[p.id]);
     html += `<div style="margin-top:16px;">
       <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-        <span style="width:8px;height:8px;border-radius:2px;background:#4285F4;display:inline-block;"></span>
+        <span style="width:8px;height:8px;border-radius:2px;background:${hasNudge ? 'var(--accent)' : '#4285F4'};display:inline-block;"></span>
         Google Calendar
       </div>`;
-    monthPins.forEach(p => {
-      const d = new Date(p.date);
-      html += `<div style="display:flex;align-items:flex-start;gap:14px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-left:3px solid #4285F4;border-radius:var(--r);margin-bottom:6px;">
-        <div style="min-width:36px;text-align:center;">
-          <div style="font-size:18px;font-weight:700;color:var(--text);">${d.getDate()}</div>
-          <div style="font-size:9px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">${d.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase()}</div>
-        </div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(p.title)}</div>
-          <div style="font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-            ${p.all_day ? 'All day' : (p.start_time ? formatTime(p.start_time) : '')}${p.location ? ' · ' + escapeHtml(p.location) : ''}
-          </div>
-        </div>
-      </div>`;
-    });
+    monthPins.forEach(p => { html += renderGooglePinCard(p, { mode: 'month' }); });
     html += `</div>`;
   }
 
@@ -1922,33 +2145,20 @@ function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
     html += `</div>`;
   }
 
-  // Google Calendar pins in this week
+  // Google Calendar pins in this week. Nudge-matched pins pick up amber treatment.
   const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
   const weekPins = googlePins.filter(p => {
     const pd = new Date(p.date);
     return pd >= weekStart && pd < weekEnd;
   });
   if (weekPins.length > 0) {
+    const hasNudge = weekPins.some(p => window._calendarNudgesById && window._calendarNudgesById[p.id]);
     html += `<div style="margin-top:12px;">
       <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-        <span style="width:8px;height:8px;border-radius:2px;background:#4285F4;display:inline-block;"></span>
+        <span style="width:8px;height:8px;border-radius:2px;background:${hasNudge ? 'var(--accent)' : '#4285F4'};display:inline-block;"></span>
         Google Calendar
       </div>`;
-    weekPins.forEach(p => {
-      const d = new Date(p.date);
-      html += `<div style="display:flex;align-items:flex-start;gap:14px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-left:3px solid #4285F4;border-radius:var(--r);margin-bottom:6px;">
-        <div style="min-width:36px;text-align:center;">
-          <div style="font-size:18px;font-weight:700;color:var(--text);">${d.getDate()}</div>
-          <div style="font-size:9px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">${d.toLocaleDateString('en-GB', { weekday: 'short' }).toUpperCase()}</div>
-        </div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(p.title)}</div>
-          <div style="font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-            ${p.all_day ? 'All day' : (p.start_time ? formatTime(p.start_time) : '')}${p.location ? ' · ' + escapeHtml(p.location) : ''}
-          </div>
-        </div>
-      </div>`;
-    });
+    weekPins.forEach(p => { html += renderGooglePinCard(p, { mode: 'week' }); });
     html += `</div>`;
   }
 
@@ -2032,23 +2242,13 @@ function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
   }
 
   if (dayPins.length > 0) {
+    const hasNudge = dayPins.some(p => window._calendarNudgesById && window._calendarNudgesById[p.id]);
     html += `<div style="margin-top:16px;">
       <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-        <span style="width:8px;height:8px;border-radius:2px;background:#4285F4;display:inline-block;"></span>
+        <span style="width:8px;height:8px;border-radius:2px;background:${hasNudge ? 'var(--accent)' : '#4285F4'};display:inline-block;"></span>
         Google Calendar
       </div>`;
-    dayPins.forEach(p => {
-      html += `<div style="display:flex;align-items:flex-start;gap:14px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-left:3px solid #4285F4;border-radius:var(--r);margin-bottom:6px;">
-        <div style="min-width:44px;text-align:center;">
-          <div style="font-size:13px;font-weight:600;color:var(--text);">${p.all_day ? 'All' : (p.start_time ? formatTime(p.start_time) : '')}</div>
-          ${p.all_day ? '<div style="font-size:9px;color:var(--text-2);">DAY</div>' : ''}
-        </div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(p.title)}</div>
-          ${p.location ? `<div style="font-size:12px;color:var(--text-2);">${escapeHtml(p.location)}</div>` : ''}
-        </div>
-      </div>`;
-    });
+    dayPins.forEach(p => { html += renderGooglePinCard(p, { mode: 'day' }); });
     html += `</div>`;
   }
 
