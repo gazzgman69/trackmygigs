@@ -1298,20 +1298,29 @@ function buildCalendarView(content, gigsData, blockedData) {
           <span style="font-size:13px;color:var(--text);">${label}</span>
         </label>
       `).join('')}
-      ${window._googleConnected === false ? `
-        <a href="/auth/google/calendar" style="display:block;margin-top:10px;padding:10px 12px;background:#4285F4;color:#fff;border-radius:8px;font-size:13px;font-weight:600;text-align:center;text-decoration:none;">Connect Google Calendar</a>
-      ` : ''}
-      ${window._googleConnected === true && window._googleCalendarEmail ? `
-        <div style="margin-top:10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-2);">
-          Connected as <span style="color:var(--text);font-weight:600;">${window._googleCalendarEmail}</span>
-        </div>
-      ` : ''}
+      ${(() => {
+        const prof = window._cachedProfile || {};
+        const isConnected = window._googleConnected === true || !!prof.google_access_token;
+        const isDisconnected = window._googleConnected === false || (window._googleConnected === undefined && !prof.google_access_token);
+        const linkedEmail = window._googleCalendarEmail || prof.google_calendar_email || null;
+        if (isConnected) {
+          return `
+            <div style="margin-top:10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-2);">
+              Connected${linkedEmail ? ' as <span style="color:var(--text);font-weight:600;">' + linkedEmail + '</span>' : ''}
+            </div>`;
+        }
+        if (isDisconnected) {
+          return `
+            <a href="/auth/google/calendar" style="display:block;margin-top:10px;padding:10px 12px;background:#4285F4;color:#fff;border-radius:8px;font-size:13px;font-weight:600;text-align:center;text-decoration:none;">Connect Google Calendar</a>`;
+        }
+        return '';
+      })()}
     </div>
     <div id="calendarMenu" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px;z-index:10;">
       <div onclick="handleCalendarAction('add-gig')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;">Add gig</div>
       <div onclick="handleCalendarAction('add-event')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Add event</div>
       <div onclick="handleCalendarAction('block-dates')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Block dates</div>
-      ${window._googleConnected === true ? `
+      ${(window._googleConnected === true || (window._cachedProfile && !!window._cachedProfile.google_access_token)) ? `
         <div onclick="disconnectGoogleCalendar()" style="padding:12px 14px;cursor:pointer;color:var(--danger);font-size:14px;border-top:1px solid var(--border);">Disconnect Google Calendar</div>
       ` : ''}
     </div>
@@ -1384,17 +1393,32 @@ async function disconnectGoogleCalendar() {
       alert('Disconnect failed. Please try again.');
       return;
     }
+    // Clear window-level flags
     window._googleConnected = false;
     window._googleCalendarEmail = null;
     window._googlePins = [];
     window._googlePinsKey = null;
-    // Re-render whichever screen the user's on.
-    const calScreen = document.getElementById('calendarScreen');
-    if (calScreen && calScreen.style.display !== 'none' && window._cachedGigs && window._cachedBlocked) {
-      buildCalendarView(calScreen, window._cachedGigs, window._cachedBlocked);
+    // Update the cached profile in place so the next renderProfileScreen()
+    // (which is cache-first) shows the disconnected state instead of stale
+    // token data.
+    if (window._cachedProfile) {
+      window._cachedProfile.google_access_token = null;
+      window._cachedProfile.google_refresh_token = null;
+      window._cachedProfile.google_token_expires_at = null;
+      window._cachedProfile.google_calendar_email = null;
+      window._cachedProfile.calendar_connected = false;
+      window._cachedProfile.calendar_email = null;
     }
-    if (typeof renderProfileScreen === 'function') {
-      try { renderProfileScreen(); } catch (e) { /* ignore */ }
+    // Re-render the profile panel body directly if it's open, which bypasses
+    // any panel-visibility checks that renderProfileScreen might skip.
+    const profileBody = document.getElementById('profilePanelBody') || document.getElementById('profileScreen');
+    if (profileBody && typeof buildProfileHTML === 'function' && window._cachedProfile) {
+      try { buildProfileHTML(profileBody, window._cachedProfile); } catch (e) { /* ignore */ }
+    }
+    // Re-render the calendar screen too in case the ... menu / layers are open.
+    const calScreen = document.getElementById('calendarScreen');
+    if (calScreen && window._cachedGigs && window._cachedBlocked) {
+      try { buildCalendarView(calScreen, window._cachedGigs, window._cachedBlocked); } catch (e) { /* ignore */ }
     }
   } catch (e) {
     alert('Disconnect failed: ' + (e.message || e));
