@@ -52,6 +52,23 @@ function initApp(user) {
   setupNavigation();
   setupScreenHandlers();
 
+  // Strip ?calendar_connected=true from the URL once we've landed, so a
+  // refresh doesn't re-show any connected banner keyed off that param.
+  if (typeof clearCalendarConnectedParam === 'function') {
+    clearCalendarConnectedParam();
+  }
+
+  // Seed calendar connection state from the user record we already have,
+  // so Profile and Calendar panels render correctly on first paint.
+  if (user && typeof user === 'object') {
+    if (user.calendar_connected !== undefined) {
+      window._googleConnected = !!user.calendar_connected;
+    }
+    if (user.calendar_email) {
+      window._googleCalendarEmail = user.calendar_email;
+    }
+  }
+
   // Update the fixed header with user info
   updateAppHeader();
 
@@ -135,6 +152,14 @@ async function prefetchAllData() {
   if (profileRes.status === 'fulfilled' && profileRes.value.ok) {
     window._cachedProfile = await profileRes.value.json();
     window._cachedProfileTime = now;
+    // Seed calendar connection state so any screen that renders before
+    // /api/calendar/status is probed has the right connect/disconnect UI.
+    if (window._cachedProfile.google_access_token !== undefined) {
+      window._googleConnected = !!window._cachedProfile.google_access_token;
+    }
+    if (window._cachedProfile.google_calendar_email) {
+      window._googleCalendarEmail = window._cachedProfile.google_calendar_email;
+    }
     // Sync colour theme from profile (server wins over localStorage)
     if (window._cachedProfile.colour_theme) {
       localStorage.setItem('colourTheme', window._cachedProfile.colour_theme);
@@ -1276,11 +1301,19 @@ function buildCalendarView(content, gigsData, blockedData) {
       ${window._googleConnected === false ? `
         <a href="/auth/google/calendar" style="display:block;margin-top:10px;padding:10px 12px;background:#4285F4;color:#fff;border-radius:8px;font-size:13px;font-weight:600;text-align:center;text-decoration:none;">Connect Google Calendar</a>
       ` : ''}
+      ${window._googleConnected === true && window._googleCalendarEmail ? `
+        <div style="margin-top:10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-2);">
+          Connected as <span style="color:var(--text);font-weight:600;">${window._googleCalendarEmail}</span>
+        </div>
+      ` : ''}
     </div>
     <div id="calendarMenu" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px;z-index:10;">
       <div onclick="handleCalendarAction('add-gig')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;">Add gig</div>
       <div onclick="handleCalendarAction('add-event')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Add event</div>
       <div onclick="handleCalendarAction('block-dates')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Block dates</div>
+      ${window._googleConnected === true ? `
+        <div onclick="disconnectGoogleCalendar()" style="padding:12px 14px;cursor:pointer;color:var(--danger);font-size:14px;border-top:1px solid var(--border);">Disconnect Google Calendar</div>
+      ` : ''}
     </div>
     <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;gap:8px;">
       <div class="tb ${view === 'day' ? 'ac' : ''}" onclick="switchCalendarView('day')">Day</div>
@@ -1333,10 +1366,52 @@ function toggleCalendarLayers() {
       .then(d => {
         const was = window._googleConnected;
         window._googleConnected = !!d.connected;
+        window._googleCalendarEmail = d.calendar_email || null;
         if (was !== window._googleConnected) renderCalendarScreen();
       })
       .catch(() => { window._googleConnected = false; });
   }
+}
+
+// Disconnect the linked Google Calendar. Confirms, hits the API, refreshes
+// state, and re-renders anything that shows connection status.
+async function disconnectGoogleCalendar() {
+  const who = window._googleCalendarEmail ? ` (${window._googleCalendarEmail})` : '';
+  if (!confirm(`Disconnect your Google Calendar${who}? You can reconnect anytime.`)) return;
+  try {
+    const resp = await fetch('/api/calendar/disconnect', { method: 'POST' });
+    if (!resp.ok) {
+      alert('Disconnect failed. Please try again.');
+      return;
+    }
+    window._googleConnected = false;
+    window._googleCalendarEmail = null;
+    window._googlePins = [];
+    window._googlePinsKey = null;
+    // Re-render whichever screen the user's on.
+    const calScreen = document.getElementById('calendarScreen');
+    if (calScreen && calScreen.style.display !== 'none' && window._cachedGigs && window._cachedBlocked) {
+      buildCalendarView(calScreen, window._cachedGigs, window._cachedBlocked);
+    }
+    if (typeof renderProfileScreen === 'function') {
+      try { renderProfileScreen(); } catch (e) { /* ignore */ }
+    }
+  } catch (e) {
+    alert('Disconnect failed: ' + (e.message || e));
+  }
+}
+
+// If we came back from OAuth with ?calendar_connected=true in the URL,
+// strip it once the app has loaded so refreshes don't re-show any banner
+// keyed off that param.
+function clearCalendarConnectedParam() {
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('calendar_connected')) {
+      url.searchParams.delete('calendar_connected');
+      window.history.replaceState({}, '', url.toString());
+    }
+  } catch (e) { /* ignore */ }
 }
 
 function toggleCalendarLayer(id, checked) {
@@ -2446,10 +2521,26 @@ function buildProfileHTML(content, profile) {
             Link your Musician Tracker and ClientFlow accounts for shared contacts, earnings and calendars. Coming soon.
           </div>
         </div>
-        <div onclick="openGigNudge()" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
+        ${(() => {
+          const prof = window._cachedProfile || {};
+          const connected = window._googleConnected === true || !!prof.google_access_token || !!prof.calendar_connected;
+          const who = window._googleCalendarEmail || prof.google_calendar_email || prof.calendar_email || null;
+          if (connected) {
+            return `
+        <div style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+            <span style="color:var(--text);font-size:14px;">Google Calendar</span>
+            <span style="color:var(--text-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${who ? 'Connected as ' + escapeHtml(who) : 'Connected'}</span>
+          </div>
+          <button onclick="disconnectGoogleCalendar()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--danger);font-size:12px;font-weight:600;cursor:pointer;">Disconnect</button>
+        </div>`;
+          }
+          return `
+        <div onclick="window.location.href='/auth/google/calendar'" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
           <span style="color:var(--text);font-size:14px;">Google Calendar</span>
-          <span style="color:var(--accent);font-size:16px;">\u203A</span>
-        </div>
+          <span style="color:var(--accent);font-size:12px;font-weight:600;">Connect \u203A</span>
+        </div>`;
+        })()}
         <div onclick="openMapsPreferencePicker()" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
           <span style="color:var(--text);font-size:14px;">Preferred maps app</span>
           <span style="display:flex;align-items:center;gap:8px;">

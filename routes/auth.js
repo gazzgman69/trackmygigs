@@ -422,16 +422,28 @@ router.get('/google/callback', async (req, res) => {
 
     if (currentUser) {
       // Link mode: attach tokens to the current user, leave session alone.
+      // Fetch userinfo so we can remember WHICH Google account is linked
+      // (the calendar's Google email can be different from the app login).
+      let linkEmail = null;
+      try {
+        const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+        const userInfo = await oauth2.userinfo.get();
+        linkEmail = userInfo.data && userInfo.data.email ? userInfo.data.email : null;
+      } catch (e) {
+        console.warn('[oauth] link-mode userinfo fetch failed:', e.message);
+      }
       await db.query(
         `UPDATE users SET
           google_access_token = $1,
           google_refresh_token = COALESCE($2, google_refresh_token),
-          google_token_expires_at = $3
-         WHERE id = $4`,
+          google_token_expires_at = $3,
+          google_calendar_email = COALESCE($4, google_calendar_email)
+         WHERE id = $5`,
         [
           tokens.access_token,
           tokens.refresh_token || null,
           tokens.expiry_date ? new Date(tokens.expiry_date) : null,
+          linkEmail,
           currentUser.id,
         ]
       );
@@ -451,12 +463,14 @@ router.get('/google/callback', async (req, res) => {
       `UPDATE users SET
         google_access_token = $1,
         google_refresh_token = COALESCE($2, google_refresh_token),
-        google_token_expires_at = $3
-       WHERE id = $4`,
+        google_token_expires_at = $3,
+        google_calendar_email = COALESCE($4, google_calendar_email)
+       WHERE id = $5`,
       [
         tokens.access_token,
         tokens.refresh_token || null,
         tokens.expiry_date ? new Date(tokens.expiry_date) : null,
+        email || null,
         user.id,
       ]
     );
@@ -576,6 +590,7 @@ router.get('/me', async (req, res) => {
               rate_standard, rate_premium, rate_dep, rate_deposit_pct, rate_notes,
               epk_bio, epk_photo_url, epk_video_url, epk_audio_url,
               available_for_deps, created_at, updated_at,
+              google_calendar_email AS calendar_email,
               (google_access_token IS NOT NULL) AS calendar_connected
          FROM users WHERE id = $1`,
       [session.user_id]

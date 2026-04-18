@@ -1,4 +1,4 @@
-run = "npm install && node server.js"
+run = "npm install && npx nodemon --signal SIGTERM --quiet server.js"
 entrypoint = "server.js"
 modules = ["nodejs-20"]
 
@@ -37,7 +37,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "node server.js"
+args = "npx nodemon --signal SIGTERM --quiet server.js"
 waitForPort = 5000
 
 [workflows.workflow.metadata]

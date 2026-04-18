@@ -4,6 +4,7 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
+const { exec } = require('child_process');
 
 const authRoutes = require('./routes/auth');
 const apiRoutes = require('./routes/api');
@@ -61,6 +62,41 @@ app.use('/api/chat', chatRoutes);
 // Public share and EPK routes (no auth) — mounted at /share and /epk via the same router
 app.use('/', publicRoutes);
 
+// ── Admin reload endpoint ────────────────────────────────────────────────────
+// Lets Claude trigger a git pull + restart with a single curl after pushing
+// changes to GitHub, skipping the manual Replit Shell + Console dance. The
+// server watches its own source files via nodemon (see .replit), so after the
+// git pull writes new files on disk nodemon auto-restarts the process.
+//
+// Protected by RELOAD_SECRET env var. Accepts GET and POST so plain `curl URL`
+// works; the key travels in the query string. Responds with the git output so
+// it's obvious whether the pull actually fetched new commits.
+function handleReload(req, res) {
+  const expected = process.env.RELOAD_SECRET;
+  if (!expected) {
+    return res.status(503).json({ error: 'RELOAD_SECRET not configured' });
+  }
+  const provided = req.query.key || req.body?.key;
+  if (provided !== expected) {
+    return res.status(401).json({ error: 'Invalid reload key' });
+  }
+  exec('git pull origin main', { cwd: __dirname, timeout: 30000 }, (err, stdout, stderr) => {
+    if (err) {
+      console.error('[reload] git pull failed:', err.message);
+      return res.status(500).json({ error: 'git pull failed', stderr: stderr || err.message });
+    }
+    console.log('[reload] git pull output:\n' + stdout);
+    res.json({ ok: true, output: stdout.trim() });
+    // nodemon will detect the file changes from the pull and restart the
+    // process automatically — no process.exit() needed. If someone later
+    // switches the run command back to plain `node server.js`, this endpoint
+    // still succeeds in pulling code but the process won't restart; falling
+    // back to the Replit Console Stop/Run flow is fine in that case.
+  });
+}
+app.get('/api/admin/reload', handleReload);
+app.post('/api/admin/reload', handleReload);
+
 // Serve sw.js with BUILD_ID injected so the service worker cache name changes
 // on every server restart — forcing browsers to install the new worker and
 // wipe out any stale cached responses.
@@ -111,6 +147,11 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_access_token TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_refresh_token TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_token_expires_at TIMESTAMP`);
+    // Store the Google account email whose calendar is linked. Can differ from
+    // the user's app login email (e.g. a shared band-admin account holding the
+    // gig calendar). Shown in Profile so users know which account to
+    // disconnect or re-authorize.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_calendar_email VARCHAR(255)`);
     // Add created_at to invoices if missing
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`);
     // Add created_at to gigs if missing

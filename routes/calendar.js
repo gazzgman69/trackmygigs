@@ -165,10 +165,60 @@ async function getGoogleAuth(userId) {
 // Check if calendar is connected
 router.get('/status', async (req, res) => {
   const result = await db.query(
-    'SELECT google_access_token FROM users WHERE id = $1',
+    'SELECT google_access_token, google_calendar_email FROM users WHERE id = $1',
     [req.user.id]
   );
-  res.json({ connected: !!(result.rows[0]?.google_access_token) });
+  const row = result.rows[0] || {};
+  res.json({
+    connected: !!row.google_access_token,
+    calendar_email: row.google_calendar_email || null,
+  });
+});
+
+// Disconnect the linked Google Calendar.
+// - Revoke the token with Google so access is killed on their side too.
+// - Null the token + email columns on our side.
+// Failure to revoke (network, already-revoked token) is logged but not fatal;
+// we still clear local state because the user asked us to.
+router.post('/disconnect', async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT google_access_token, google_refresh_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const row = result.rows[0] || {};
+    const tokenToRevoke = row.google_refresh_token || row.google_access_token;
+
+    if (tokenToRevoke) {
+      try {
+        const resp = await fetch(
+          'https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(tokenToRevoke),
+          { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+        );
+        if (!resp.ok) {
+          const body = await resp.text().catch(() => '');
+          console.warn('[calendar disconnect] revoke returned', resp.status, body);
+        }
+      } catch (e) {
+        console.warn('[calendar disconnect] revoke fetch failed:', e.message);
+      }
+    }
+
+    await db.query(
+      `UPDATE users SET
+         google_access_token = NULL,
+         google_refresh_token = NULL,
+         google_token_expires_at = NULL,
+         google_calendar_email = NULL
+       WHERE id = $1`,
+      [req.user.id]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Calendar disconnect failed:', err);
+    res.status(500).json({ error: 'disconnect_failed' });
+  }
 });
 
 // Fetch upcoming events and score them for gig likelihood
