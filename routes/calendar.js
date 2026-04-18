@@ -6,6 +6,107 @@ const authMiddleware = require('../middleware/auth');
 const router = express.Router();
 router.use(authMiddleware);
 
+// ── AI CLASSIFICATION (Claude Haiku 4.5) ─────────────────────────────────────
+// Given a batch of Google Calendar events, classify each as gig / not-gig with
+// confidence + extracted metadata. Falls back to the deterministic keyword
+// scorer below if the Anthropic API is unavailable or fails.
+
+let _anthropicClient = null;
+let _anthropicDisabled = false;
+
+function getAnthropic() {
+  if (_anthropicClient) return _anthropicClient;
+  if (_anthropicDisabled) return null;
+  if (!process.env.ANTHROPIC_API_KEY) {
+    _anthropicDisabled = true;
+    return null;
+  }
+  try {
+    const Anthropic = require('@anthropic-ai/sdk');
+    _anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    return _anthropicClient;
+  } catch (e) {
+    console.error('[ai] Failed to init Anthropic SDK:', e.message || e);
+    _anthropicDisabled = true;
+    return null;
+  }
+}
+
+function eventSummaryForAI(event, index) {
+  const start = event.start?.dateTime || event.start?.date;
+  const end = event.end?.dateTime || event.end?.date;
+  const startDate = start ? new Date(start) : null;
+  const endDate = end ? new Date(end) : null;
+  const day = startDate
+    ? ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][startDate.getDay()]
+    : 'Unknown';
+  const durationHours = startDate && endDate ? ((endDate - startDate) / 3600000).toFixed(1) : null;
+  const startStr = startDate ? startDate.toISOString().replace('T', ' ').substring(0, 16) : 'unknown';
+  const allDay = !!(event.start?.date && !event.start?.dateTime);
+
+  const lines = [
+    `[${index}] Title: ${event.summary || '(no title)'}`,
+    `    Start: ${startStr} (${day})${allDay ? ' [all-day]' : ''}`,
+    durationHours ? `    Duration: ${durationHours}h` : null,
+    event.location ? `    Location: ${event.location}` : null,
+    event.description ? `    Description: ${String(event.description).slice(0, 200)}` : null,
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
+async function classifyEventsBatch(events) {
+  const client = getAnthropic();
+  if (!client || !events || events.length === 0) return null;
+
+  const systemPrompt = `You are a gig detection classifier for a working musician's calendar.
+
+Given a list of calendar events, decide which are professional music work: performances, rehearsals, recording sessions, teaching, dep (depp/sub) work, or similar paid music activity.
+
+Return a JSON array, one object per input event, in the SAME ORDER as input. Use this shape exactly:
+
+[
+  {
+    "index": <integer matching the [N] prefix in the input>,
+    "is_gig": <boolean>,
+    "confidence": <0-100 integer>,
+    "gig_type": "performance" | "rehearsal" | "session" | "teaching" | "dep" | "other" | null,
+    "reasons": [<short phrases explaining the decision>],
+    "suggested_band_name": <string or null>,
+    "suggested_venue": <string or null>
+  }
+]
+
+Signal guidance:
+- Weddings, functions, corporate events, pub gigs, private parties at hotels/halls/restaurants are performances
+- Band names, soundcheck, setlist, load-in, dep, function, reception, ceremony, residency are strong signals
+- Pub/hotel/venue/church/hall/club names in location are strong signals
+- Evening (17:00+) and weekend timing increase confidence but are not required
+- All-day events are usually NOT gigs unless title says festival, tour day, residency
+- Medical, personal, holiday, family, business meetings, commutes, admin = confidence below 20
+
+Return ONLY the JSON array. No markdown fences. No prose. No explanation.`;
+
+  const userContent = events.map((e, i) => eventSummaryForAI(e, i)).join('\n\n');
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 2048,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }],
+    });
+
+    let text = response.content?.[0]?.text || '';
+    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) return null;
+    return parsed;
+  } catch (err) {
+    console.error('[ai] classifyEventsBatch failed:', err.message || err);
+    return null;
+  }
+}
+
 // ── Gig-detection keywords & patterns ────────────────────────────────────────
 
 const GIG_KEYWORDS = [
@@ -162,16 +263,18 @@ async function getGoogleAuth(userId) {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-// Check if calendar is connected
+// Check if calendar is connected + when we last pulled changes from Google
 router.get('/status', async (req, res) => {
   const result = await db.query(
-    'SELECT google_access_token, google_calendar_email FROM users WHERE id = $1',
+    'SELECT google_access_token, google_calendar_email, google_last_pull_at FROM users WHERE id = $1',
     [req.user.id]
   );
   const row = result.rows[0] || {};
   res.json({
     connected: !!row.google_access_token,
     calendar_email: row.google_calendar_email || null,
+    last_synced_at: row.google_last_pull_at || null,
+    ai_enabled: !!process.env.ANTHROPIC_API_KEY,
   });
 });
 
@@ -221,7 +324,9 @@ router.post('/disconnect', async (req, res) => {
   }
 });
 
-// Fetch upcoming events and score them for gig likelihood
+// Fetch upcoming events and classify them for gig likelihood.
+// Primary classifier is Claude Haiku 4.5 in batch. If the AI call fails or is
+// not configured, we fall back to the deterministic keyword scorer.
 router.get('/events', async (req, res) => {
   try {
     const auth = await getGoogleAuth(req.user.id);
@@ -231,7 +336,7 @@ router.get('/events', async (req, res) => {
 
     const calendar = google.calendar({ version: 'v3', auth });
 
-    // Get events from now to 60 days ahead
+    // Window: now to 60 days ahead
     const now = new Date();
     const future = new Date();
     future.setDate(future.getDate() + 60);
@@ -245,28 +350,77 @@ router.get('/events', async (req, res) => {
       maxResults: 50,
     });
 
-    const events = (response.data.items || [])
-      .map(formatEventForNudge)
-      .filter(e => e.score >= 20) // Only show events with some gig likelihood
-      .sort((a, b) => b.score - a.score);
+    const items = response.data.items || [];
 
-    // Check which events are already imported as gigs
+    // Already-imported gcal: ids (so we don't re-nudge imported events)
     const existingGigs = await db.query(
       "SELECT source FROM gigs WHERE user_id = $1 AND source LIKE 'gcal:%'",
       [req.user.id]
     );
     const importedIds = new Set(existingGigs.rows.map(g => g.source.replace('gcal:', '')));
 
-    const enrichedEvents = events.map(e => ({
-      ...e,
-      already_imported: importedIds.has(e.id),
-    }));
+    const candidates = items.filter(ev => !importedIds.has(ev.id));
 
-    res.json({ events: enrichedEvents, connected: true });
+    // Try AI classification (batch call)
+    const aiResults = await classifyEventsBatch(candidates);
+    const classifier = aiResults ? 'ai' : 'keyword';
+
+    const events = candidates.map((ev, i) => {
+      const start = ev.start?.dateTime || ev.start?.date;
+      const end = ev.end?.dateTime || ev.end?.date;
+      const startDate = start ? new Date(start) : null;
+      const endDate = end ? new Date(end) : null;
+
+      let score;
+      let reasons;
+      let gig_type = null;
+      let suggested_band_name = null;
+      let suggested_venue_name = null;
+
+      if (aiResults && aiResults[i]) {
+        const ai = aiResults[i];
+        score = ai.is_gig ? (typeof ai.confidence === 'number' ? ai.confidence : 50) : Math.min(ai.confidence || 0, 10);
+        reasons = Array.isArray(ai.reasons) ? ai.reasons : [];
+        gig_type = ai.gig_type || null;
+        suggested_band_name = ai.suggested_band_name || null;
+        suggested_venue_name = ai.suggested_venue || null;
+      } else {
+        const kw = scoreEvent(ev);
+        score = kw.score;
+        reasons = kw.reasons;
+      }
+
+      return {
+        id: ev.id,
+        title: ev.summary || 'Untitled event',
+        location: ev.location || null,
+        start,
+        end,
+        start_time: startDate && ev.start?.dateTime ? startDate.toTimeString().substring(0, 5) : null,
+        end_time: endDate && ev.end?.dateTime ? endDate.toTimeString().substring(0, 5) : null,
+        date_formatted: startDate ? startDate.toLocaleDateString('en-GB', {
+          weekday: 'short', day: 'numeric', month: 'short',
+        }) : null,
+        calendar_email: ev.organizer?.email || null,
+        score,
+        reasons,
+        gig_type,
+        suggested_band_name,
+        suggested_venue_name,
+        classifier_used: aiResults ? 'ai' : 'keyword',
+        source: 'google_calendar',
+        already_imported: false,
+      };
+    });
+
+    const filtered = events
+      .filter(e => e.score >= 20)
+      .sort((a, b) => b.score - a.score);
+
+    res.json({ events: filtered, connected: true, classifier });
   } catch (error) {
     console.error('Calendar events error:', error);
     if (error.code === 401 || error.message?.includes('invalid_grant')) {
-      // Token revoked or expired beyond refresh
       return res.json({ events: [], connected: false, needs_reauth: true });
     }
     res.status(500).json({ error: 'Failed to fetch calendar events' });
@@ -395,15 +549,55 @@ function buildEventResource(gig) {
     ? `🎵 ${gig.band_name}${gig.venue_name ? ' @ ' + gig.venue_name : ''}`
     : (gig.venue_name ? `🎵 Gig @ ${gig.venue_name}` : '🎵 Gig');
 
+  // Rich description: every piece of gig info the app knows about, formatted
+  // for the Google Calendar event body so users get the full gig picture in
+  // their phone's default calendar without opening TrackMyGigs.
   const descLines = [];
-  if (gig.fee != null && gig.fee !== '') descLines.push(`Fee: £${gig.fee}`);
-  if (gig.dress_code) descLines.push(`Dress: ${gig.dress_code}`);
-  if (gig.gig_type) descLines.push(`Type: ${gig.gig_type}`);
-  if (gig.day_of_contact) descLines.push(`Contact: ${gig.day_of_contact}`);
-  if (gig.parking_info) descLines.push(`Parking: ${gig.parking_info}`);
-  if (gig.notes) descLines.push(gig.notes);
+  if (gig.status && gig.status !== 'confirmed') descLines.push(`Status: ${gig.status}`);
+  if (gig.gig_type) descLines.push(`🎤 Type: ${gig.gig_type}`);
+  if (gig.fee != null && gig.fee !== '') descLines.push(`💷 Fee: £${gig.fee}`);
+  if (gig.load_in_time) descLines.push(`🚪 Load-in: ${String(gig.load_in_time).substring(0, 5)}`);
+  if (gig.dress_code) descLines.push(`👔 Dress: ${gig.dress_code}`);
+  if (gig.day_of_contact) descLines.push(`📞 Contact: ${gig.day_of_contact}`);
+  if (gig.parking_info) descLines.push(`🅿️ Parking: ${gig.parking_info}`);
+  if (gig.mileage_miles != null && gig.mileage_miles !== '') descLines.push(`🚗 Distance: ${gig.mileage_miles} mi`);
+
+  // Set times (JSONB array of {label, time})
+  if (gig.set_times) {
+    try {
+      const sets = Array.isArray(gig.set_times) ? gig.set_times : JSON.parse(gig.set_times);
+      if (sets && sets.length) {
+        const parts = sets
+          .filter(s => s && (s.label || s.time))
+          .map(s => `${s.label || 'Set'}: ${s.time || ''}`.trim());
+        if (parts.length) descLines.push(`🎶 Sets: ${parts.join(' · ')}`);
+      }
+    } catch (_) {}
+  }
+
+  // Checklist summary (how many items ticked)
+  if (gig.checklist) {
+    try {
+      const list = Array.isArray(gig.checklist) ? gig.checklist : JSON.parse(gig.checklist);
+      if (list && list.length) {
+        const done = list.filter(c => c && c.done).length;
+        descLines.push(`✅ Checklist: ${done}/${list.length} done`);
+      }
+    } catch (_) {}
+  }
+
+  if (gig.invoice_id) descLines.push(`🧾 Invoice attached`);
+  if (gig.setlist_id) descLines.push(`📋 Setlist attached`);
+
+  if (gig.notes) {
+    descLines.push('');
+    descLines.push('📝 Notes:');
+    descLines.push(String(gig.notes));
+  }
+
   descLines.push('');
-  descLines.push('(Synced from TrackMyGigs)');
+  descLines.push('─────────────');
+  descLines.push('Synced from TrackMyGigs · https://trackmygigs.app');
 
   // Date + times → RFC3339 strings. If no times, treat as all-day event.
   const dateStr = gig.date instanceof Date
@@ -447,23 +641,40 @@ async function pushGigToGoogle(userId, gig) {
   try {
     const auth = await getGoogleAuth(userId);
     if (!auth) return null;
-    // Don't push gigs that came FROM Google in the first place (avoid round-trip)
-    if (gig.source && String(gig.source).startsWith('gcal:')) return null;
 
     const calendar = google.calendar({ version: 'v3', auth });
     const resource = buildEventResource(gig);
 
-    if (gig.google_event_id) {
-      // Update existing event
-      const resp = await calendar.events.update({
-        calendarId: 'primary',
-        eventId: gig.google_event_id,
-        requestBody: resource,
-      });
-      return resp.data.id || gig.google_event_id;
+    // Determine target Google event id:
+    //   - google_event_id column (set on first push or first pull link)
+    //   - source tagged 'gcal:<id>' (event that was originally imported from Google)
+    // For gigs that originated in Google, push-back means UPDATING that same event
+    // so edits made in the app propagate to the user's Google Calendar.
+    let targetEventId = gig.google_event_id;
+    if (!targetEventId && gig.source && String(gig.source).startsWith('gcal:')) {
+      targetEventId = String(gig.source).slice('gcal:'.length);
     }
 
-    // Create new
+    if (targetEventId) {
+      const resp = await calendar.events.update({
+        calendarId: 'primary',
+        eventId: targetEventId,
+        requestBody: resource,
+      });
+      const resolvedId = resp.data.id || targetEventId;
+      // Persist id if it wasn't on the row yet (originated from gcal: source)
+      if (!gig.google_event_id && resolvedId) {
+        try {
+          await db.query(
+            'UPDATE gigs SET google_event_id = $1 WHERE id = $2 AND user_id = $3',
+            [resolvedId, gig.id, userId]
+          );
+        } catch (_) {}
+      }
+      return resolvedId;
+    }
+
+    // Create new event
     const resp = await calendar.events.insert({
       calendarId: 'primary',
       requestBody: resource,
@@ -515,13 +726,15 @@ router.post('/push/:gigId', async (req, res) => {
   }
 });
 
-// Push every local gig (that didn't originate from Google) to Google Calendar
+// Push every active local gig to Google Calendar. Includes gigs that were
+// originally imported from Google so rich app metadata (fee, contact, gear,
+// set times, notes) is mirrored back into the Google event.
 router.post('/push-all', async (req, res) => {
   try {
     const auth = await getGoogleAuth(req.user.id);
     if (!auth) return res.status(400).json({ error: 'Calendar not connected' });
     const gigs = await db.query(
-      "SELECT * FROM gigs WHERE user_id = $1 AND (source IS NULL OR source NOT LIKE 'gcal:%')",
+      "SELECT * FROM gigs WHERE user_id = $1 AND (status IS NULL OR status != 'cancelled')",
       [req.user.id]
     );
     let ok = 0, fail = 0;
@@ -653,6 +866,67 @@ router.post('/pull', async (req, res) => {
   } catch (err) {
     console.error('Pull route error:', err);
     res.status(500).json({ error: 'Pull failed' });
+  }
+});
+
+// POST /calendar/sync-now — full two-way sync triggered by the Sync Now button.
+// Pulls changes from Google, then pushes every active local gig so the
+// description and logistics stay mirrored to the Google event.
+// Returns a detailed status payload for the client to display.
+router.post('/sync-now', async (req, res) => {
+  const startedAt = Date.now();
+  try {
+    const auth = await getGoogleAuth(req.user.id);
+    if (!auth) {
+      return res.json({
+        ok: false,
+        error: 'not_connected',
+        needs_reauth: true,
+        message: 'Google Calendar is not connected. Open Settings to re-connect.',
+      });
+    }
+
+    // Pull phase
+    let pull = await pullFromGoogle(req.user.id);
+    if (pull.retry) pull = await pullFromGoogle(req.user.id);
+
+    // Push phase
+    const gigs = await db.query(
+      "SELECT * FROM gigs WHERE user_id = $1 AND (status IS NULL OR status != 'cancelled')",
+      [req.user.id]
+    );
+    let pushed = 0;
+    let pushFailed = 0;
+    for (const g of gigs.rows) {
+      const id = await pushGigToGoogle(req.user.id, g);
+      if (id) pushed++; else pushFailed++;
+    }
+
+    // Stamp last-sync timestamp (pullFromGoogle only updates on a fresh syncToken)
+    await db.query('UPDATE users SET google_last_pull_at = NOW() WHERE id = $1', [req.user.id]);
+
+    res.json({
+      ok: true,
+      duration_ms: Date.now() - startedAt,
+      synced_at: new Date().toISOString(),
+      pulled: {
+        updated: pull.updated || 0,
+        cancelled: pull.cancelled || 0,
+        error: pull.error || null,
+      },
+      pushed: {
+        ok: pushed,
+        failed: pushFailed,
+        total: gigs.rows.length,
+      },
+    });
+  } catch (err) {
+    console.error('Sync-now route error:', err);
+    res.status(500).json({
+      ok: false,
+      error: 'sync_failed',
+      message: err.message || 'Sync failed',
+    });
   }
 });
 

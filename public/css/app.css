@@ -110,6 +110,16 @@ body {
   font-size: var(--font-size-base);
   flex-shrink: 0;
   aspect-ratio: 1;
+  cursor: pointer;
+  transition: transform 0.1s ease, opacity 0.1s ease;
+}
+
+.avatar:hover {
+  opacity: 0.85;
+}
+
+.avatar:active {
+  transform: scale(0.95);
 }
 
 .greeting {

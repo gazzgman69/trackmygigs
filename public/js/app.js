@@ -143,6 +143,9 @@ function initApp(user) {
   // Show home immediately (uses skeleton while data loads)
   showScreen('home');
 
+  // Arm the 5-min calendar background poll + visibility listener. Idempotent.
+  try { startCalendarPollingOnce(); } catch (_) { /* optional */ }
+
   // Prefetch ALL screen data in parallel so every tab opens instantly
   window._prefetchPromise = prefetchAllData();
 
@@ -782,10 +785,113 @@ async function pullGoogleCalendarChanges() {
       if (typeof window.loadGigs === 'function') {
         window.loadGigs().catch(() => {});
       }
+      // Invalidate the pins cache so the Calendar re-fetches with any updates
+      window._googlePinsKey = null;
+      if (typeof loadGoogleCalendarPins === 'function' && currentScreen === 'calendar') {
+        loadGoogleCalendarPins().catch(() => {});
+      }
     }
+    window._lastCalendarPullAt = Date.now();
   } catch (_) {
     // Silent fail — inbound sync is best-effort
   }
+}
+
+// Throttled trigger: only fire the pull if we haven't fired in the last 2 min.
+// Called from Calendar screen open + visibility change. Keeps pull cadence
+// at ~every 2 min during active use without hammering Google's API.
+function maybePullCalendarOnOpen() {
+  const MIN_GAP_MS = 2 * 60 * 1000;
+  const last = window._lastCalendarPullAt || 0;
+  if (Date.now() - last < MIN_GAP_MS) return;
+  pullGoogleCalendarChanges();
+}
+
+// 5-minute background poll while app is foregrounded. Rearms on visibility
+// change so we don't burn cycles when the tab is hidden.
+function startCalendarPollingOnce() {
+  if (window._calendarPollTimer) return;
+  const POLL_MS = 5 * 60 * 1000;
+  window._calendarPollTimer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    pullGoogleCalendarChanges();
+  }, POLL_MS);
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      maybePullCalendarOnOpen();
+    }
+  });
+}
+
+// Manual Sync Now: full two-way sync (pull + push-all) with toast feedback.
+async function triggerSyncNow() {
+  const toastify = (msg, isErr = false) => {
+    try {
+      if (typeof showToast === 'function') return showToast(msg, isErr ? 'error' : 'success');
+    } catch (_) {}
+    console.log(isErr ? '[sync]' : '[sync]', msg);
+  };
+
+  toastify('Syncing with Google Calendar…');
+  try {
+    const resp = await fetch('/api/calendar/sync-now', { method: 'POST' });
+    const data = await resp.json();
+
+    if (!resp.ok || data.ok === false) {
+      if (data.needs_reauth) {
+        toastify('Google Calendar needs re-connecting. Open Settings.', true);
+      } else {
+        toastify(data.message || 'Sync failed. Please try again.', true);
+      }
+      return data;
+    }
+
+    // Refresh local caches so pulled changes appear immediately
+    window._cachedGigs = null;
+    window._googlePinsKey = null;
+    window._lastCalendarPullAt = Date.now();
+    window._calendarLastSyncedAt = data.synced_at || new Date().toISOString();
+    if (typeof window.loadGigs === 'function') window.loadGigs().catch(() => {});
+    if (typeof loadGoogleCalendarPins === 'function' && currentScreen === 'calendar') {
+      loadGoogleCalendarPins().catch(() => {});
+    }
+    if (currentScreen === 'calendar' && typeof renderCalendarScreen === 'function') {
+      renderCalendarScreen();
+    }
+
+    const pulled = data.pulled || {};
+    const pushed = data.pushed || {};
+    const parts = [];
+    if (pulled.updated) parts.push(`${pulled.updated} updated from Google`);
+    if (pulled.cancelled) parts.push(`${pulled.cancelled} cancelled`);
+    if (pushed.ok) parts.push(`${pushed.ok} pushed to Google`);
+    if (pushed.failed) parts.push(`${pushed.failed} failed`);
+    toastify(parts.length ? `Sync complete — ${parts.join(', ')}` : 'Sync complete — already up to date');
+
+    // Update any visible last-synced indicator
+    const el = document.getElementById('calendarLastSyncLabel');
+    if (el) el.textContent = 'Just now';
+    return data;
+  } catch (err) {
+    console.error('Sync-now failed:', err);
+    toastify('Sync failed. Check your connection.', true);
+    return null;
+  }
+}
+
+function formatRelativeTime(dateStr) {
+  if (!dateStr) return 'Never';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return 'Never';
+  const diff = Math.max(0, Date.now() - d.getTime());
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
 
 async function checkCalendarNudges() {
@@ -1280,6 +1386,9 @@ async function renderCalendarScreen() {
     // Fire pin fetch even on the instant-paint path so Google Calendar pins
     // show up once the request lands.
     loadGoogleCalendarPins().catch(() => {});
+    // Also fire an inbound pull so any changes made in Google Calendar since
+    // the last sync flow into the app while the user is looking at the calendar.
+    maybePullCalendarOnOpen();
 
     const isStale = (now - (window._cachedBlockedTime || 0)) >= DATA_CACHE_TTL;
     if (isStale) {
@@ -1336,6 +1445,7 @@ async function renderCalendarScreen() {
     buildCalendarView(content, window._cachedGigs || [], window._cachedBlocked || []);
     // Fire-and-forget pin fetch; when it returns, re-render so pins show up.
     loadGoogleCalendarPins().catch(() => {});
+    maybePullCalendarOnOpen();
   } catch (err) {
     console.error('Calendar error:', err);
     content.innerHTML = `
@@ -1461,10 +1571,16 @@ function buildCalendarView(content, gigsData, blockedData) {
         const isDisconnected = window._googleConnected === false || (window._googleConnected === undefined && !prof.google_access_token);
         const linkedEmail = window._googleCalendarEmail || prof.google_calendar_email || null;
         if (isConnected) {
+          const lastSyncRaw = window._calendarLastSyncedAt || prof.google_last_pull_at || null;
+          const lastSyncText = formatRelativeTime(lastSyncRaw);
           return `
             <div style="margin-top:10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-2);display:flex;align-items:center;justify-content:space-between;gap:8px;">
               <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Connected${linkedEmail ? ' as <span style="color:var(--text);font-weight:600;">' + linkedEmail + '</span>' : ''}</span>
               <button onclick="disconnectGoogleCalendar()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--danger);font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0;">Disconnect</button>
+            </div>
+            <div style="margin-top:6px;padding:6px 10px;font-size:11px;color:var(--text-2);display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <span>Last synced: <span id="calendarLastSyncLabel" style="color:var(--text);">${lastSyncText}</span></span>
+              <button onclick="triggerSyncNow()" style="background:var(--accent);border:none;border-radius:6px;padding:4px 10px;color:#fff;font-size:11px;font-weight:600;cursor:pointer;">Sync now</button>
             </div>`;
         }
         if (isDisconnected) {
@@ -1479,6 +1595,9 @@ function buildCalendarView(content, gigsData, blockedData) {
       <div onclick="handleCalendarAction('add-event')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Add event</div>
       <div onclick="handleCalendarAction('block-dates')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Block dates</div>
       ${(window._googleConnected === true || (window._cachedProfile && !!window._cachedProfile.google_access_token)) ? `
+        <div onclick="triggerSyncNow();toggleCalendarMenu();" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;">
+          <span>&#x21BB;</span><span>Sync now</span>
+        </div>
         <div onclick="disconnectGoogleCalendar()" style="padding:12px 14px;cursor:pointer;color:var(--danger);font-size:14px;border-top:1px solid var(--border);">Disconnect Google Calendar</div>
       ` : ''}
     </div>
@@ -1525,16 +1644,33 @@ function getCalendarLayers() {
 
 function toggleCalendarLayers() {
   const el = document.getElementById('calendarLayers');
+  const opened = el && el.style.display === 'none';
   if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
-  // Probe Google connection status so we can show a Connect CTA when disconnected.
-  if (window._googleConnected === undefined) {
+  // When opening the panel, probe status so Connect/Disconnect state and
+  // the "Last synced" stamp reflect reality. Cheap JSON fetch; skip if we
+  // already probed in the last 30s.
+  if (opened) {
+    const last = window._calendarStatusProbedAt || 0;
+    if (Date.now() - last < 30 * 1000 && window._googleConnected !== undefined) {
+      // Still refresh the label text in place using cached timestamp
+      const lbl = document.getElementById('calendarLastSyncLabel');
+      if (lbl) lbl.textContent = formatRelativeTime(window._calendarLastSyncedAt || null);
+      return;
+    }
     fetch('/api/calendar/status')
       .then(r => r.ok ? r.json() : { connected: false })
       .then(d => {
         const was = window._googleConnected;
         window._googleConnected = !!d.connected;
         window._googleCalendarEmail = d.calendar_email || null;
-        if (was !== window._googleConnected) renderCalendarScreen();
+        window._calendarLastSyncedAt = d.last_synced_at || null;
+        window._calendarStatusProbedAt = Date.now();
+        if (was !== window._googleConnected) {
+          renderCalendarScreen();
+        } else {
+          const lbl = document.getElementById('calendarLastSyncLabel');
+          if (lbl) lbl.textContent = formatRelativeTime(window._calendarLastSyncedAt);
+        }
       })
       .catch(() => { window._googleConnected = false; });
   }
