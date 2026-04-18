@@ -271,7 +271,7 @@ router.post('/draft-invoice-chase', async (req, res) => {
   if (!invoiceId) return res.status(400).json({ error: 'Pass an invoiceId.' });
 
   const r = await db.query(
-    `SELECT id, invoice_number, band_name, amount, due_date, status, bill_to_name, bill_to_email, notes
+    `SELECT id, invoice_number, band_name, amount, due_date, status, recipient_email, notes
      FROM invoices WHERE id = $1 AND user_id = $2`,
     [invoiceId, req.user.id]
   );
@@ -302,7 +302,7 @@ Rules:
 
   const userPrompt = `Invoice: #${invoice.invoice_number || invoice.id}
 Band: ${invoice.band_name || '(not specified)'}
-Bill to: ${invoice.bill_to_name || '(unknown)'}
+Bill to: ${invoice.recipient_email || '(unknown)'}
 Amount: £${invoice.amount}
 Due date: ${invoice.due_date || '(not set)'}
 Days overdue: ${daysOverdue}
@@ -325,10 +325,11 @@ router.post('/generate-bio', async (req, res) => {
   const style = String(req.body?.style || 'warm and professional').slice(0, 80);
 
   const u = await db.query(
-    `SELECT name, band_name, primary_instrument, home_town, years_active, website, public_slug FROM users WHERE id = $1`,
+    `SELECT name, display_name, instruments, home_postcode, public_slug FROM users WHERE id = $1`,
     [req.user.id]
   );
   const user = u.rows[0] || {};
+  const instruments = Array.isArray(user.instruments) ? user.instruments.join(', ') : '';
 
   const system = `You write musician EPK bios in three lengths. No em dashes. No cliches like "passionate" or "unique sound". Concrete details only.
 
@@ -343,12 +344,10 @@ Return ONLY a JSON object:
 Tone: ${style}. Third-person unless the facts clearly indicate otherwise. Lead with the strongest concrete credit or fact. Avoid superlatives. Mention venues, artists worked with, or measurable reach when possible.`;
 
   const userPrompt = `Musician profile:
-Name: ${user.name || '(unknown)'}
-Band / project: ${user.band_name || '(none)'}
-Primary instrument: ${user.primary_instrument || '(unspecified)'}
-Home town: ${user.home_town || '(unspecified)'}
-Years active: ${user.years_active || '(unspecified)'}
-Website: ${user.website || '(none)'}
+Name: ${user.display_name || user.name || '(unknown)'}
+Instruments: ${instruments || '(unspecified)'}
+Home area: ${user.home_postcode || '(unspecified)'}
+Public booking page: ${user.public_slug ? `trackmygigs.app/@${user.public_slug}` : '(none)'}
 
 Extra facts from the musician:
 ${facts || '(none provided; use only the profile above)'}
@@ -435,12 +434,12 @@ router.post('/sanity-check', async (req, res) => {
 
   const [sameDayR, prevDayR, nextDayR, blockedR] = await Promise.all([
     db.query(
-      `SELECT id, band_name, venue_name, venue_address, start_time, finish_time
+      `SELECT id, band_name, venue_name, venue_address, start_time, end_time AS finish_time
        FROM gigs WHERE user_id = $1 AND date = $2 AND status IN ('confirmed', 'enquiry')`,
       [req.user.id, date]
     ),
     db.query(
-      `SELECT id, band_name, venue_name, venue_address, finish_time
+      `SELECT id, band_name, venue_name, venue_address, end_time AS finish_time
        FROM gigs WHERE user_id = $1 AND date = $2::date - INTERVAL '1 day' AND status IN ('confirmed', 'enquiry')`,
       [req.user.id, date]
     ),
@@ -547,7 +546,7 @@ router.post('/triage-enquiry', async (req, res) => {
     feeStats = r.rows[0];
   } catch (_) { /* non-fatal */ }
 
-  const u = await db.query(`SELECT name, band_name FROM users WHERE id = $1`, [req.user.id]);
+  const u = await db.query(`SELECT name, display_name FROM users WHERE id = $1`, [req.user.id]);
   const user = u.rows[0] || {};
 
   const system = `You triage a booking enquiry from a prospective client on a musician's public booking page.
@@ -570,7 +569,7 @@ Fee guidance:
 - Private parties: mid-range.
 - If no historical data is provided, suggest null for fee range.
 
-Draft reply: warm, enthusiastic, asks one or two clarifying questions, signs off as "${user.name || user.band_name || 'the band'}". No em dashes.`;
+Draft reply: warm, enthusiastic, asks one or two clarifying questions, signs off as "${user.display_name || user.name || 'the band'}". No em dashes.`;
 
   const userPrompt = `Prospect: ${prospectName || '(anonymous)'}
 Historical fee stats (last 12 months, confirmed paid gigs): ${feeStats && feeStats.count ? `min £${feeStats.min}, avg £${Number(feeStats.avg).toFixed(0)}, max £${feeStats.max} across ${feeStats.count} gigs` : '(not enough history)'}
