@@ -1817,9 +1817,9 @@ function buildCalendarView(content, gigsData, blockedData) {
     <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
       <div style="font-size:24px;font-weight:700;color:var(--text);">Calendar</div>
       <div style="display:flex;gap:8px;">
-        <div onclick="toggleCalendarLayers()" title="Layers" style="width:32px;height:32px;border-radius:16px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;">&#x2630;</div>
-        <div onclick="openPanel('pub-cal-share')" title="Share" style="width:32px;height:32px;border-radius:16px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;">&#x1F517;</div>
-        <div onclick="toggleCalendarMenu()" style="width:32px;height:32px;border-radius:16px;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;">&#8943;</div>
+        <button type="button" onclick="toggleCalendarLayers()" aria-label="Toggle layers" title="Layers" style="width:40px;height:40px;border-radius:20px;background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;padding:0;">&#x2630;</button>
+        <button type="button" onclick="openPanel('pub-cal-share')" aria-label="Share calendar" title="Share" style="width:40px;height:40px;border-radius:20px;background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;padding:0;">&#x1F517;</button>
+        <button type="button" onclick="toggleCalendarMenu()" aria-label="More actions" title="More" style="width:40px;height:40px;border-radius:20px;background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;padding:0;">&#8943;</button>
       </div>
     </div>
     <div id="calendarLayers" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;">
@@ -2312,7 +2312,83 @@ function selectCalendarDate(dateStr) {
     openDayActionSheet(dateStr);
     return;
   }
-  renderCalendarScreen();
+  // #91: day has content — open a focused day-detail panel instead of just
+  // re-rendering the month grid. Shows gigs, blocks, and Google pins for the
+  // selected date with direct actions to open each.
+  openDayDetailPanel(dateStr);
+}
+
+function openDayDetailPanel(dateStr) {
+  const title = document.getElementById('dayDetailTitle');
+  const body = document.getElementById('dayDetailBody');
+  if (!title || !body) return;
+
+  const d = new Date(dateStr + 'T12:00:00');
+  title.textContent = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  const gigs = (Array.isArray(window._cachedGigs) ? window._cachedGigs : [])
+    .filter(g => (g.date || '').slice(0, 10) === dateStr);
+  const blocked = (Array.isArray(window._cachedBlocked) ? window._cachedBlocked : [])
+    .filter(b => {
+      const s = (b.start_date || '').slice(0, 10);
+      const e = (b.end_date || s).slice(0, 10);
+      return dateStr >= s && dateStr <= e;
+    });
+  const googlePins = (Array.isArray(window._googlePins) ? window._googlePins : [])
+    .filter(p => p.date === dateStr);
+
+  let html = `<div style="padding:16px;">`;
+
+  if (gigs.length > 0) {
+    html += `<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">
+      ${gigs.length === 1 ? 'Gig' : 'Gigs'}
+    </div>`;
+    gigs.forEach(gig => {
+      html += `<div class="gi" onclick="closePanel('panel-day-detail');openGigDetail('${gig.id}')" style="cursor:pointer;">
+        <div style="display:flex;align-items:flex-start;gap:14px;">
+          <div class="gdb">
+            <div class="gdd">${new Date(gig.date).getDate()}</div>
+            <div class="gdm">${new Date(gig.date).toLocaleDateString('en-GB', { month: 'short' }).toUpperCase()}</div>
+          </div>
+          <div style="flex:1;">
+            <div class="gt">${escapeHtml(gig.band_name || '')}</div>
+            <div class="gv">${escapeHtml(gig.venue_name || '')}${gig.start_time ? ' · ' + formatTime(gig.start_time) : ''}</div>
+            ${gig.fee ? `<div class="gf">£${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
+    });
+  }
+
+  if (googlePins.length > 0) {
+    const hasNudge = googlePins.some(p => window._calendarNudgesById && window._calendarNudgesById[p.id]);
+    html += `<div style="margin-top:16px;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+      <span style="width:8px;height:8px;border-radius:2px;background:${hasNudge ? 'var(--accent)' : '#4285F4'};display:inline-block;"></span>
+      Google Calendar
+    </div>`;
+    googlePins.forEach(p => { html += renderGooglePinCard(p, { mode: 'day' }); });
+  }
+
+  if (blocked.length > 0) {
+    html += `<div style="margin-top:16px;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">
+      Blocked
+    </div>`;
+    blocked.forEach(b => {
+      html += `<div style="background:var(--card);border:1px solid var(--border);border-left:3px solid var(--danger);border-radius:var(--r);padding:12px;margin-bottom:8px;">
+        <div style="font-weight:600;color:var(--text);font-size:14px;">${escapeHtml(b.reason || 'Unavailable')}</div>
+        ${b.notes ? `<div style="font-size:12px;color:var(--text-2);margin-top:4px;">${escapeHtml(b.notes)}</div>` : ''}
+      </div>`;
+    });
+  }
+
+  // Quick actions
+  html += `<div style="margin-top:20px;display:flex;flex-direction:column;gap:8px;">
+    <button onclick="closePanel('panel-day-detail');openDayActionSheet('${dateStr}')" class="pill-g">Add gig or block this day</button>
+  </div>`;
+
+  html += `</div>`;
+  body.innerHTML = html;
+  openPanel('panel-day-detail');
 }
 
 function openDayActionSheet(dateStr) {
@@ -2600,7 +2676,7 @@ async function openInvoiceDetail(invoiceId) {
       <div style="padding:0 16px 12px;display:flex;flex-direction:column;gap:8px;">
         ${invoice.status === 'draft' ? `<button onclick="openSendInvoice('${invoice.id}')" class="pill">Send invoice</button>` : ''}
         ${invoice.status !== 'paid' ? `<button onclick="markInvoiceAsPaid('${invoice.id}')" class="pill-o">Mark as paid</button>` : ''}
-        <button onclick="downloadInvoicePDF('${invoice.id}')" class="pill-g">Download PDF</button>
+        <button onclick="downloadInvoicePDF('${invoice.id}')" class="pill-g">Print / Save as PDF</button>
         ${invoice.status === 'sent' ? `<button onclick="chaseInvoicePayment('${invoice.id}')" class="pill-g">Chase payment</button>` : ''}
         ${(invoice.status === 'sent' || invoice.status === 'overdue') ? `<button onclick="window.aiInvoiceChase && window.aiInvoiceChase('${invoice.id}')" style="background:var(--accent-dim, rgba(240,165,0,.18));color:var(--accent,#f0a500);border:1px solid rgba(240,165,0,.4);border-radius:16px;padding:10px 16px;font-weight:600;font-size:13px;cursor:pointer;">&#10024; AI draft chase email</button>` : ''}
         <button onclick="deleteInvoice('${invoice.id}')" style="background:none;border:1px solid var(--danger);color:var(--danger);padding:10px;border-radius:var(--r);font-weight:600;font-size:13px;cursor:pointer;margin-top:4px;">Delete invoice</button>
@@ -3728,7 +3804,19 @@ function getRecentBands() {
 }
 
 async function submitGigWizard() {
+  // #83: guard against double-submit. The AI sanity check below fetches
+  // /ai/sanity-check before we disable the Save button, so a user who
+  // thinks the first tap didn't land can trigger a second concurrent run
+  // (two gigs saved, or a confusing "two-click Save"). Block re-entry and
+  // disable the button immediately so the first tap always wins.
+  if (window._gigWizardSubmitting) return;
+  window._gigWizardSubmitting = true;
   const btn = document.getElementById('wizardNextBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.origLabel = btn.textContent;
+    btn.textContent = 'Saving...';
+  }
 
   // Auto-block pre-flight check: warn if this gig collides with another gig's
   // travel-home or travel-out window. Runs on the client, cheap, no round-trip.
@@ -3741,7 +3829,16 @@ async function submitGigWizard() {
       const clash = typeof isTimeAutoBlocked === 'function' ? isTimeAutoBlocked(s, e) : null;
       if (clash) {
         const ok = confirm(`Heads up: this overlaps with ${clash.label}. Book it anyway?`);
-        if (!ok) return;
+        if (!ok) {
+          // #83: release the re-entry guard and restore the button so the
+          // user can retry after dismissing the auto-block prompt.
+          window._gigWizardSubmitting = false;
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = btn.dataset.origLabel || 'Save Gig';
+          }
+          return;
+        }
         gigWizardData._forcedThroughAutoBlock = true;
       }
     }
@@ -3767,7 +3864,16 @@ async function submitGigWizard() {
           );
         } catch (_) { resolve(true); }
       });
-      if (!proceed) return;
+      if (!proceed) {
+        // #83: release the re-entry guard and restore the button so the
+        // user can retry after cancelling the AI sanity check modal.
+        window._gigWizardSubmitting = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = btn.dataset.origLabel || 'Save Gig';
+        }
+        return;
+      }
       gigWizardData._forcedThroughSanityCheck = true;
     }
   } catch (_) { /* non-fatal */ }
@@ -3806,6 +3912,9 @@ async function submitGigWizard() {
       persistCachedCalendar();
       showScreen('gigs');
       showToast('Gig saved!');
+      // #83: release the re-entry guard now that the save has succeeded so
+      // the next gig wizard session starts from a clean state.
+      window._gigWizardSubmitting = false;
     } else {
       let errMsg = 'Unknown error';
       try {
@@ -3832,6 +3941,9 @@ async function submitGigWizard() {
         btn.textContent = 'Save Gig';
         btn.disabled = false;
       }
+      // #83: release the re-entry guard so the user can retry after a
+      // server-side failure.
+      window._gigWizardSubmitting = false;
     }
   } catch (error) {
     console.error('Submit gig error:', error);
@@ -3842,6 +3954,9 @@ async function submitGigWizard() {
       btn.textContent = 'Save Gig';
       btn.disabled = false;
     }
+    // #83: release the re-entry guard so the user can retry after a
+    // network / unexpected-exception failure.
+    window._gigWizardSubmitting = false;
   }
 }
 
@@ -5230,12 +5345,15 @@ async function saveEditGig(gigId) {
     persistCachedCalendar();
     closePanel('panel-edit-gig');
     renderGigsList(window._cachedGigs);
-    // S1-04: if the gig detail panel is still open underneath the edit panel, it is
-    // rendered from the pre-edit gig payload. Re-fetch and re-open so the user sees
-    // the new fee / date / venue immediately instead of the stale figures.
+    // S1-04 / #84: if the gig detail panel is still open underneath the edit panel,
+    // it is rendered from the pre-edit gig payload. Re-fetch and re-open so the user
+    // sees the new fee / date / venue immediately instead of the stale figures.
+    // NOTE: panel overlays use class `open` (see openPanel at ~L4078), not `active`.
+    // The old check for `active` never matched, so the panel stayed stale until the
+    // user closed + reopened it manually.
     try {
       const detailPanel = document.getElementById('panel-gig-detail');
-      if (detailPanel && detailPanel.classList.contains('active')) {
+      if (detailPanel && detailPanel.classList.contains('open')) {
         await openGigDetail(gigId);
       }
     } catch (_) { /* non-fatal — list has already refreshed */ }
