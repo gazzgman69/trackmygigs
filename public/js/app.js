@@ -2127,81 +2127,333 @@ function renderCalendarMonth(currentDate, gigs, blocked, googlePins = []) {
   return html;
 }
 
+// #92: proper Week view with a time grid. Previous implementation was just a
+// weekday strip + a flat list of gigs, which lost the whole point of a week
+// view — seeing overlaps, gaps, and evening-density at a glance. This builds
+// 24-hour hour rows × 7 day columns with events positioned absolutely.
 function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
-  // Get week start (Monday)
+  // Compute Monday-anchored week start
   const d = new Date(currentDate);
   const day = d.getDay();
   const diff = d.getDate() - day + (day === 0 ? -6 : 1);
   const weekStart = new Date(d.setDate(diff));
+  weekStart.setHours(0, 0, 0, 0);
+  const weekEndTs = weekStart.getTime() + 7 * 24 * 3600 * 1000;
 
-  let html = `<div style="padding:16px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-      <button onclick="prevCalendarWeek()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">‹</button>
-      <div style="font-size:14px;font-weight:600;color:var(--text);">${weekStart.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })} - ${new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })}</div>
-      <button onclick="nextCalendarWeek()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">›</button>
-    </div>
-    <button onclick="goCalendarToday()" style="width:100%;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);color:var(--accent);border-radius:6px;padding:8px;font-size:12px;font-weight:600;margin-bottom:12px;cursor:pointer;">Today</button>
-    <div style="display:flex;gap:4px;margin-bottom:12px;">`;
+  const layers = getCalendarLayers();
+  const toDateStr = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  const weekStartStr = toDateStr(weekStart);
+  const weekEndStr = toDateStr(new Date(weekEndTs));
+  const todayStr = toDateStr(new Date());
 
+  // Build array of 7 day descriptors
+  const days = [];
   for (let i = 0; i < 7; i++) {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() + i);
-    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const isToday = dateStr === new Date().toISOString().split('T')[0];
-
-    html += `<div style="flex:1;text-align:center;padding:8px;border-radius:6px;background:${isToday ? 'var(--accent)' : 'var(--card)'};border:1px solid ${isToday ? 'var(--accent)' : 'var(--border)'};cursor:pointer;color:${isToday ? '#000' : 'var(--text)'};font-weight:${isToday ? '700' : '600'};font-size:12px;">
-      ${d.toLocaleDateString('en-GB', { weekday: 'short' })}<br>${d.getDate()}
-    </div>`;
+    const dt = new Date(weekStart);
+    dt.setDate(dt.getDate() + i);
+    const ds = toDateStr(dt);
+    days.push({
+      date: new Date(dt),
+      dateStr: ds,
+      label: dt.toLocaleDateString('en-GB', { weekday: 'short' }),
+      dayNum: dt.getDate(),
+      isToday: ds === todayStr,
+    });
   }
 
-  html += `</div>`;
-
-  // List gigs for week
-  const weekGigs = gigs.filter(g => {
-    const gDate = new Date(g.date);
-    return gDate >= weekStart && gDate < new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+  // Filter inputs to this week
+  const weekGigs = (layers.gigs ? gigs : []).filter(g => {
+    const ds = (g.date || '').slice(0, 10);
+    return ds >= weekStartStr && ds < weekEndStr;
+  });
+  const weekPins = (layers.google ? googlePins : []).filter(p => {
+    const ds = (p.date || '').slice(0, 10);
+    return ds >= weekStartStr && ds < weekEndStr;
+  });
+  const weekBlocked = (layers.blocked ? blocked : []).filter(b => {
+    const bs = (b.start_date || '').slice(0, 10);
+    const be = (b.end_date || bs).slice(0, 10);
+    return be >= weekStartStr && bs < weekEndStr;
   });
 
-  if (weekGigs.length > 0) {
-    html += `<div style="margin-top:12px;">
-      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Gigs this week</div>`;
-    weekGigs.forEach(gig => {
-      html += `<div class="gi" onclick="openGigDetail('${gig.id}')">
-        <div style="display:flex;align-items:flex-start;gap:14px;">
-          <div class="gdb">
-            <div class="gdd">${new Date(gig.date).getDate()}</div>
-            <div class="gdm">${new Date(gig.date).toLocaleDateString('en-GB', { month: 'short' }).toUpperCase()}</div>
-          </div>
-          <div style="flex:1;">
-            <div class="gt">${escapeHtml(gig.band_name)}</div>
-            <div class="gv">${escapeHtml(gig.venue_name)}${gig.start_time ? ' · ' + formatTime(gig.start_time) : ''}</div>
-            ${gig.fee ? `<div class="gf">£${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
-          </div>
-        </div>
-      </div>`;
+  // Parse a HH:MM(:SS) string into minutes-since-midnight
+  const toMin = (t) => {
+    if (!t) return null;
+    const [h, m] = String(t).split(':').map(n => parseInt(n, 10));
+    return (h * 60) + (m || 0);
+  };
+
+  // Split items into all-day (no start_time) vs timed
+  const allDayByDate = {};
+  days.forEach(dd => { allDayByDate[dd.dateStr] = []; });
+
+  const timedGigs = [];
+  weekGigs.forEach(g => {
+    const sMin = toMin(g.start_time);
+    if (sMin == null) {
+      allDayByDate[g.date].push({ kind: 'gig', label: g.band_name || 'Gig', id: g.id });
+    } else {
+      const eMin = toMin(g.end_time) != null ? toMin(g.end_time) : Math.min(sMin + 180, 24 * 60 - 1);
+      timedGigs.push({
+        kind: 'gig',
+        id: g.id,
+        dateStr: g.date,
+        startMin: sMin,
+        endMin: Math.max(eMin, sMin + 30),
+        crossMidnight: eMin < sMin,
+        label: g.band_name || 'Gig',
+        sub: (g.venue_name || '') + (g.fee ? ` · £${parseFloat(g.fee).toFixed(0)}` : ''),
+      });
+    }
+  });
+
+  const timedPins = [];
+  weekPins.forEach(p => {
+    if (p.all_day || !p.start_time) {
+      allDayByDate[p.date].push({ kind: 'pin', label: p.summary || 'Busy', id: p.id, isNudge: !!(window._calendarNudgesById && window._calendarNudgesById[p.id]) });
+    } else {
+      const sMin = toMin(p.start_time);
+      const eMin = toMin(p.end_time) != null ? toMin(p.end_time) : sMin + 60;
+      timedPins.push({
+        kind: 'pin',
+        id: p.id,
+        dateStr: p.date,
+        startMin: sMin,
+        endMin: Math.max(eMin, sMin + 30),
+        crossMidnight: eMin < sMin,
+        label: p.summary || 'Busy',
+        sub: p.location || '',
+        isNudge: !!(window._calendarNudgesById && window._calendarNudgesById[p.id]),
+      });
+    }
+  });
+
+  // Blocked: each day the block covers gets an all-day bar
+  weekBlocked.forEach(b => {
+    const bs = (b.start_date || '').slice(0, 10);
+    const be = (b.end_date || bs).slice(0, 10);
+    days.forEach(dd => {
+      if (dd.dateStr >= bs && dd.dateStr <= be) {
+        allDayByDate[dd.dateStr].push({ kind: 'blocked', label: b.reason || 'Unavailable', id: b.id });
+      }
+    });
+  });
+
+  // Travel auto-blocks (soft halo around timed gigs). Only render if layer on.
+  const autoBlocks = (layers.travel && typeof computeAutoBlocksForGigs === 'function')
+    ? computeAutoBlocksForGigs(weekGigs.filter(g => g.start_time))
+        .map(b => {
+          const bs = new Date(b.start);
+          const be = new Date(b.end);
+          const ds = toDateStr(bs);
+          if (ds < weekStartStr || ds >= weekEndStr) return null;
+          const sMin = bs.getHours() * 60 + bs.getMinutes();
+          const eMin = be.getHours() * 60 + be.getMinutes();
+          return { dateStr: ds, startMin: sMin, endMin: eMin > sMin ? eMin : 24 * 60 - 1, kind: b.kind };
+        })
+        .filter(Boolean)
+    : [];
+
+  // Grid dimensions
+  const HOUR_HEIGHT = 36;
+  const TIME_COL_PX = 36;
+  const GRID_HEIGHT = 24 * HOUR_HEIGHT;
+
+  // Per-day event column packing: assign each timed event a (col, cols) pair
+  // so overlapping events split the day column into vertical lanes.
+  const timedByDay = {};
+  days.forEach(dd => { timedByDay[dd.dateStr] = []; });
+  [...timedGigs, ...timedPins].forEach(ev => { (timedByDay[ev.dateStr] || []).push(ev); });
+  Object.values(timedByDay).forEach(list => {
+    list.sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+    // Simple column packer
+    const cols = [];
+    list.forEach(ev => {
+      let placed = false;
+      for (let i = 0; i < cols.length; i++) {
+        if (cols[i][cols[i].length - 1].endMin <= ev.startMin) {
+          ev._col = i;
+          cols[i].push(ev);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) { ev._col = cols.length; cols.push([ev]); }
+    });
+    // For each event, find max concurrent columns in its time range
+    list.forEach(ev => {
+      let maxCols = cols.length;
+      // Tighter: count columns that have anyone overlapping with ev
+      let active = 0;
+      cols.forEach(c => {
+        if (c.some(o => o.startMin < ev.endMin && o.endMin > ev.startMin)) active += 1;
+      });
+      ev._cols = Math.max(active, 1);
+    });
+  });
+
+  // Header and nav
+  let html = `<div style="padding:16px 16px 0;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <button onclick="prevCalendarWeek()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">&#8249;</button>
+      <div style="font-size:14px;font-weight:600;color:var(--text);">${weekStart.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })} - ${new Date(weekStart.getTime() + 6 * 24 * 3600 * 1000).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })}</div>
+      <button onclick="nextCalendarWeek()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">&#8250;</button>
+    </div>
+    <button onclick="goCalendarToday()" style="width:100%;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);color:var(--accent);border-radius:6px;padding:8px;font-size:12px;font-weight:600;margin-bottom:12px;cursor:pointer;">Today</button>
+  </div>`;
+
+  // Day header strip (tappable to jump to Day view for that date)
+  html += `<div style="display:grid;grid-template-columns:${TIME_COL_PX}px repeat(7, 1fr);background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+    <div></div>`;
+  days.forEach(dd => {
+    const bg = dd.isToday ? 'var(--accent)' : 'transparent';
+    const col = dd.isToday ? '#000' : 'var(--text)';
+    html += `<div onclick="jumpToDayView('${dd.dateStr}')" style="text-align:center;padding:6px 2px;background:${bg};color:${col};border-left:1px solid var(--border);font-size:10px;font-weight:600;cursor:pointer;">
+      <div style="text-transform:uppercase;letter-spacing:0.5px;opacity:${dd.isToday ? 1 : 0.7};">${dd.label}</div>
+      <div style="font-size:14px;font-weight:700;margin-top:2px;">${dd.dayNum}</div>
+    </div>`;
+  });
+  html += `</div>`;
+
+  // All-day band (only if any day has items)
+  const hasAnyAllDay = days.some(dd => (allDayByDate[dd.dateStr] || []).length > 0);
+  if (hasAnyAllDay) {
+    html += `<div style="display:grid;grid-template-columns:${TIME_COL_PX}px repeat(7, 1fr);background:var(--surface);border-bottom:1px solid var(--border);">
+      <div style="font-size:9px;color:var(--text-3);text-align:right;padding:4px 4px 0;line-height:1;">all<br/>day</div>`;
+    days.forEach(dd => {
+      const items = allDayByDate[dd.dateStr] || [];
+      html += `<div style="border-left:1px solid var(--border);padding:3px 2px;min-height:22px;display:flex;flex-direction:column;gap:2px;">`;
+      items.slice(0, 3).forEach(it => {
+        let bg = 'rgba(240,165,0,.18)', border = 'var(--accent)', col = 'var(--accent)', click = '';
+        if (it.kind === 'pin') {
+          const isNudge = it.isNudge;
+          bg = isNudge ? 'rgba(240,165,0,.18)' : 'rgba(66,133,244,.18)';
+          border = isNudge ? 'var(--accent)' : '#4285F4';
+          col = isNudge ? 'var(--accent)' : '#4285F4';
+          click = isNudge ? ` onclick="openCalendarNudgeByEventId('${String(it.id).replace(/'/g, "\\'")}')"` : '';
+        } else if (it.kind === 'blocked') {
+          bg = 'rgba(230,70,70,.16)'; border = 'var(--danger)'; col = 'var(--danger)';
+        } else if (it.kind === 'gig') {
+          click = ` onclick="openGigDetail('${String(it.id).replace(/'/g, "\\'")}')"`;
+        }
+        html += `<div${click} style="background:${bg};border-left:2px solid ${border};color:${col};font-size:9px;padding:2px 4px;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:${click ? 'pointer' : 'default'};line-height:1.3;" title="${escapeHtml(it.label)}">${escapeHtml(it.label)}</div>`;
+      });
+      if (items.length > 3) {
+        html += `<div style="font-size:9px;color:var(--text-3);text-align:center;">+${items.length - 3}</div>`;
+      }
+      html += `</div>`;
     });
     html += `</div>`;
   }
 
-  // Google Calendar pins in this week. Nudge-matched pins pick up amber treatment.
-  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const weekPins = googlePins.filter(p => {
-    const pd = new Date(p.date);
-    return pd >= weekStart && pd < weekEnd;
+  // Time grid: background hour rows + absolutely-positioned events
+  html += `<div id="weekTimeGrid" style="position:relative;background:var(--bg);">`;
+
+  // Background grid (hour rows × 8 cols: 1 time + 7 days)
+  html += `<div style="display:grid;grid-template-columns:${TIME_COL_PX}px repeat(7, 1fr);">`;
+  for (let h = 0; h < 24; h++) {
+    const label = `${String(h).padStart(2, '0')}:00`;
+    html += `<div style="height:${HOUR_HEIGHT}px;border-top:1px solid var(--border);font-size:9px;color:var(--text-3);text-align:right;padding:2px 4px 0;box-sizing:border-box;">${label}</div>`;
+    days.forEach(dd => {
+      html += `<div onclick="openDayActionSheet('${dd.dateStr}')" style="height:${HOUR_HEIGHT}px;border-top:1px solid var(--border);border-left:1px solid var(--border);cursor:pointer;box-sizing:border-box;"></div>`;
+    });
+  }
+  html += `</div>`;
+
+  // Event layer: absolute-positioned cards over the 7 day columns.
+  // Day columns start at TIME_COL_PX and divide the remaining width into 7.
+  html += `<div style="position:absolute;top:0;left:${TIME_COL_PX}px;right:0;height:${GRID_HEIGHT}px;pointer-events:none;">`;
+
+  // Travel halos first so they render behind gig blocks visually
+  autoBlocks.forEach(ab => {
+    const dayIdx = days.findIndex(dd => dd.dateStr === ab.dateStr);
+    if (dayIdx < 0) return;
+    const top = (ab.startMin / 60) * HOUR_HEIGHT;
+    const height = Math.max(((ab.endMin - ab.startMin) / 60) * HOUR_HEIGHT, 6);
+    const leftPct = (dayIdx / 7) * 100;
+    const widthPct = (1 / 7) * 100;
+    const bg = ab.kind === 'travel_out' ? 'rgba(240,165,0,.10)' : 'rgba(88,166,255,.10)';
+    const border = ab.kind === 'travel_out' ? 'rgba(240,165,0,.35)' : 'rgba(88,166,255,.35)';
+    html += `<div style="position:absolute;top:${top}px;height:${height}px;left:calc(${leftPct}% + 1px);width:calc(${widthPct}% - 2px);background:${bg};border-left:2px dashed ${border};border-radius:3px;pointer-events:none;"></div>`;
   });
-  if (weekPins.length > 0) {
-    const hasNudge = weekPins.some(p => window._calendarNudgesById && window._calendarNudgesById[p.id]);
-    html += `<div style="margin-top:12px;">
-      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-        <span style="width:8px;height:8px;border-radius:2px;background:${hasNudge ? 'var(--accent)' : '#4285F4'};display:inline-block;"></span>
-        Google Calendar
-      </div>`;
-    weekPins.forEach(p => { html += renderGooglePinCard(p, { mode: 'week' }); });
-    html += `</div>`;
+
+  // Timed events
+  days.forEach((dd, dayIdx) => {
+    (timedByDay[dd.dateStr] || []).forEach(ev => {
+      const top = (ev.startMin / 60) * HOUR_HEIGHT;
+      const clampedEnd = ev.crossMidnight ? 24 * 60 - 1 : ev.endMin;
+      const height = Math.max(((clampedEnd - ev.startMin) / 60) * HOUR_HEIGHT, 14);
+      const cols = ev._cols || 1;
+      const col = ev._col || 0;
+      const dayLeftPct = (dayIdx / 7) * 100;
+      const dayWidthPct = (1 / 7) * 100;
+      const evLeftPct = dayLeftPct + (col / cols) * dayWidthPct;
+      const evWidthPct = dayWidthPct / cols;
+
+      if (ev.kind === 'gig') {
+        const safeId = String(ev.id).replace(/'/g, "\\'");
+        html += `<div onclick="openGigDetail('${safeId}')" style="position:absolute;top:${top}px;height:${height}px;left:calc(${evLeftPct}% + 1px);width:calc(${evWidthPct}% - 2px);background:rgba(240,165,0,.22);border-left:3px solid var(--accent);border-radius:4px;padding:2px 4px;font-size:10px;color:var(--text);overflow:hidden;cursor:pointer;pointer-events:auto;box-sizing:border-box;" title="${escapeHtml(ev.label)} - ${escapeHtml(ev.sub)}">
+          <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;">${escapeHtml(ev.label)}</div>
+          ${height > 28 ? `<div style="font-size:9px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;">${escapeHtml(ev.sub)}</div>` : ''}
+          ${ev.crossMidnight ? `<div style="font-size:8px;color:var(--accent);">&#8681; continues</div>` : ''}
+        </div>`;
+      } else {
+        const safeId = String(ev.id).replace(/'/g, "\\'");
+        const isNudge = ev.isNudge;
+        const bg = isNudge ? 'rgba(240,165,0,.18)' : 'rgba(66,133,244,.18)';
+        const border = isNudge ? 'var(--accent)' : '#4285F4';
+        const click = isNudge ? ` onclick="openCalendarNudgeByEventId('${safeId}')"` : '';
+        const cursor = isNudge ? 'pointer' : 'default';
+        html += `<div${click} style="position:absolute;top:${top}px;height:${height}px;left:calc(${evLeftPct}% + 1px);width:calc(${evWidthPct}% - 2px);background:${bg};border-left:3px solid ${border};border-radius:4px;padding:2px 4px;font-size:10px;color:var(--text);overflow:hidden;cursor:${cursor};pointer-events:auto;box-sizing:border-box;" title="${escapeHtml(ev.label)}">
+          <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;color:${isNudge ? 'var(--accent)' : '#4285F4'};">${escapeHtml(ev.label)}</div>
+          ${height > 28 && ev.sub ? `<div style="font-size:9px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;">${escapeHtml(ev.sub)}</div>` : ''}
+        </div>`;
+      }
+    });
+  });
+
+  // Now-line: red horizontal line on today's column only
+  const todayIdx = days.findIndex(dd => dd.isToday);
+  if (todayIdx >= 0) {
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const nowTop = (nowMin / 60) * HOUR_HEIGHT;
+    const leftPct = (todayIdx / 7) * 100;
+    const widthPct = (1 / 7) * 100;
+    html += `<div style="position:absolute;top:${nowTop - 1}px;left:calc(${leftPct}%);width:calc(${widthPct}%);height:2px;background:#ff3b30;pointer-events:none;z-index:3;"></div>
+      <div style="position:absolute;top:${nowTop - 4}px;left:calc(${leftPct}% - 4px);width:8px;height:8px;border-radius:50%;background:#ff3b30;pointer-events:none;z-index:3;"></div>`;
   }
 
-  html += `</div>`;
+  html += `</div></div>`; // close event layer + #weekTimeGrid
+
+  // Auto-scroll the parent screen so evening is near the top on render. The
+  // scroll container is .app-content (the parent of #calendarScreen). We
+  // defer with setTimeout so the DOM is in place when we set scrollTop.
+  setTimeout(() => {
+    try {
+      const content = document.querySelector('.app-content');
+      const grid = document.getElementById('weekTimeGrid');
+      if (content && grid) {
+        // Scroll to ~15:00 (HOUR_HEIGHT * 15) so the evening block is visible
+        content.scrollTop = grid.offsetTop + HOUR_HEIGHT * 15;
+      }
+    } catch (_) { /* non-fatal */ }
+  }, 0);
+
   return html;
+}
+
+// #92: Week view day-header taps switch to Day view anchored on the tapped
+// date. Uses the same window._calDate global that prev/next/today nav uses,
+// so the rest of the calendar stays in sync.
+function jumpToDayView(dateStr) {
+  try {
+    const d = new Date(dateStr + 'T12:00:00');
+    if (!isNaN(d.getTime())) {
+      window._calDate = d;
+    }
+  } catch (_) { /* fall through */ }
+  switchCalendarView('day');
 }
 
 function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
