@@ -32,6 +32,8 @@
 
   --radius: 0.5rem;
   --radius-lg: 0.75rem;
+
+  --app-header-h: 56px;
 }
 
 * {
@@ -88,6 +90,7 @@ body {
   border-bottom: 1px solid var(--border);
   z-index: 10;
   flex-shrink: 0;
+  min-height: var(--app-header-h);
 }
 
 .header-left {
@@ -305,6 +308,12 @@ body {
 
 .panel-overlay.open {
   display: flex;
+}
+
+/* Quick-action panels (Invoice, Block, Dep, Receipt) sit below the app header
+   so the avatar / greeting / bell / theme toggle stay visible and reachable. */
+.panel-overlay.panel-keep-header {
+  top: var(--app-header-h);
 }
 
 .panel-header {
