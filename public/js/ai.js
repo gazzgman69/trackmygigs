@@ -741,43 +741,23 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // AI Tools launcher — a grid of all 10 features for quick testing
+  // AI Tools launcher — RETIRED (#139)
   // ═══════════════════════════════════════════════════════════════════════════
-  function aiToolsHub() {
-    const items = [
-      { id: 'smart-paste', label: 'Smart Paste to Gig', icon: '&#128203;', fn: aiSmartPasteGig },
-      { id: 'receipt', label: 'Scan Receipt', icon: '&#129517;', fn: aiScanReceipt },
-      { id: 'dep', label: 'Dep Offer Replies', icon: '&#128172;', fn: () => aiDepReplyDrafter() },
-      { id: 'setlist', label: 'Set List Generator', icon: '&#127925;', fn: aiSetListGenerator },
-      { id: 'chase', label: 'Invoice Chase (from Invoices)', icon: '&#128176;', fn: () => toast('Open an invoice and tap Chase.', 'info') },
-      { id: 'bio', label: 'Bio Writer', icon: '&#10024;', fn: aiBioWriter },
-      { id: 'insight', label: 'Monthly Insight (on Finance)', icon: '&#128200;', fn: () => toast('Open Finance to see your monthly insight.', 'info') },
-      { id: 'sanity', label: 'Sanity Check (auto on Save)', icon: '&#9888;&#65039;', fn: () => toast('Runs automatically when you save a gig.', 'info') },
-      { id: 'chordpro', label: 'ChordPro Normaliser', icon: '&#127911;', fn: () => aiChordProNormalise() },
-      { id: 'enquiry', label: 'Enquiry Triage', icon: '&#128231;', fn: aiEnquiryTriage },
-    ];
-    const grid = items.map((it) => `
-      <button type="button" data-id="${it.id}" class="ai-btn-secondary" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 10px;text-align:center;">
-        <div style="font-size:22px;">${it.icon}</div>
-        <div style="font-size:12px;font-weight:600;line-height:1.3;">${it.label}</div>
-      </button>
-    `).join('');
-    const body = h(`
-      <div>
-        <p style="margin:0 0 12px;font-size:13px;color:var(--text-2,#999);">All 10 AI features powered by Claude Haiku 4.5.</p>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">${grid}</div>
-      </div>
-    `);
-    openModal('AI Tools', body);
-    body.querySelectorAll('button[data-id]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const id = b.getAttribute('data-id');
-        const it = items.find((x) => x.id === id);
-        closeModal();
-        setTimeout(() => it && it.fn && it.fn(), 50);
-      });
-    });
-  }
+  // Each of the 10 AI features now lives only in its natural home:
+  //   1. Smart Paste to Gig    → Gig wizard header
+  //   2. Scan Receipt          → Receipts screen "Add with AI"
+  //   3. Dep Offer Replies     → Per-offer "Draft reply with AI" in Offers
+  //   4. Set List Generator    → Repertoire / Set lists
+  //   5. Invoice Chase         → Invoice card "AI draft chase email"
+  //   6. Bio Writer            → EPK panel
+  //   7. Monthly Insight       → Finance screen header
+  //   8. Sanity Check          → Auto on Save Gig (no UI)
+  //   9. ChordPro Normaliser   → Repertoire
+  //  10. Enquiry Triage        → Top-nav quick-actions strip
+  //
+  // The hub modal was scaffolding from the QA push when the 10 features landed
+  // together. Gareth: "I imagined these AI features being integrated in the
+  // correct places rather than all in one place being able to choose."
 
   // Probe /status once on load; if AI is disabled, window.__aiEnabled stays
   // false and UI hooks can skip showing buttons. We still export the functions
@@ -800,6 +780,5 @@
     aiSanityCheck,
     aiChordProNormalise,
     aiEnquiryTriage,
-    aiToolsHub,
   });
 })();
