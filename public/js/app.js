@@ -60,6 +60,24 @@ if (document.readyState === 'loading') {
   setTimeout(() => { if (typeof setupTextScaling === 'function') setupTextScaling(); }, 0);
 }
 
+// Keep --app-nav-h in sync with the actual rendered height of the bottom nav so
+// the quick-action panels (.panel-keep-header) stop exactly above it. Using the
+// measured value covers safe-area-inset-bottom differences on iOS home-indicator
+// devices, text-scaling changes, and any future nav-row additions without the
+// CSS having to track them.
+function syncAppNavHeight() {
+  var nav = document.querySelector('.app-nav');
+  if (!nav) return;
+  var h = nav.getBoundingClientRect().height;
+  if (h > 0) document.documentElement.style.setProperty('--app-nav-h', h + 'px');
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', syncAppNavHeight);
+} else {
+  setTimeout(syncAppNavHeight, 0);
+}
+window.addEventListener('resize', syncAppNavHeight);
+
 // Wizard state
 let gigWizardStep = 1;
 let gigWizardData = {};

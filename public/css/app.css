@@ -34,6 +34,7 @@
   --radius-lg: 0.75rem;
 
   --app-header-h: 56px;
+  --app-nav-h: 104px;
 }
 
 * {
@@ -310,10 +311,13 @@ body {
   display: flex;
 }
 
-/* Quick-action panels (Invoice, Block, Dep, Receipt) sit below the app header
-   so the avatar / greeting / bell / theme toggle stay visible and reachable. */
+/* Quick-action panels (Invoice, Block, Dep, Receipt) sit between the app header
+   and the bottom nav so both stay visible and reachable. The bottom nav rows
+   (page tabs + quick actions) act as the menu for these panels, so the panel
+   must stop above them rather than overlay the whole screen. */
 .panel-overlay.panel-keep-header {
   top: var(--app-header-h);
+  bottom: var(--app-nav-h);
 }
 
 .panel-header {
