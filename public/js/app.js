@@ -2035,6 +2035,9 @@ function handleCalendarAction(action) {
 
 function switchCalendarView(view) {
   window._calViewMode = view;
+  // Clear the week-view scroll guard so coming back to Week from Day/Month
+  // re-centers on the evening block instead of leaving the user at the top.
+  window._weekViewLastScrollKey = null;
   renderCalendarScreen();
 }
 
@@ -2426,19 +2429,27 @@ function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
 
   html += `</div></div>`; // close event layer + #weekTimeGrid
 
-  // Auto-scroll the parent screen so evening is near the top on render. The
-  // scroll container is .app-content (the parent of #calendarScreen). We
-  // defer with setTimeout so the DOM is in place when we set scrollTop.
-  setTimeout(() => {
-    try {
-      const content = document.querySelector('.app-content');
-      const grid = document.getElementById('weekTimeGrid');
-      if (content && grid) {
-        // Scroll to ~15:00 (HOUR_HEIGHT * 15) so the evening block is visible
-        content.scrollTop = grid.offsetTop + HOUR_HEIGHT * 15;
-      }
-    } catch (_) { /* non-fatal */ }
-  }, 0);
+  // Auto-scroll the parent screen so evening is near the top on render, but
+  // ONLY when the week has actually changed. Without this guard, every
+  // background re-render (Google pins landing, nudges loading, 5-min poll,
+  // SWR refresh) would snap the user's scroll back to 15:00 mid-scroll.
+  // window._weekViewLastScrollKey tracks the last week we auto-scrolled for;
+  // nav handlers (prevCalendarWeek / nextCalendarWeek / goCalendarToday) clear
+  // it so those gestures still land on the evening block.
+  const scrollKey = `week:${weekStartStr}`;
+  if (window._weekViewLastScrollKey !== scrollKey) {
+    window._weekViewLastScrollKey = scrollKey;
+    setTimeout(() => {
+      try {
+        const content = document.querySelector('.app-content');
+        const grid = document.getElementById('weekTimeGrid');
+        if (content && grid) {
+          // Scroll to ~15:00 (HOUR_HEIGHT * 15) so the evening block is visible
+          content.scrollTop = grid.offsetTop + HOUR_HEIGHT * 15;
+        }
+      } catch (_) { /* non-fatal */ }
+    }, 0);
+  }
 
   return html;
 }
