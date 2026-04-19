@@ -665,14 +665,20 @@ function buildHomeHTML(content, stats) {
     }
 
     // Quick stats
+    // #140: Both cards and the forecast below are teasers for the Finance
+    // panel per mockup-v3. Each tap opens #panel-finance via openFinanceAt
+    // and scrolls to its relevant section. This month → AI monthly insight
+    // (only month-specific section). Tax year → Tax year overview row
+    // (Income/Expenses/Taxable profit). Forecast → expanded Monthly
+    // breakdown chart.
     html += `
     <div style="display:flex;gap:6px;margin:0 16px 6px;">
-      <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;">
+      <div onclick="window.openFinanceAt && window.openFinanceAt('month-insight')" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;cursor:pointer;">
         <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">This month</div>
         <div style="font-size:13px;font-weight:700;color:var(--success);">£${stats.month_earnings || 0}</div>
         <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.month_gigs || 0} gig${stats.month_gigs === 1 ? '' : 's'}</div>
       </div>
-      <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;">
+      <div onclick="window.openFinanceAt && window.openFinanceAt('tax-year')" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;cursor:pointer;">
         <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Tax year</div>
         <div style="font-size:13px;font-weight:700;color:var(--success);">£${stats.year_earnings || 0}</div>
         <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.year_gigs || 0} gig${stats.year_gigs === 1 ? '' : 's'}</div>
@@ -715,7 +721,7 @@ function buildHomeHTML(content, stats) {
         ...enriched.map((m) => m.confirmed + m.pending + m.forecast)
       );
       html += `
-      <div style="margin:0 16px 6px;">
+      <div onclick="window.openFinanceAt && window.openFinanceAt('monthly')" style="margin:0 16px 6px;cursor:pointer;">
         <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">12-Month Forecast</div>
         <div style="display:flex;align-items:flex-end;gap:3px;height:60px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:8px;">
           ${enriched.map((m) => {
@@ -5044,7 +5050,7 @@ async function renderFinancePanel() {
 
     let html = `
       <!-- Hero: total invoiced + paid/unpaid/overdue split -->
-      <div style="padding:12px 16px 16px;text-align:center;">
+      <div data-finance-section="hero" style="padding:12px 16px 16px;text-align:center;">
         <div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Tax year ${escapeHtml(taxYear)} &middot; Total invoiced</div>
         <div style="font-size:28px;font-weight:800;color:var(--text);line-height:1.1;">${fmtGBP(grossTot)}</div>
         <div style="font-size:11px;color:var(--text-2);margin-top:4px;">${fmtGBP(paidTot)} paid &middot; ${fmtGBP(unpaidTot)} pending &middot; ${fmtGBP(overdueTot)} overdue${yoyPct !== null ? ` &middot; ${yoyPct >= 0 ? '+' : ''}${yoyPct}% YoY` : ' &middot; First tax year'}</div>
@@ -5062,7 +5068,7 @@ async function renderFinancePanel() {
       </div>
 
       <!-- Monthly breakdown with &pound; labels on bars -->
-      <div style="padding:0 16px 16px;">
+      <div data-finance-section="monthly" style="padding:0 16px 16px;">
         <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
           <span>Monthly breakdown</span>
           <span style="font-weight:500;text-transform:none;letter-spacing:0;font-size:10px;color:var(--text-3);">Last 12 months</span>
@@ -5110,7 +5116,7 @@ async function renderFinancePanel() {
       </div>
 
       <!-- Tax year overview -->
-      <div style="padding:0 16px 16px;">
+      <div data-finance-section="tax-year" style="padding:0 16px 16px;">
         <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Tax year overview</div>
         <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;">
           <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
@@ -5153,7 +5159,7 @@ async function renderFinancePanel() {
       </div>
 
       <!-- AI Monthly Insight (rendered async below) -->
-      <div style="padding:0 16px 16px;">
+      <div data-finance-section="month-insight" style="padding:0 16px 16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
           <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">AI monthly insight</div>
           <button type="button" onclick="(function(){var d=new Date();window.aiMonthlyInsight && window.aiMonthlyInsight(d.getFullYear(), d.getMonth()+1);})()" style="background:none;border:none;color:var(--accent,#f0a500);font-size:11px;cursor:pointer;font-weight:600;">Refresh</button>
@@ -5185,11 +5191,37 @@ async function renderFinancePanel() {
         window.aiMonthlyInsight(d.getFullYear(), d.getMonth() + 1);
       }
     } catch (_) { /* noop */ }
+    // #140: honour pending scroll target set by window.openFinanceAt. The Home
+    // dashboard uses this to land each teaser (This month card, Tax year card,
+    // 12-month forecast) at its relevant section inside the Finance panel
+    // instead of dumping every tap at the top. Consumed once and cleared, so a
+    // direct openPanel('panel-finance') from the bottom-nav just scrolls to
+    // the natural top.
+    if (window._pendingFinanceScroll) {
+      const targetKey = window._pendingFinanceScroll;
+      window._pendingFinanceScroll = null;
+      requestAnimationFrame(() => {
+        const el = body.querySelector(`[data-finance-section="${targetKey}"]`);
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    }
   } catch (err) {
     console.error('Finance panel error:', err);
     body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load finance data.</div>`;
   }
 }
+
+// #140: Home-dashboard entry point for the Finance panel. Sets a pending
+// scroll target (consumed by renderFinancePanel once the fetch resolves) and
+// opens the panel. Safe to call with an unknown section — scrollIntoView just
+// no-ops if the selector misses (e.g. empty-state render with no sections).
+function openFinanceAt(section) {
+  window._pendingFinanceScroll = section || null;
+  openPanel('panel-finance');
+}
+window.openFinanceAt = openFinanceAt;
 
 function estimateTax(net) {
   // UK 2026/27 self-employed rough estimate: personal allowance 12,570
