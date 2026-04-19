@@ -878,6 +878,91 @@ body {
   border-radius: 50%;
 }
 
+/* Month view: Google-style cells with date number + event pills */
+.cd.cd-month {
+  text-align: left;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 4px 4px 2px 4px;
+  min-height: 84px;
+  gap: 2px;
+  overflow: hidden;
+}
+.cd.cd-month .cd-num {
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-2);
+  padding: 2px 2px 4px 2px;
+  align-self: flex-start;
+}
+.cd.cd-month.today .cd-num {
+  background: var(--accent);
+  color: #fff;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.cd.cd-month.today {
+  background: transparent;
+  color: var(--text);
+  font-weight: normal;
+}
+.cd-events {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.cd-pill {
+  font-size: 0.6875rem;
+  line-height: 1.15;
+  padding: 2px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.cd-pill-allday {
+  color: #fff;
+  font-weight: 500;
+}
+.cd-pill-timed {
+  background: transparent;
+  font-weight: 500;
+}
+.cd-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.cd-pill-allday .cd-pill-dot { display: none; }
+.cd-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.cd-pill-more {
+  font-size: 0.625rem;
+  color: var(--text-3);
+  padding: 0 4px;
+  cursor: pointer;
+}
+.cd-pill-more:hover { color: var(--accent); }
+
 /* Legacy gig card styles (kept for compatibility) */
 .gig-card {
   background-color: var(--card);

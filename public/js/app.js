@@ -2054,12 +2054,26 @@ function renderCalendarMonth(currentDate, gigs, blocked, googlePins = []) {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = new Date();
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+  const layers = getCalendarLayers();
+
+  // Helper: format HH:MM(:SS) into a compact time label like "8pm" or "9:30am"
+  // matching Google Calendar's Month-cell convention. Saves horizontal pixels.
+  const fmtCompactTime = (t) => {
+    if (!t) return '';
+    const [hStr, mStr] = String(t).split(':');
+    const h = parseInt(hStr, 10);
+    const m = parseInt(mStr || '0', 10);
+    if (isNaN(h)) return '';
+    const ampm = h >= 12 ? 'pm' : 'am';
+    const hr12 = ((h + 11) % 12) + 1;
+    return m > 0 ? `${hr12}:${String(m).padStart(2, '0')}${ampm}` : `${hr12}${ampm}`;
+  };
 
   let html = `<div style="padding:16px;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-      <button onclick="prevCalendarMonth()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">‹</button>
+      <button onclick="prevCalendarMonth()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">&#8249;</button>
       <div style="font-size:16px;font-weight:600;color:var(--text);">${new Date(year, month, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</div>
-      <button onclick="nextCalendarMonth()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">›</button>
+      <button onclick="nextCalendarMonth()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">&#8250;</button>
     </div>
     <button onclick="goCalendarToday()" style="width:100%;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);color:var(--accent);border-radius:6px;padding:8px;font-size:12px;font-weight:600;margin-bottom:12px;cursor:pointer;">Today</button>
     <div class="cg">
@@ -2067,27 +2081,101 @@ function renderCalendarMonth(currentDate, gigs, blocked, googlePins = []) {
 
   // Empty cells (firstDay is now 0..6 Monday-first)
   for (let i = 0; i < firstDay; i++) {
-    html += `<div class="cd empty"></div>`;
+    html += `<div class="cd cd-month empty"></div>`;
   }
 
-  // Days
+  // Days. #135: replaced colored-dot markers with Google-style event pills.
+  // Each cell shows up to 2 event pills with "TIME Title" (or just "Title"
+  // for all-day items), then a "+N" overflow link if more events exist that
+  // day. Pills clip with ellipsis so narrow mobile cells stay readable.
   for (let day = 1; day <= daysInMonth; day++) {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const isToday = isCurrentMonth && day === today.getDate();
 
-    const gigsOnDay = gigs.filter(g => (g.date || '').slice(0, 10) === dateStr);
-    const blockedOnDay = blocked.some(b => (b.date || '').slice(0, 10) === dateStr);
-    const pinsOnDay = googlePins.filter(p => p.date === dateStr);
-    const hasMarker = gigsOnDay.length > 0 || blockedOnDay || pinsOnDay.length > 0;
+    const gigsOnDay = (layers.gigs ? gigs : []).filter(g => (g.date || '').slice(0, 10) === dateStr);
+    const blockedOnDay = (layers.blocked ? blocked : []).filter(b => {
+      const bs = (b.start_date || '').slice(0, 10);
+      const be = (b.end_date || bs).slice(0, 10);
+      return dateStr >= bs && dateStr <= be;
+    });
+    const pinsOnDay = (layers.google ? googlePins : []).filter(p => (p.date || '').slice(0, 10) === dateStr);
 
-    html += `<div class="cd ${isToday ? 'today' : ''}" onclick="selectCalendarDate('${dateStr}')" style="position:relative;">
-      ${day}
-      ${hasMarker ? `
-      <div class="cd-dots">
-        ${gigsOnDay.slice(0, 3).map(() => `<div class="cd-dot" style="background:var(--success);"></div>`).join('')}
-        ${blockedOnDay ? `<div class="cd-dot" style="background:var(--danger);"></div>` : ''}
-        ${pinsOnDay.slice(0, 2).map(p => `<div class="cd-dot" style="background:${(window._calendarNudgesById && window._calendarNudgesById[p.id]) ? 'var(--accent)' : '#4285F4'};"></div>`).join('')}
-      </div>` : ''}
+    // Build a unified event list for this cell, all-day first then timed by start_time.
+    // Each item: { kind, label, time, color, bg, border, isAllDay }
+    const items = [];
+    blockedOnDay.forEach(b => {
+      items.push({
+        kind: 'blocked',
+        label: b.reason || 'Unavailable',
+        time: '',
+        color: '#fff',
+        bg: 'var(--danger)',
+        border: 'var(--danger)',
+        isAllDay: true,
+      });
+    });
+    gigsOnDay.forEach(g => {
+      const isAllDay = !g.start_time;
+      items.push({
+        kind: 'gig',
+        label: g.band_name || g.venue_name || 'Gig',
+        time: isAllDay ? '' : fmtCompactTime(g.start_time),
+        sortKey: isAllDay ? -1 : (parseInt(String(g.start_time).split(':')[0], 10) * 60 + (parseInt(String(g.start_time).split(':')[1] || '0', 10))),
+        color: isAllDay ? '#000' : 'var(--text)',
+        bg: isAllDay ? 'var(--accent)' : 'transparent',
+        border: 'var(--accent)',
+        dot: 'var(--accent)',
+        isAllDay,
+      });
+    });
+    pinsOnDay.forEach(p => {
+      const isNudge = !!(window._calendarNudgesById && window._calendarNudgesById[p.id]);
+      const isAllDay = p.all_day || !p.start_time;
+      const hue = isNudge ? 'var(--accent)' : '#4285F4';
+      items.push({
+        kind: 'pin',
+        label: p.summary || 'Busy',
+        time: isAllDay ? '' : fmtCompactTime(p.start_time),
+        sortKey: isAllDay ? -1 : (parseInt(String(p.start_time).split(':')[0], 10) * 60 + (parseInt(String(p.start_time).split(':')[1] || '0', 10))),
+        color: isAllDay ? '#fff' : 'var(--text)',
+        bg: isAllDay ? hue : 'transparent',
+        border: hue,
+        dot: hue,
+        isAllDay,
+      });
+    });
+
+    // Sort: all-day items first, then timed events by start time
+    items.sort((a, b) => {
+      if (a.isAllDay && !b.isAllDay) return -1;
+      if (!a.isAllDay && b.isAllDay) return 1;
+      return (a.sortKey || 0) - (b.sortKey || 0);
+    });
+
+    const visibleCount = 2;
+    const visible = items.slice(0, visibleCount);
+    const overflow = items.length - visible.length;
+
+    let pillsHtml = '';
+    visible.forEach(it => {
+      if (it.isAllDay) {
+        // Solid colored bar (Google bank-holiday style)
+        pillsHtml += `<div class="cd-pill cd-pill-allday" style="background:${it.bg};color:${it.color};" title="${escapeHtml(it.label)}">${escapeHtml(it.label)}</div>`;
+      } else {
+        // Compact "8pm Title" with leading dot
+        const timeBit = it.time ? `<span style="font-weight:700;margin-right:3px;">${escapeHtml(it.time)}</span>` : '';
+        pillsHtml += `<div class="cd-pill cd-pill-timed" style="color:${it.color};" title="${escapeHtml(it.time ? it.time + ' ' + it.label : it.label)}">
+          <span class="cd-pill-dot" style="background:${it.dot};"></span>${timeBit}<span class="cd-pill-text">${escapeHtml(it.label)}</span>
+        </div>`;
+      }
+    });
+    if (overflow > 0) {
+      pillsHtml += `<div class="cd-pill cd-pill-more">+${overflow} more</div>`;
+    }
+
+    html += `<div class="cd cd-month ${isToday ? 'today' : ''}" onclick="selectCalendarDate('${dateStr}')">
+      <div class="cd-num">${day}</div>
+      ${pillsHtml ? `<div class="cd-events">${pillsHtml}</div>` : ''}
     </div>`;
   }
 
@@ -2454,93 +2542,252 @@ function jumpToDayView(dateStr) {
   switchCalendarView('day');
 }
 
+// #134: Day view rebuilt as a single-column time grid, mirroring Week view.
+// Gareth wanted Google Calendar parity — Google's Day view is the same 24-hour
+// hour-grid mechanic as Week, just one column wide. The previous Day view was
+// a sorted list of gigs, which lost the visual "density of evening" and made
+// it impossible to see gaps between travel halos and the gig itself.
+//
+// Shape: same HOUR_HEIGHT (36px), same TIME_COL_PX (36px), same all-day band,
+// same column-packer for overlapping events, same now-line. Travel halos slot
+// in around timed gigs as dashed left-border ghost blocks behind the event.
 function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
-  const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+  const toDateStr = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  const dateStr = toDateStr(currentDate);
   const layers = getCalendarLayers();
-  const dayGigs = layers.gigs
-    ? gigs.filter(g => g.date === dateStr).sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''))
-    : [];
   const today = new Date();
-  const isToday = currentDate.toDateString() === today.toDateString();
+  const todayStr = toDateStr(today);
+  const isToday = dateStr === todayStr;
 
-  let html = `<div style="padding:16px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-      <button onclick="prevCalendarDay()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">‹</button>
-      <div style="font-size:16px;font-weight:600;color:var(--text);">${currentDate.toLocaleDateString('en-GB', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
-      <button onclick="nextCalendarDay()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">›</button>
-    </div>
-    <button onclick="goCalendarToday()" style="width:100%;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);color:var(--accent);border-radius:6px;padding:8px;font-size:12px;font-weight:600;margin-bottom:12px;cursor:pointer;">Today</button>`;
+  const dd = {
+    date: new Date(currentDate),
+    dateStr,
+    label: currentDate.toLocaleDateString('en-GB', { weekday: 'short' }),
+    dayNum: currentDate.getDate(),
+    isToday,
+  };
 
-  if (isToday) {
-    const nowLabel = today.toTimeString().substring(0, 5);
-    html += `<div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
-      <div style="width:8px;height:8px;border-radius:50%;background:#ff3b30;flex-shrink:0;"></div>
-      <div style="flex:1;height:2px;background:#ff3b30;"></div>
-      <div style="font-size:10px;font-weight:700;color:#ff3b30;">Now · ${nowLabel}</div>
-    </div>`;
-  }
+  // Filter to this day only
+  const dayGigs = (layers.gigs ? gigs : []).filter(g => (g.date || '').slice(0, 10) === dateStr);
+  const dayPins = (layers.google ? googlePins : []).filter(p => (p.date || '').slice(0, 10) === dateStr);
+  const dayBlocked = (layers.blocked ? blocked : []).filter(b => {
+    const bs = (b.start_date || '').slice(0, 10);
+    const be = (b.end_date || bs).slice(0, 10);
+    return dateStr >= bs && dateStr <= be;
+  });
 
-  const dayPins = googlePins.filter(p => p.date === dateStr);
+  // Parse HH:MM(:SS) to minutes-since-midnight
+  const toMin = (t) => {
+    if (!t) return null;
+    const [h, m] = String(t).split(':').map(n => parseInt(n, 10));
+    return (h * 60) + (m || 0);
+  };
 
-  if (dayGigs.length === 0 && dayPins.length === 0) {
-    html += `<div style="text-align:center;padding:40px 20px;color:var(--text-2);">No gigs scheduled for this day</div>`;
-  } else if (dayGigs.length > 0) {
-    html += `<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Gigs today</div>`;
+  // Split all-day vs timed (same logic as Week view)
+  const allDayItems = [];
+  const timedEvents = [];
 
-    // Auto-blocks for the day: soft pre/post windows from travel + load-in + pack-down
-    const autoBlocks = (layers.travel && typeof computeAutoBlocksForGigs === 'function')
-      ? computeAutoBlocksForGigs(dayGigs).filter(b => {
+  dayGigs.forEach(g => {
+    const sMin = toMin(g.start_time);
+    if (sMin == null) {
+      allDayItems.push({ kind: 'gig', label: g.band_name || 'Gig', id: g.id });
+    } else {
+      const eMin = toMin(g.end_time) != null ? toMin(g.end_time) : Math.min(sMin + 180, 24 * 60 - 1);
+      timedEvents.push({
+        kind: 'gig',
+        id: g.id,
+        startMin: sMin,
+        endMin: Math.max(eMin, sMin + 30),
+        crossMidnight: eMin < sMin,
+        label: g.band_name || 'Gig',
+        sub: (g.venue_name || '') + (g.fee ? ` · £${parseFloat(g.fee).toFixed(0)}` : ''),
+      });
+    }
+  });
+
+  dayPins.forEach(p => {
+    if (p.all_day || !p.start_time) {
+      allDayItems.push({
+        kind: 'pin',
+        label: p.summary || 'Busy',
+        id: p.id,
+        isNudge: !!(window._calendarNudgesById && window._calendarNudgesById[p.id]),
+      });
+    } else {
+      const sMin = toMin(p.start_time);
+      const eMin = toMin(p.end_time) != null ? toMin(p.end_time) : sMin + 60;
+      timedEvents.push({
+        kind: 'pin',
+        id: p.id,
+        startMin: sMin,
+        endMin: Math.max(eMin, sMin + 30),
+        crossMidnight: eMin < sMin,
+        label: p.summary || 'Busy',
+        sub: p.location || '',
+        isNudge: !!(window._calendarNudgesById && window._calendarNudgesById[p.id]),
+      });
+    }
+  });
+
+  dayBlocked.forEach(b => {
+    allDayItems.push({ kind: 'blocked', label: b.reason || 'Unavailable', id: b.id });
+  });
+
+  // Travel halos for timed gigs today
+  const autoBlocks = (layers.travel && typeof computeAutoBlocksForGigs === 'function')
+    ? computeAutoBlocksForGigs(dayGigs.filter(g => g.start_time))
+        .map(b => {
           const bs = new Date(b.start);
-          return `${bs.getFullYear()}-${String(bs.getMonth() + 1).padStart(2, '0')}-${String(bs.getDate()).padStart(2, '0')}` === dateStr;
+          const be = new Date(b.end);
+          const ds = toDateStr(bs);
+          if (ds !== dateStr) return null;
+          const sMin = bs.getHours() * 60 + bs.getMinutes();
+          const eMin = be.getHours() * 60 + be.getMinutes();
+          return { startMin: sMin, endMin: eMin > sMin ? eMin : 24 * 60 - 1, kind: b.kind, label: b.label };
         })
-      : [];
+        .filter(Boolean)
+    : [];
 
-    dayGigs.forEach(gig => {
-      const pre = autoBlocks.find(b => b.gig_id === gig.id && b.kind === 'travel_out');
-      const post = autoBlocks.find(b => b.gig_id === gig.id && b.kind === 'travel_home');
-      const fmt = (iso) => new Date(iso).toTimeString().substring(0, 5);
+  // Grid dimensions (match Week view exactly so switching views feels seamless)
+  const HOUR_HEIGHT = 36;
+  const TIME_COL_PX = 36;
+  const GRID_HEIGHT = 24 * HOUR_HEIGHT;
 
-      if (pre) {
-        html += `<div title="${escapeHtml(pre.label)}" style="padding:6px 10px;margin:4px 0;background:rgba(240,165,0,.08);border-left:3px solid var(--accent);border-radius:6px;font-size:11px;color:var(--text-2);">
-          🚗 Travel + load-in · ${fmt(pre.start)} to ${fmt(pre.end)}
-        </div>`;
+  // Column-packer (same as Week but operating on a single day's events)
+  timedEvents.sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+  const cols = [];
+  timedEvents.forEach(ev => {
+    let placed = false;
+    for (let i = 0; i < cols.length; i++) {
+      if (cols[i][cols[i].length - 1].endMin <= ev.startMin) {
+        ev._col = i;
+        cols[i].push(ev);
+        placed = true;
+        break;
       }
-      html += `<div class="gi" onclick="openGigDetail('${gig.id}')">
-        <div style="display:flex;align-items:flex-start;gap:14px;">
-          <div class="gdb">
-            <div class="gdd" style="font-size:14px;">${formatTime(gig.start_time)}</div>
-          </div>
-          <div style="flex:1;">
-            <div class="gt">${escapeHtml(gig.band_name)}</div>
-            <div class="gv">${escapeHtml(gig.venue_name)}</div>
-            ${gig.fee ? `<div class="gf">£${parseFloat(gig.fee).toFixed(0)}</div>` : ''}
-          </div>
-        </div>
-      </div>`;
-      if (post) {
-        html += `<div title="${escapeHtml(post.label)}" style="padding:6px 10px;margin:4px 0;background:rgba(88,166,255,.08);border-left:3px solid var(--info);border-radius:6px;font-size:11px;color:var(--text-2);">
-          📦 Pack-down + drive home · ${fmt(post.start)} to ${fmt(post.end)}
-        </div>`;
-      }
-    });
+    }
+    if (!placed) { ev._col = cols.length; cols.push([ev]); }
+  });
+  timedEvents.forEach(ev => {
+    let active = 0;
+    cols.forEach(c => { if (c.some(o => o.startMin < ev.endMin && o.endMin > ev.startMin)) active += 1; });
+    ev._cols = Math.max(active, 1);
+  });
 
-    html += `<div style="margin-top:16px;padding:8px 10px;background:var(--card);border:1px dashed var(--border);border-radius:6px;font-size:11px;color:var(--text-3);text-align:center;">
-      Travel windows default to 60min each way + 30min load-in and pack-down. Tune in Settings.
-    </div>`;
+  // Header: prev / day label / next + Today button
+  let html = `<div style="padding:16px 16px 0;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <button onclick="prevCalendarDay()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">&#8249;</button>
+      <div style="font-size:14px;font-weight:600;color:var(--text);">${currentDate.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+      <button onclick="nextCalendarDay()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">&#8250;</button>
+    </div>
+    <button onclick="goCalendarToday()" style="width:100%;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);color:var(--accent);border-radius:6px;padding:8px;font-size:12px;font-weight:600;margin-bottom:12px;cursor:pointer;">Today</button>
+  </div>`;
+
+  // Day header strip (mirrors Week's SUN/MON/... row but with the single day)
+  const hdrBg = isToday ? 'var(--accent)' : 'transparent';
+  const hdrCol = isToday ? '#000' : 'var(--text)';
+  html += `<div style="display:grid;grid-template-columns:${TIME_COL_PX}px 1fr;background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+    <div></div>
+    <div style="text-align:center;padding:6px 2px;background:${hdrBg};color:${hdrCol};border-left:1px solid var(--border);font-size:10px;font-weight:600;">
+      <div style="text-transform:uppercase;letter-spacing:0.5px;opacity:${isToday ? 1 : 0.7};">${dd.label}</div>
+      <div style="font-size:14px;font-weight:700;margin-top:2px;">${dd.dayNum}</div>
+    </div>
+  </div>`;
+
+  // All-day band: ALWAYS render to keep layout stable (same as Week view fix)
+  html += `<div style="display:grid;grid-template-columns:${TIME_COL_PX}px 1fr;background:var(--surface);border-bottom:1px solid var(--border);">
+    <div style="font-size:9px;color:var(--text-3);text-align:right;padding:4px 4px 0;line-height:1;">all<br/>day</div>
+    <div style="border-left:1px solid var(--border);padding:3px 4px;min-height:28px;max-height:72px;display:flex;flex-direction:column;gap:2px;overflow:hidden;">`;
+  allDayItems.slice(0, 3).forEach(it => {
+    let bg = 'rgba(240,165,0,.18)', border = 'var(--accent)', col = 'var(--accent)', click = '';
+    if (it.kind === 'pin') {
+      const isNudge = it.isNudge;
+      bg = isNudge ? 'rgba(240,165,0,.18)' : 'rgba(66,133,244,.18)';
+      border = isNudge ? 'var(--accent)' : '#4285F4';
+      col = isNudge ? 'var(--accent)' : '#4285F4';
+      click = isNudge ? ` onclick="openCalendarNudgeByEventId('${String(it.id).replace(/'/g, "\\'")}')"` : '';
+    } else if (it.kind === 'blocked') {
+      bg = 'rgba(230,70,70,.16)'; border = 'var(--danger)'; col = 'var(--danger)';
+    } else if (it.kind === 'gig') {
+      click = ` onclick="openGigDetail('${String(it.id).replace(/'/g, "\\'")}')"`;
+    }
+    html += `<div${click} style="background:${bg};border-left:2px solid ${border};color:${col};font-size:10px;padding:2px 6px;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:${click ? 'pointer' : 'default'};line-height:1.4;" title="${escapeHtml(it.label)}">${escapeHtml(it.label)}</div>`;
+  });
+  if (allDayItems.length > 3) {
+    html += `<div style="font-size:9px;color:var(--text-3);padding-left:4px;">+${allDayItems.length - 3} more</div>`;
   }
+  html += `</div></div>`;
 
-  if (dayPins.length > 0) {
-    const hasNudge = dayPins.some(p => window._calendarNudgesById && window._calendarNudgesById[p.id]);
-    html += `<div style="margin-top:16px;">
-      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-        <span style="width:8px;height:8px;border-radius:2px;background:${hasNudge ? 'var(--accent)' : '#4285F4'};display:inline-block;"></span>
-        Google Calendar
-      </div>`;
-    dayPins.forEach(p => { html += renderGooglePinCard(p, { mode: 'day' }); });
-    html += `</div>`;
+  // Time grid: background hour rows + absolute-positioned events
+  html += `<div id="dayTimeGrid" style="position:relative;background:var(--bg);">`;
+
+  // Background hour rows
+  html += `<div style="display:grid;grid-template-columns:${TIME_COL_PX}px 1fr;">`;
+  for (let h = 0; h < 24; h++) {
+    const label = `${String(h).padStart(2, '0')}:00`;
+    html += `<div style="height:${HOUR_HEIGHT}px;border-top:1px solid var(--border);font-size:9px;color:var(--text-3);text-align:right;padding:2px 4px 0;box-sizing:border-box;">${label}</div>`;
+    html += `<div onclick="openDayActionSheet('${dateStr}')" style="height:${HOUR_HEIGHT}px;border-top:1px solid var(--border);border-left:1px solid var(--border);cursor:pointer;box-sizing:border-box;"></div>`;
   }
-
   html += `</div>`;
+
+  // Event layer: absolutely positioned to the right of the time column
+  html += `<div style="position:absolute;top:0;left:${TIME_COL_PX}px;right:0;height:${GRID_HEIGHT}px;pointer-events:none;">`;
+
+  // Travel halos first (behind gig blocks)
+  autoBlocks.forEach(ab => {
+    const top = (ab.startMin / 60) * HOUR_HEIGHT;
+    const height = Math.max(((ab.endMin - ab.startMin) / 60) * HOUR_HEIGHT, 6);
+    const bg = ab.kind === 'travel_out' ? 'rgba(240,165,0,.10)' : 'rgba(88,166,255,.10)';
+    const border = ab.kind === 'travel_out' ? 'rgba(240,165,0,.35)' : 'rgba(88,166,255,.35)';
+    const icon = ab.kind === 'travel_out' ? '&#128663;' : '&#128230;';
+    html += `<div title="${escapeHtml(ab.label || '')}" style="position:absolute;top:${top}px;height:${height}px;left:1px;right:1px;background:${bg};border-left:2px dashed ${border};border-radius:3px;pointer-events:none;padding:2px 6px;font-size:9px;color:var(--text-3);overflow:hidden;line-height:1.3;box-sizing:border-box;">
+      ${height > 18 ? `${icon} ${escapeHtml(ab.label || (ab.kind === 'travel_out' ? 'Travel + load-in' : 'Pack-down + drive home'))}` : ''}
+    </div>`;
+  });
+
+  // Timed events with column packing
+  timedEvents.forEach(ev => {
+    const top = (ev.startMin / 60) * HOUR_HEIGHT;
+    const clampedEnd = ev.crossMidnight ? 24 * 60 - 1 : ev.endMin;
+    const height = Math.max(((clampedEnd - ev.startMin) / 60) * HOUR_HEIGHT, 14);
+    const evCols = ev._cols || 1;
+    const evCol = ev._col || 0;
+    const leftPct = (evCol / evCols) * 100;
+    const widthPct = (1 / evCols) * 100;
+
+    if (ev.kind === 'gig') {
+      const safeId = String(ev.id).replace(/'/g, "\\'");
+      html += `<div onclick="openGigDetail('${safeId}')" style="position:absolute;top:${top}px;height:${height}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);background:rgba(240,165,0,.22);border-left:3px solid var(--accent);border-radius:4px;padding:3px 6px;font-size:11px;color:var(--text);overflow:hidden;cursor:pointer;pointer-events:auto;box-sizing:border-box;" title="${escapeHtml(ev.label)} - ${escapeHtml(ev.sub)}">
+        <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;">${escapeHtml(ev.label)}</div>
+        ${height > 30 ? `<div style="font-size:10px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;">${escapeHtml(ev.sub)}</div>` : ''}
+        ${ev.crossMidnight ? `<div style="font-size:9px;color:var(--accent);">&#8681; continues</div>` : ''}
+      </div>`;
+    } else {
+      const safeId = String(ev.id).replace(/'/g, "\\'");
+      const isNudge = ev.isNudge;
+      const bg = isNudge ? 'rgba(240,165,0,.18)' : 'rgba(66,133,244,.18)';
+      const border = isNudge ? 'var(--accent)' : '#4285F4';
+      const click = isNudge ? ` onclick="openCalendarNudgeByEventId('${safeId}')"` : '';
+      const cursor = isNudge ? 'pointer' : 'default';
+      html += `<div${click} style="position:absolute;top:${top}px;height:${height}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);background:${bg};border-left:3px solid ${border};border-radius:4px;padding:3px 6px;font-size:11px;color:var(--text);overflow:hidden;cursor:${cursor};pointer-events:auto;box-sizing:border-box;" title="${escapeHtml(ev.label)}">
+        <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;color:${isNudge ? 'var(--accent)' : '#4285F4'};">${escapeHtml(ev.label)}</div>
+        ${height > 30 && ev.sub ? `<div style="font-size:10px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;">${escapeHtml(ev.sub)}</div>` : ''}
+      </div>`;
+    }
+  });
+
+  // Now-line if today
+  if (isToday) {
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const nowTop = (nowMin / 60) * HOUR_HEIGHT;
+    html += `<div style="position:absolute;top:${nowTop - 1}px;left:0;right:0;height:2px;background:#ff3b30;pointer-events:none;z-index:3;"></div>
+      <div style="position:absolute;top:${nowTop - 4}px;left:-4px;width:8px;height:8px;border-radius:50%;background:#ff3b30;pointer-events:none;z-index:3;"></div>`;
+  }
+
+  html += `</div></div>`; // close event layer + #dayTimeGrid
+
   return html;
 }
 
