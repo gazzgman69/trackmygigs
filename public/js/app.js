@@ -14,6 +14,44 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('scroll', setAppHeight);
 }
 
+// Desktop scroll-anywhere: on viewports wider than the 390px app column,
+// the gutters to the left and right of the centered content don't respond
+// to mouse-wheel or trackpad scroll because body is overflow:hidden and the
+// event target isn't inside .app-content / .panel-body. This listener
+// forwards any wheel event that fires outside a natively-scrollable
+// container to whichever scrollable region is currently on top (an open
+// panel-body if there is one, otherwise the active .app-content). Does
+// nothing on mobile because the gutters don't exist there, and lets the
+// event pass through untouched whenever the user is already over a
+// scrollable element so nested scroll still works as expected.
+(function enableScrollAnywhere() {
+  function findActiveScrollable() {
+    var openPanel = document.querySelector('.panel-overlay.open .panel-body');
+    if (openPanel) return openPanel;
+    var screen = document.querySelector('.screen.active .app-content')
+              || document.querySelector('.app-content');
+    return screen || null;
+  }
+  window.addEventListener('wheel', function(ev) {
+    // Ignore pinch-zoom gestures (trackpad sends wheel + ctrlKey).
+    if (ev.ctrlKey) return;
+    // Walk up from the target; if any ancestor is itself scrollable and
+    // has overflowing content, let the browser handle it natively.
+    var node = ev.target;
+    while (node && node !== document.documentElement) {
+      if (node.nodeType === 1 && node.scrollHeight > node.clientHeight) {
+        var oy = getComputedStyle(node).overflowY;
+        if (oy === 'auto' || oy === 'scroll') return;
+      }
+      node = node.parentNode;
+    }
+    var target = findActiveScrollable();
+    if (!target) return;
+    target.scrollTop += ev.deltaY;
+    ev.preventDefault();
+  }, { passive: false });
+})();
+
 // Run text scaling immediately so all screens (including auth) scale correctly
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => { if (typeof setupTextScaling === 'function') setupTextScaling(); });
