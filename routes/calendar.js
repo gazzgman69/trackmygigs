@@ -440,12 +440,25 @@ router.get('/events', async (req, res) => {
 
     const items = response.data.items || [];
 
-    // Already-imported gcal: ids (so we don't re-nudge imported events)
+    // Already-linked Google event ids. Covers both directions:
+    //   (1) Gigs pulled IN from Google Calendar (source = 'gcal:<id>')
+    //   (2) Gigs created in the app and pushed OUT to Google (google_event_id set)
+    // Missing case (2) caused the app's own pushed gigs to show up as nudges
+    // every time the Calendar screen refreshed.
     const existingGigs = await db.query(
-      "SELECT source FROM gigs WHERE user_id = $1 AND source LIKE 'gcal:%'",
+      `SELECT source, google_event_id
+         FROM gigs
+        WHERE user_id = $1
+          AND (source LIKE 'gcal:%' OR google_event_id IS NOT NULL)`,
       [req.user.id]
     );
-    const importedIds = new Set(existingGigs.rows.map(g => g.source.replace('gcal:', '')));
+    const importedIds = new Set();
+    for (const g of existingGigs.rows) {
+      if (g.google_event_id) importedIds.add(g.google_event_id);
+      if (g.source && g.source.startsWith('gcal:')) {
+        importedIds.add(g.source.slice('gcal:'.length));
+      }
+    }
 
     const candidates = items.filter(ev => !importedIds.has(ev.id));
 
