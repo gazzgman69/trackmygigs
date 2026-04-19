@@ -4714,6 +4714,16 @@ function handleQuickAction(action) {
 function openPanel(id) {
   const el = document.getElementById(id);
   if (!el) { console.warn('openPanel: panel not found', id); return; }
+  // Quick-action panels (.panel-keep-header) are launched from the bottom-nav menu
+  // and only one should be visible at a time. If another quick-action panel is
+  // already open, close it first so the new one replaces it. Without this, clicking
+  // a different bottom-row icon while a panel is open just stacks a second .open
+  // panel on top, leaving the user stuck on whatever was opened first.
+  if (el.classList.contains('panel-keep-header')) {
+    document.querySelectorAll('.panel-overlay.panel-keep-header.open').forEach(function (other) {
+      if (other !== el) other.classList.remove('open');
+    });
+  }
   el.classList.add('open');
   // Trigger render for panels that need dynamic content
   if (id === 'profile-panel') { if (typeof renderProfileScreen === 'function') renderProfileScreen(); }
