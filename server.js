@@ -80,13 +80,22 @@ function handleReload(req, res) {
   if (provided !== expected) {
     return res.status(401).json({ error: 'Invalid reload key' });
   }
-  exec('git pull origin main', { cwd: __dirname, timeout: 30000 }, (err, stdout, stderr) => {
+  // force=1 resolves the "local changes would be overwritten" case that
+  // occasionally appears on Replit when the workspace has uncommitted edits.
+  // It runs `git fetch origin && git reset --hard origin/main`, which always
+  // lands the working tree on the latest origin/main. The reload secret is
+  // enough of a gate since the only consumer is Gareth's deploy flow.
+  const force = req.query.force === '1' || req.body?.force === '1' || req.body?.force === true;
+  const cmd = force
+    ? 'git fetch origin main && git reset --hard origin/main'
+    : 'git pull origin main';
+  exec(cmd, { cwd: __dirname, timeout: 30000 }, (err, stdout, stderr) => {
     if (err) {
-      console.error('[reload] git pull failed:', err.message);
-      return res.status(500).json({ error: 'git pull failed', stderr: stderr || err.message });
+      console.error('[reload] ' + cmd + ' failed:', err.message);
+      return res.status(500).json({ error: cmd + ' failed', stderr: stderr || err.message });
     }
-    console.log('[reload] git pull output:\n' + stdout);
-    res.json({ ok: true, output: stdout.trim() });
+    console.log('[reload] ' + cmd + ' output:\n' + stdout);
+    res.json({ ok: true, mode: force ? 'force' : 'pull', output: stdout.trim() });
     // nodemon will detect the file changes from the pull and restart the
     // process automatically. If someone later switches the run command back to
     // plain `node server.js`, this endpoint still succeeds in pulling code but
