@@ -1877,8 +1877,7 @@ function buildCalendarView(content, gigsData, blockedData) {
       <div class="tb ${view === 'day' ? 'ac' : ''}" onclick="switchCalendarView('day')">Day</div>
       <div class="tb ${view === 'week' ? 'ac' : ''}" onclick="switchCalendarView('week')">Week</div>
       <div class="tb ${view === 'month' ? 'ac' : ''}" onclick="switchCalendarView('month')">Month</div>
-    </div>
-    <div id="calScreenNudgeBar" style="margin-top:12px;"></div>`;
+    </div>`;
 
   const googlePins = (layers.google && Array.isArray(window._googlePins)) ? window._googlePins : [];
   if (view === 'month') {
@@ -1888,6 +1887,14 @@ function buildCalendarView(content, gigsData, blockedData) {
   } else if (view === 'day') {
     html += renderCalendarDay(currentDate, gigsData, blockedData, googlePins);
   }
+
+  // Nudge bar moved to BELOW the grid so async inflation (when Google pins
+  // arrive and paintCalendarScreenNudgeBanner populates it) doesn't push the
+  // calendar grid down. The grid's top position is now stable across repaints
+  // regardless of whether nudges are empty or populated. Gareth was seeing
+  // "the whole calendar underneath the day/week/month bar shifts down" on
+  // every view because the bar used to sit between the toolbar and the grid.
+  html += `<div id="calScreenNudgeBar" style="margin-top:12px;"></div>`;
 
   content.innerHTML = html;
 }
