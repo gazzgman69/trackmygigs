@@ -95,12 +95,33 @@ function handleReload(req, res) {
       return res.status(500).json({ error: cmd + ' failed', stderr: stderr || err.message });
     }
     console.log('[reload] ' + cmd + ' output:\n' + stdout);
-    res.json({ ok: true, mode: force ? 'force' : 'pull', output: stdout.trim() });
-    // nodemon will detect the file changes from the pull and restart the
-    // process automatically. If someone later switches the run command back to
-    // plain `node server.js`, this endpoint still succeeds in pulling code but
-    // the process won't restart; falling back to the Replit Console flow is
-    // fine in that case.
+    // Re-read index.html into memory so HTML-only deploys take effect even
+    // when nodemon doesn't restart the process. Nodemon by default only watches
+    // .js / .json under the project root, so changes to public/index.html or
+    // public/css/*.css land on disk after `git pull` but the running process
+    // keeps serving the old cached `indexHtml` string from startup. Refreshing
+    // it here closes that gap. If anything goes wrong (file moved, perms),
+    // log and continue — the pull itself still succeeded.
+    let indexReloaded = false;
+    try {
+      let fresh = fs.readFileSync(INDEX_HTML_PATH, 'utf8');
+      fresh = fresh
+        .replace(/(href="\/css\/[^"]+\.css)(\?[^"]*)?"/g, `$1?v=${BUILD_ID}"`)
+        .replace(/(src="\/js\/[^"]+\.js)(\?[^"]*)?"/g, `$1?v=${BUILD_ID}"`);
+      indexHtml = fresh;
+      indexReloaded = true;
+    } catch (readErr) {
+      console.error('[reload] failed to re-read index.html:', readErr.message);
+    }
+    res.json({
+      ok: true,
+      mode: force ? 'force' : 'pull',
+      output: stdout.trim(),
+      indexReloaded
+    });
+    // nodemon will pick up server.js / route changes and restart automatically;
+    // for HTML/CSS-only changes, the in-memory refresh above is what makes them
+    // visible without a full restart.
   });
 }
 app.get('/api/admin/reload', handleReload);
