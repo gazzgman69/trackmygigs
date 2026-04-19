@@ -2459,8 +2459,14 @@ function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
   // Day columns start at TIME_COL_PX and divide the remaining width into 7.
   html += `<div style="position:absolute;top:0;left:${TIME_COL_PX}px;right:0;height:${GRID_HEIGHT}px;pointer-events:none;">`;
 
-  // Travel halos first so they render behind gig blocks visually
+  // Travel halos first so they render behind gig blocks visually.
+  // #138: Pack-down pill (kind=travel_home) removed per Gareth — it was
+  // colliding with the next gig and "doesn't work like this". The travel_home
+  // data is still emitted by computeAutoBlocksForGigs so isTimeAutoBlocked
+  // (availability-calendar collision warning) keeps working; only the visible
+  // pill is suppressed here.
   autoBlocks.forEach(ab => {
+    if (ab.kind === 'travel_home') return;
     const dayIdx = days.findIndex(dd => dd.dateStr === ab.dateStr);
     if (dayIdx < 0) return;
     const top = (ab.startMin / 60) * HOUR_HEIGHT;
@@ -2734,8 +2740,11 @@ function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
   // Event layer: absolutely positioned to the right of the time column
   html += `<div style="position:absolute;top:0;left:${TIME_COL_PX}px;right:0;height:${GRID_HEIGHT}px;pointer-events:none;">`;
 
-  // Travel halos first (behind gig blocks)
+  // Travel halos first (behind gig blocks). #138: skip travel_home (pack-down)
+  // — it was colliding with later gigs in dense evenings. See note in Week
+  // renderer for the rationale.
   autoBlocks.forEach(ab => {
+    if (ab.kind === 'travel_home') return;
     const top = (ab.startMin / 60) * HOUR_HEIGHT;
     const height = Math.max(((ab.endMin - ab.startMin) / 60) * HOUR_HEIGHT, 6);
     const bg = ab.kind === 'travel_out' ? 'rgba(240,165,0,.10)' : 'rgba(88,166,255,.10)';
