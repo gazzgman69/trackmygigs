@@ -1253,13 +1253,12 @@ body.theme-teal {
   transform: scale(0.9);
 }
 
-/* Responsive */
-@media (min-width: 390px) {
-  .app-container {
-    border-left: 1px solid var(--border);
-    border-right: 1px solid var(--border);
-  }
-}
+/* Responsive
+   Previously added border-left/right to .app-container above 390px to draw
+   a phone-frame outline on desktop, but the lines look like stray UI chrome
+   on a dark background. Home, Gigs, Calendar etc. now float cleanly in the
+   centered column with no visible frame, matching how the panel overlays
+   already render. */
 
 /* ── Wizard ─────────────────────────────────────────────── */
 .wizard-container {
