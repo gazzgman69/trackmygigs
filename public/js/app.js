@@ -4689,9 +4689,6 @@ function handleQuickAction(action) {
     openPanel('panel-receipt');
     initReceiptPanel();
   }
-  // 'triage-enquiry' retired — see public/js/ai.js header note. The app has no
-  // inbox or contact-form intake, so a paste-an-enquiry modal is strictly
-  // worse UX than the user asking ChatGPT directly.
 }
 
 // ── Panel open / close ────────────────────────────────────────────────────────

@@ -15,11 +15,6 @@
 //   aiSanityCheck(fields, cb)   — runs on gig save; warns before submit
 //   aiChordProNormalise()       — normalises messy chord text in ChordPro tab
 //
-// Feature 10 (Enquiry Triage) was retired: the app has no inbox or contact
-// form intake, so a paste-an-enquiry modal asks the user to copy from Gmail
-// into TMG just to get a draft, which is strictly worse UX than asking
-// ChatGPT directly. See server-side note in routes/ai.js.
-//
 // All calls tolerate the /api/ai endpoint returning 503 (AI disabled) by
 // showing a friendly message rather than crashing the screen.
 
@@ -688,35 +683,6 @@
       result.appendChild(card);
     });
   }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // FEATURE 10 — Booking Enquiry Triage — RETIRED
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Removed along with its nav-quick-btn in index.html and the dispatcher
-  // branch in app.js. Reason: TMG has no inbox and no contact-form intake, so
-  // a paste-an-enquiry modal asks the user to copy from Gmail and paste into
-  // the app just to get a draft reply. That is strictly worse UX than asking
-  // ChatGPT directly, so the feature stays retired until a proper enquiry
-  // intake (public booking form or inbound email) is built. Server endpoint
-  // POST /api/ai/triage-enquiry was deleted in the same commit.
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // AI Tools launcher — RETIRED (#139)
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Each of the remaining 9 AI features lives only in its natural home:
-  //   1. Smart Paste to Gig    → Gig wizard header
-  //   2. Scan Receipt          → Receipts screen "Add with AI"
-  //   3. Dep Offer Replies     → Per-offer "Draft reply with AI" in Offers
-  //   4. Set List Generator    → Repertoire / Set lists
-  //   5. Invoice Chase         → Invoice card "AI draft chase email"
-  //   6. Bio Writer            → EPK panel
-  //   7. Monthly Insight       → Finance screen header
-  //   8. Sanity Check          → Auto on Save Gig (no UI)
-  //   9. ChordPro Normaliser   → Repertoire
-  //
-  // The hub modal was scaffolding from the QA push when the features landed
-  // together. Gareth: "I imagined these AI features being integrated in the
-  // correct places rather than all in one place being able to choose."
 
   // Probe /status once on load; if AI is disabled, window.__aiEnabled stays
   // false and UI hooks can skip showing buttons. We still export the functions

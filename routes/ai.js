@@ -573,16 +573,6 @@ Rules:
   }
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// FEATURE 10 — Booking Enquiry Triage — RETIRED
-// ═════════════════════════════════════════════════════════════════════════════
-// POST /api/ai/triage-enquiry was deleted along with its frontend modal and
-// nav-quick-btn. TMG has no inbox or contact-form intake, so a paste-an-
-// enquiry endpoint asks the user to copy from Gmail and POST into the app
-// just to get a draft reply. That is strictly worse UX than asking ChatGPT
-// directly, so the feature stays retired until a proper enquiry intake
-// (public booking form or inbound email) is built.
-
 // ── Status endpoint so the frontend can feature-detect ──────────────────────
 router.get('/status', (req, res) => {
   res.json({
