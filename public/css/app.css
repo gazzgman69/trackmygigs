@@ -876,20 +876,6 @@ body {
 }
 .cd.empty { cursor: default; }
 .cd.empty:hover { background: transparent; }
-.cd-dots {
-  display: flex;
-  gap: 2px;
-  justify-content: center;
-  position: absolute;
-  bottom: 2px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-.cd-dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-}
 
 /* Month view: Google-style cells with date number + event pills */
 .cd.cd-month {

@@ -902,9 +902,9 @@ async function triggerSyncNow() {
 
     if (!resp.ok || data.ok === false) {
       if (data.needs_reauth) {
-        toastify('Google Calendar needs re-connecting. Open Settings.', true);
+        toastify('Google Calendar needs re-connecting. Head to Settings to reconnect.', true);
       } else {
-        toastify(data.message || 'Sync failed. Please try again.', true);
+        toastify(data.message || 'Sync didn\u2019t work. Check your connection and try again.', true);
       }
       return data;
     }
@@ -929,7 +929,7 @@ async function triggerSyncNow() {
     if (pulled.cancelled) parts.push(`${pulled.cancelled} cancelled`);
     if (pushed.ok) parts.push(`${pushed.ok} pushed to Google`);
     if (pushed.failed) parts.push(`${pushed.failed} failed`);
-    toastify(parts.length ? `Sync complete — ${parts.join(', ')}` : 'Sync complete — already up to date');
+    toastify(parts.length ? `Sync complete: ${parts.join(', ')}` : 'Sync complete: already up to date');
 
     // Update any visible last-synced indicator
     const el = document.getElementById('calendarLastSyncLabel');
@@ -937,7 +937,7 @@ async function triggerSyncNow() {
     return data;
   } catch (err) {
     console.error('Sync-now failed:', err);
-    toastify('Sync failed. Check your connection.', true);
+    toastify('Couldn\u2019t sync. Check your connection and try again.', true);
     return null;
   }
 }
@@ -4234,7 +4234,7 @@ function searchVenues(query) {
       if (!resp.ok) {
         list.style.display = 'none';
         if (typeof showToast === 'function') {
-          showToast('Venue lookup unavailable. Type the venue name manually.');
+          showToast('Venue lookup isn\u2019t working right now. Just type the venue name.');
         }
         return;
       }
@@ -4258,7 +4258,7 @@ function searchVenues(query) {
       console.error('Venue search error:', err);
       list.style.display = 'none';
       if (typeof showToast === 'function') {
-        showToast('Venue lookup unavailable. Type the venue name manually.');
+        showToast('Venue lookup isn\u2019t working right now. Just type the venue name.');
       }
     }
   }, 300);
@@ -4283,7 +4283,7 @@ async function selectVenue(placeId, name) {
     const resp = await fetch(`/api/places/detail?place_id=${encodeURIComponent(placeId)}`);
     if (!resp.ok) {
       if (typeof showToast === 'function') {
-        showToast('Address lookup unavailable. Venue name saved.');
+        showToast('Address lookup hit a snag, but the venue name is saved.');
       }
       return;
     }
@@ -4318,7 +4318,7 @@ async function selectVenue(placeId, name) {
   } catch (err) {
     console.error('Venue detail error:', err);
     if (typeof showToast === 'function') {
-      showToast('Address lookup unavailable. Venue name saved.');
+      showToast('Address lookup hit a snag, but the venue name is saved.');
     }
   }
 }
