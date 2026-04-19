@@ -3660,7 +3660,7 @@ async function selectVenue(placeId, name) {
           const distResp = await fetch(`/api/distance?origin=${encodeURIComponent(homePostcode)}&destination=${encodeURIComponent(addr)}`);
           const distData = await distResp.json();
           if (distData.miles) {
-            addrMeta.textContent = `\u2713 Full address saved \u00B7 ${distData.miles} miles from home \u00B7 ~${distData.duration}`;
+            addrMeta.textContent = `\u2713 Full address saved \u00B7 ${distData.miles * 2} miles round trip \u00B7 ~${distData.duration}`;
             gigWizardData.mileage_miles = distData.miles;
           }
         } catch (e) {
@@ -4023,6 +4023,12 @@ function handleQuickAction(action) {
   } else if (action === 'receipt') {
     openPanel('panel-receipt');
     initReceiptPanel();
+  } else if (action === 'triage-enquiry') {
+    if (typeof window.aiEnquiryTriage === 'function') {
+      window.aiEnquiryTriage();
+    } else {
+      showToast('Triage feature not available');
+    }
   }
 }
 
@@ -4683,6 +4689,7 @@ async function openGigDetail(gigId) {
         </div>
         <div style="text-align:center;font-size:10px;color:var(--text-3);margin-top:6px;">Set up your review links in Profile > Edit Profile</div>
       </div>
+      ${gig.status !== 'cancelled' ? `<button style="width:100%;background:var(--card);color:var(--warning);border:1px solid var(--warning);border-radius:24px;padding:12px;font-size:14px;font-weight:500;cursor:pointer;margin-bottom:8px;" onclick="cancelGig('${gig.id}')">Cancel gig</button>` : `<div style="width:100%;background:var(--card);color:var(--text-3);border:1px solid var(--border);border-radius:24px;padding:12px;font-size:14px;font-weight:500;text-align:center;margin-bottom:8px;">Gig is cancelled</div>`}
       <button style="width:100%;background:var(--card);color:var(--danger);border:1px solid var(--danger);border-radius:24px;padding:12px;font-size:14px;font-weight:500;cursor:pointer;" onclick="closePanel('panel-gig-detail');deleteGig('${gig.id}')">Delete gig</button>
     </div>
   `;
@@ -4930,6 +4937,40 @@ async function markGigDetailsComplete(gigId) {
     showToast('Marked as complete');
   } catch (e) {
     console.error('Mark complete error:', e);
+  }
+}
+
+async function cancelGig(gigId) {
+  const ok = await showConfirm('This will mark the gig as cancelled. You can still invoice for it if needed.', {
+    title: 'Cancel this gig?',
+    confirmLabel: 'Cancel gig',
+    danger: false,
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/gigs/${gigId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'cancelled' }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error('Cancel gig failed:', res.status, err);
+      showToast('Failed to cancel gig');
+      return;
+    }
+    // Update cache
+    window._cachedGigs = (window._cachedGigs || []).map(g =>
+      g.id === gigId ? { ...g, status: 'cancelled' } : g
+    );
+    window._cachedStats = null;
+    persistCachedCalendar();
+    // Re-render gig detail to show updated status
+    await openGigDetail(gigId);
+    showToast('Gig cancelled');
+  } catch (e) {
+    console.error('Cancel gig error:', e);
+    showToast('Failed to cancel gig');
   }
 }
 
@@ -6729,9 +6770,10 @@ async function chaseInvoicePayment(invoiceId) {
 
     const mailto = `mailto:${encodeURIComponent(toAddr)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
     window.location.href = mailto;
+    showToast('Opening email client...');
   } catch (e) {
     console.error('Chase invoice error:', e);
-    alert('Could not build reminder email: ' + (e.message || 'unknown error'));
+    showToast('Could not build reminder email: ' + (e.message || 'unknown error'));
   }
 }
 
@@ -8052,6 +8094,15 @@ function initInvoicePanel() {
   const invNumEl = document.getElementById('invInvoiceNumber');
   if (invNumEl && !invNumEl.value) invNumEl.value = invNum;
 
+  // Set default due date to today + 30 days
+  const dueDateEl = document.getElementById('invDueDate');
+  if (dueDateEl && !dueDateEl.value) {
+    const today = new Date();
+    const dueDate = new Date(today);
+    dueDate.setDate(dueDate.getDate() + 30);
+    dueDateEl.value = dueDate.toISOString().split('T')[0];
+  }
+
   updateInvoicePreview();
 
   document.getElementById('sendInvoiceBtn').onclick = submitInvoice;
@@ -8091,12 +8142,11 @@ function onGigSelected() {
   if (!gig) return;
 
   // Auto-fill fields from the linked gig.
-  // "Bill to" is the party owing the money (venue/booker), NOT the band
-  // performing. We prefer venue_name and only fall back to band_name if no
-  // venue has been captured yet.
+  // "Bill to" is the band/client who booked you (who's paying the invoice).
+  // We prefer band_name and only fall back to venue_name if no band name exists.
   const billToEl = document.getElementById('invBillTo');
   if (billToEl && !billToEl.value) {
-    billToEl.value = gig.venue_name || gig.band_name || '';
+    billToEl.value = gig.band_name || gig.venue_name || '';
   }
   if (gig.fee) {
     document.getElementById('invAmount').value = parseFloat(gig.fee).toFixed(2);
@@ -8112,9 +8162,8 @@ function onGigSelected() {
   const descDefault = `Performing ${firstInstrument}${venuePart ? ' at ' + venuePart : ''}${gig.date ? ', ' + dateStr : ''}`;
   document.getElementById('invDesc').value = descDefault;
 
-  // Update preview with gig info
-  const gigLabel = [gig.venue_name, dateStr].filter(Boolean).join(' / ');
-  document.getElementById('invPreviewGig').textContent = gigLabel;
+  // Update preview with gig info (date only, venue is shown separately)
+  document.getElementById('invPreviewGig').textContent = dateStr || 'No date set';
 
   // Show venue in preview: name + address
   const venueRow = document.getElementById('invPreviewVenueRow');

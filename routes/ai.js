@@ -59,11 +59,12 @@ const HMRC_CATEGORIES = [
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/extract-gig', async (req, res) => {
   if (!aiGuard(res)) return;
-  const text = String(req.body?.text || '').slice(0, 6000);
-  if (!text.trim()) {
-    return res.status(400).json({ error: 'Paste some booking text first.' });
-  }
-  const system = `You extract musician gig booking details from unstructured text (emails, WhatsApp, contracts, notes).
+  try {
+    const text = String(req.body?.text || '').slice(0, 6000);
+    if (!text.trim()) {
+      return res.status(400).json({ error: 'Paste some booking text first.' });
+    }
+    const system = `You extract musician gig booking details from unstructured text (emails, WhatsApp, contracts, notes).
 
 Return ONLY a single JSON object with this shape. Use null when a field is not present in the text. Do NOT invent.
 
@@ -87,8 +88,12 @@ Return ONLY a single JSON object with this shape. Use null when a field is not p
 Date rules: today is ${new Date().toISOString().substring(0, 10)}. Interpret "Saturday" or "next Friday" relative to today. If only a date is given without a year, assume the nearest future occurrence.
 
 Return ONLY the JSON. No prose, no markdown.`;
-  const data = await callHaiku({ system, user: text, json: true, maxTokens: 800 });
-  sendAIResult(res, data);
+    const data = await callHaiku({ system, user: text, json: true, maxTokens: 800 });
+    sendAIResult(res, data);
+  } catch (err) {
+    console.error(`[ai/extract-gig] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -98,15 +103,16 @@ Return ONLY the JSON. No prose, no markdown.`;
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/extract-receipt', async (req, res) => {
   if (!aiGuard(res)) return;
-  const imageB64 = req.body?.image;
-  const mediaType = req.body?.mediaType || 'image/jpeg';
-  const textInput = req.body?.text;
+  try {
+    const imageB64 = req.body?.image;
+    const mediaType = req.body?.mediaType || 'image/jpeg';
+    const textInput = req.body?.text;
 
-  if (!imageB64 && !textInput) {
-    return res.status(400).json({ error: 'Provide a receipt image or pasted text.' });
-  }
+    if (!imageB64 && !textInput) {
+      return res.status(400).json({ error: 'Provide a receipt image or pasted text.' });
+    }
 
-  const system = `You extract expense receipt data for a UK-based self-employed musician doing HMRC self-assessment.
+    const system = `You extract expense receipt data for a UK-based self-employed musician doing HMRC self-assessment.
 
 Return ONLY a single JSON object with this shape. Use null when unknown.
 
@@ -134,15 +140,19 @@ If amounts are ambiguous, prefer the final total. If VAT is not separately itemi
 
 Return ONLY the JSON. No prose, no markdown.`;
 
-  const userContent = imageB64
-    ? [
-        { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageB64 } },
-        { type: 'text', text: 'Extract the receipt fields as JSON.' },
-      ]
-    : String(textInput).slice(0, 4000);
+    const userContent = imageB64
+      ? [
+          { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageB64 } },
+          { type: 'text', text: 'Extract the receipt fields as JSON.' },
+        ]
+      : String(textInput).slice(0, 4000);
 
-  const data = await callHaiku({ system, user: userContent, json: true, maxTokens: 600 });
-  sendAIResult(res, data);
+    const data = await callHaiku({ system, user: userContent, json: true, maxTokens: 600 });
+    sendAIResult(res, data);
+  } catch (err) {
+    console.error(`[ai/extract-receipt] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -152,30 +162,31 @@ Return ONLY the JSON. No prose, no markdown.`;
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/draft-dep-reply', async (req, res) => {
   if (!aiGuard(res)) return;
-  const offerText = String(req.body?.offerText || '').slice(0, 2000);
-  const gigDate = req.body?.gigDate || null;
-  const userName = req.user.name || 'the musician';
+  try {
+    const offerText = String(req.body?.offerText || '').slice(0, 2000);
+    const gigDate = req.body?.gigDate || null;
+    const userName = req.user.name || 'the musician';
 
-  if (!offerText.trim()) {
-    return res.status(400).json({ error: 'Pass the offer text.' });
-  }
+    if (!offerText.trim()) {
+      return res.status(400).json({ error: 'Pass the offer text.' });
+    }
 
-  // Pull the user's calendar for the target date so the AI can check for
-  // clashes without assuming anything.
-  let sameDayGigs = [];
-  if (gigDate) {
-    try {
-      const r = await db.query(
-        `SELECT band_name, venue_name, start_time FROM gigs
-         WHERE user_id = $1 AND date = $2 AND status IN ('confirmed', 'enquiry')`,
-        [req.user.id, gigDate]
-      );
-      sameDayGigs = r.rows;
-    } catch (_) { /* non-fatal */ }
-  }
-  const alreadyBooked = sameDayGigs.length > 0;
+    // Pull the user's calendar for the target date so the AI can check for
+    // clashes without assuming anything.
+    let sameDayGigs = [];
+    if (gigDate) {
+      try {
+        const r = await db.query(
+          `SELECT band_name, venue_name, start_time FROM gigs
+           WHERE user_id = $1 AND date = $2 AND status IN ('confirmed', 'enquiry')`,
+          [req.user.id, gigDate]
+        );
+        sameDayGigs = r.rows;
+      } catch (_) { /* non-fatal */ }
+    }
+    const alreadyBooked = sameDayGigs.length > 0;
 
-  const system = `You draft three reply options to a dep (sub) gig offer that a working musician has just received.
+    const system = `You draft three reply options to a dep (sub) gig offer that a working musician has just received.
 
 Write in the first person, warm but direct, suited for WhatsApp or email. Short (1-3 sentences each). No em dashes.
 
@@ -193,8 +204,12 @@ Context:
 
 No prose outside the JSON. No markdown fences.`;
 
-  const data = await callHaiku({ system, user: offerText, json: true, maxTokens: 500 });
-  sendAIResult(res, data);
+    const data = await callHaiku({ system, user: offerText, json: true, maxTokens: 500 });
+    sendAIResult(res, data);
+  } catch (err) {
+    console.error(`[ai/draft-dep-reply] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -204,26 +219,27 @@ No prose outside the JSON. No markdown fences.`;
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/generate-setlist', async (req, res) => {
   if (!aiGuard(res)) return;
-  const durationMinutes = parseInt(req.body?.durationMinutes, 10) || 90;
-  const venueType = String(req.body?.venueType || 'pub').slice(0, 50);
-  const crowd = String(req.body?.crowd || '').slice(0, 200);
-  const mood = String(req.body?.mood || '').slice(0, 200);
+  try {
+    const durationMinutes = parseInt(req.body?.durationMinutes, 10) || 90;
+    const venueType = String(req.body?.venueType || 'pub').slice(0, 50);
+    const crowd = String(req.body?.crowd || '').slice(0, 200);
+    const mood = String(req.body?.mood || '').slice(0, 200);
 
-  const songs = await db.query(
-    `SELECT id, title, artist, key, tempo, duration, tags
-     FROM songs WHERE user_id = $1 ORDER BY title ASC`,
-    [req.user.id]
-  );
+    const songs = await db.query(
+      `SELECT id, title, artist, key, tempo, duration, tags
+       FROM songs WHERE user_id = $1 ORDER BY title ASC`,
+      [req.user.id]
+    );
 
-  if (songs.rows.length === 0) {
-    return res.status(400).json({ error: 'Add songs to your Repertoire first.' });
-  }
+    if (songs.rows.length === 0) {
+      return res.status(400).json({ error: 'Add songs to your Repertoire first.' });
+    }
 
-  const songList = songs.rows
-    .map(s => `  {"id": ${s.id}, "title": ${JSON.stringify(s.title)}, "artist": ${JSON.stringify(s.artist || '')}, "key": ${JSON.stringify(s.key || '')}, "tempo": ${s.tempo || 'null'}, "duration_seconds": ${s.duration || 'null'}}`)
-    .join(',\n');
+    const songList = songs.rows
+      .map(s => `  {"id": ${s.id}, "title": ${JSON.stringify(s.title)}, "artist": ${JSON.stringify(s.artist || '')}, "key": ${JSON.stringify(s.key || '')}, "tempo": ${s.tempo || 'null'}, "duration_seconds": ${s.duration || 'null'}}`)
+      .join(',\n');
 
-  const system = `You build a musician's live set from their existing repertoire.
+    const system = `You build a musician's live set from their existing repertoire.
 
 Return ONLY a JSON object:
 
@@ -244,7 +260,7 @@ Rules:
 - Use ONLY song_ids from the repertoire provided.
 - Do not invent songs.`;
 
-  const userPrompt = `Venue type: ${venueType}
+    const userPrompt = `Venue type: ${venueType}
 Target duration: ${durationMinutes} minutes
 Crowd notes: ${crowd || '(none)'}
 Mood notes: ${mood || '(none)'}
@@ -256,8 +272,12 @@ ${songList}
 
 Build the set.`;
 
-  const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 2000 });
-  sendAIResult(res, data);
+    const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 2000 });
+    sendAIResult(res, data);
+  } catch (err) {
+    console.error(`[ai/generate-setlist] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -267,26 +287,27 @@ Build the set.`;
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/draft-invoice-chase', async (req, res) => {
   if (!aiGuard(res)) return;
-  const invoiceId = String(req.body?.invoiceId || '').trim();
-  if (!invoiceId) return res.status(400).json({ error: 'Pass an invoiceId.' });
-  // Validate UUID shape so Postgres doesn't throw type errors
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(invoiceId)) {
-    return res.status(400).json({ error: 'invoiceId must be a UUID.' });
-  }
+  try {
+    const invoiceId = String(req.body?.invoiceId || '').trim();
+    if (!invoiceId) return res.status(400).json({ error: 'Pass an invoiceId.' });
+    // Validate UUID shape so Postgres doesn't throw type errors
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(invoiceId)) {
+      return res.status(400).json({ error: 'invoiceId must be a UUID.' });
+    }
 
-  const r = await db.query(
-    `SELECT id, invoice_number, band_name, amount, due_date, status, recipient_email, notes
-     FROM invoices WHERE id = $1 AND user_id = $2`,
-    [invoiceId, req.user.id]
-  );
-  if (r.rows.length === 0) return res.status(404).json({ error: 'Invoice not found.' });
+    const r = await db.query(
+      `SELECT id, invoice_number, band_name, amount, due_date, status, recipient_email, notes
+       FROM invoices WHERE id = $1 AND user_id = $2`,
+      [invoiceId, req.user.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Invoice not found.' });
 
-  const invoice = r.rows[0];
-  const today = new Date();
-  const due = invoice.due_date ? new Date(invoice.due_date) : null;
-  const daysOverdue = due ? Math.max(0, Math.floor((today - due) / 86400000)) : 0;
+    const invoice = r.rows[0];
+    const today = new Date();
+    const due = invoice.due_date ? new Date(invoice.due_date) : null;
+    const daysOverdue = due ? Math.max(0, Math.floor((today - due) / 86400000)) : 0;
 
-  const system = `You draft three payment chase emails for an invoice that is overdue.
+    const system = `You draft three payment chase emails for an invoice that is overdue.
 
 Return ONLY a JSON object:
 
@@ -304,7 +325,7 @@ Rules:
 - Subjects under 60 characters.
 - Sign off with "${req.user.name || 'Best'}".`;
 
-  const userPrompt = `Invoice: #${invoice.invoice_number || invoice.id}
+    const userPrompt = `Invoice: #${invoice.invoice_number || invoice.id}
 Band: ${invoice.band_name || '(not specified)'}
 Bill to: ${invoice.recipient_email || '(unknown)'}
 Amount: £${invoice.amount}
@@ -314,8 +335,12 @@ Original notes: ${invoice.notes || '(none)'}
 
 Draft three chase versions.`;
 
-  const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 1200 });
-  sendAIResult(res, data);
+    const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 1200 });
+    sendAIResult(res, data);
+  } catch (err) {
+    console.error(`[ai/draft-invoice-chase] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -325,17 +350,18 @@ Draft three chase versions.`;
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/generate-bio', async (req, res) => {
   if (!aiGuard(res)) return;
-  const facts = String(req.body?.facts || '').slice(0, 3000);
-  const style = String(req.body?.style || 'warm and professional').slice(0, 80);
+  try {
+    const facts = String(req.body?.facts || '').slice(0, 3000);
+    const style = String(req.body?.style || 'warm and professional').slice(0, 80);
 
-  const u = await db.query(
-    `SELECT name, display_name, instruments, home_postcode, public_slug FROM users WHERE id = $1`,
-    [req.user.id]
-  );
-  const user = u.rows[0] || {};
-  const instruments = Array.isArray(user.instruments) ? user.instruments.join(', ') : '';
+    const u = await db.query(
+      `SELECT name, display_name, instruments, home_postcode, public_slug FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const user = u.rows[0] || {};
+    const instruments = Array.isArray(user.instruments) ? user.instruments.join(', ') : '';
 
-  const system = `You write musician EPK bios in three lengths. No em dashes. No cliches like "passionate" or "unique sound". Concrete details only.
+    const system = `You write musician EPK bios in three lengths. No em dashes. No cliches like "passionate" or "unique sound". Concrete details only.
 
 Return ONLY a JSON object:
 
@@ -347,7 +373,7 @@ Return ONLY a JSON object:
 
 Tone: ${style}. Third-person unless the facts clearly indicate otherwise. Lead with the strongest concrete credit or fact. Avoid superlatives. Mention venues, artists worked with, or measurable reach when possible.`;
 
-  const userPrompt = `Musician profile:
+    const userPrompt = `Musician profile:
 Name: ${user.display_name || user.name || '(unknown)'}
 Instruments: ${instruments || '(unspecified)'}
 Home area: ${user.home_postcode || '(unspecified)'}
@@ -358,8 +384,12 @@ ${facts || '(none provided; use only the profile above)'}
 
 Write the three bios.`;
 
-  const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 1400 });
-  sendAIResult(res, data);
+    const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 1400 });
+    sendAIResult(res, data);
+  } catch (err) {
+    console.error(`[ai/generate-bio] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -369,37 +399,38 @@ Write the three bios.`;
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/month-summary', async (req, res) => {
   if (!aiGuard(res)) return;
-  const year = parseInt(req.body?.year, 10) || new Date().getFullYear();
-  const month = parseInt(req.body?.month, 10) || (new Date().getMonth() + 1);
-  const startISO = `${year}-${String(month).padStart(2, '0')}-01`;
-  const endISO = new Date(year, month, 0).toISOString().substring(0, 10);
+  try {
+    const year = parseInt(req.body?.year, 10) || new Date().getFullYear();
+    const month = parseInt(req.body?.month, 10) || (new Date().getMonth() + 1);
+    const startISO = `${year}-${String(month).padStart(2, '0')}-01`;
+    const endISO = new Date(year, month, 0).toISOString().substring(0, 10);
 
-  const [gigsR, invR, expR] = await Promise.all([
-    db.query(
-      `SELECT date, band_name, venue_name, fee, status FROM gigs
-       WHERE user_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date ASC`,
-      [req.user.id, startISO, endISO]
-    ),
-    db.query(
-      `SELECT invoice_number, amount, status, due_date FROM invoices
-       WHERE user_id = $1 AND created_at::date BETWEEN $2 AND $3 ORDER BY created_at ASC`,
-      [req.user.id, startISO, endISO]
-    ),
-    db.query(
-      `SELECT category, amount, description, date FROM expenses
-       WHERE user_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date ASC`,
-      [req.user.id, startISO, endISO]
-    ).catch(() => ({ rows: [] })),
-  ]);
+    const [gigsR, invR, expR] = await Promise.all([
+      db.query(
+        `SELECT date, band_name, venue_name, fee, status FROM gigs
+         WHERE user_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date ASC`,
+        [req.user.id, startISO, endISO]
+      ),
+      db.query(
+        `SELECT invoice_number, amount, status, due_date FROM invoices
+         WHERE user_id = $1 AND created_at::date BETWEEN $2 AND $3 ORDER BY created_at ASC`,
+        [req.user.id, startISO, endISO]
+      ),
+      db.query(
+        `SELECT category, amount, description, date FROM expenses
+         WHERE user_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date ASC`,
+        [req.user.id, startISO, endISO]
+      ).catch(() => ({ rows: [] })),
+    ]);
 
-  const gigs = gigsR.rows;
-  const invoices = invR.rows;
-  const expenses = expR.rows;
+    const gigs = gigsR.rows;
+    const invoices = invR.rows;
+    const expenses = expR.rows;
 
-  const totalFees = gigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
-  const totalExpenses = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+    const totalFees = gigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
+    const totalExpenses = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
 
-  const system = `You write a short friendly insight narrative for a musician's monthly finance view. No em dashes. No corporate-speak.
+    const system = `You write a short friendly insight narrative for a musician's monthly finance view. No em dashes. No corporate-speak.
 
 Return ONLY a JSON object:
 
@@ -412,7 +443,7 @@ Return ONLY a JSON object:
 
 Use the numbers provided. Don't invent. If the month is quiet, say so plainly.`;
 
-  const userPrompt = `Month: ${year}-${String(month).padStart(2, '0')}
+    const userPrompt = `Month: ${year}-${String(month).padStart(2, '0')}
 Gigs played/booked: ${gigs.length} (total fees £${totalFees.toFixed(2)})
 Invoices issued: ${invoices.length}
 Expenses logged: ${expenses.length} (total £${totalExpenses.toFixed(2)})
@@ -422,8 +453,12 @@ ${gigs.map(g => `- ${g.date} | ${g.band_name || ''} @ ${g.venue_name || ''} | £
 
 Write the monthly insight.`;
 
-  const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 900 });
-  sendAIResult(res, data);
+    const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 900 });
+    sendAIResult(res, data);
+  } catch (err) {
+    console.error(`[ai/month-summary] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -433,32 +468,33 @@ Write the monthly insight.`;
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/sanity-check', async (req, res) => {
   if (!aiGuard(res)) return;
-  const { date, start_time, finish_time, venue_address, band_name } = req.body || {};
-  if (!date) return res.status(400).json({ error: 'Pass at least a date.' });
+  try {
+    const { date, start_time, finish_time, venue_address, band_name } = req.body || {};
+    if (!date) return res.status(400).json({ error: 'Pass at least a date.' });
 
-  const [sameDayR, prevDayR, nextDayR, blockedR] = await Promise.all([
-    db.query(
-      `SELECT id, band_name, venue_name, venue_address, start_time, end_time AS finish_time
-       FROM gigs WHERE user_id = $1 AND date = $2 AND status IN ('confirmed', 'enquiry')`,
-      [req.user.id, date]
-    ),
-    db.query(
-      `SELECT id, band_name, venue_name, venue_address, end_time AS finish_time
-       FROM gigs WHERE user_id = $1 AND date = $2::date - INTERVAL '1 day' AND status IN ('confirmed', 'enquiry')`,
-      [req.user.id, date]
-    ),
-    db.query(
-      `SELECT id, band_name, venue_name, venue_address, start_time
-       FROM gigs WHERE user_id = $1 AND date = $2::date + INTERVAL '1 day' AND status IN ('confirmed', 'enquiry')`,
-      [req.user.id, date]
-    ),
-    db.query(
-      `SELECT reason FROM blocked_dates WHERE user_id = $1 AND date = $2`,
-      [req.user.id, date]
-    ).catch(() => ({ rows: [] })),
-  ]);
+    const [sameDayR, prevDayR, nextDayR, blockedR] = await Promise.all([
+      db.query(
+        `SELECT id, band_name, venue_name, venue_address, start_time, end_time AS finish_time
+         FROM gigs WHERE user_id = $1 AND date = $2 AND status IN ('confirmed', 'enquiry')`,
+        [req.user.id, date]
+      ),
+      db.query(
+        `SELECT id, band_name, venue_name, venue_address, end_time AS finish_time
+         FROM gigs WHERE user_id = $1 AND date = $2::date - INTERVAL '1 day' AND status IN ('confirmed', 'enquiry')`,
+        [req.user.id, date]
+      ),
+      db.query(
+        `SELECT id, band_name, venue_name, venue_address, start_time
+         FROM gigs WHERE user_id = $1 AND date = $2::date + INTERVAL '1 day' AND status IN ('confirmed', 'enquiry')`,
+        [req.user.id, date]
+      ),
+      db.query(
+        `SELECT reason FROM blocked_dates WHERE user_id = $1 AND date = $2`,
+        [req.user.id, date]
+      ).catch(() => ({ rows: [] })),
+    ]);
 
-  const system = `You sanity-check a musician's new gig booking against their calendar.
+    const system = `You sanity-check a musician's new gig booking against their calendar.
 
 Return ONLY a JSON object:
 
@@ -477,7 +513,7 @@ Check:
 
 Be specific and short. No em dashes. No prose outside the JSON.`;
 
-  const userPrompt = `Proposed gig:
+    const userPrompt = `Proposed gig:
 Date: ${date}
 Times: ${start_time || '?'} to ${finish_time || '?'}
 Band: ${band_name || '(not specified)'}
@@ -490,8 +526,12 @@ Blocked date reason (if any): ${blockedR.rows[0]?.reason || '(not blocked)'}
 
 Return the sanity check.`;
 
-  const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 800 });
-  sendAIResult(res, data || { ok: true, warnings: [] });
+    const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 800 });
+    sendAIResult(res, data || { ok: true, warnings: [] });
+  } catch (err) {
+    console.error(`[ai/sanity-check] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -501,10 +541,11 @@ Return the sanity check.`;
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/normalize-chordpro', async (req, res) => {
   if (!aiGuard(res)) return;
-  const text = String(req.body?.text || '').slice(0, 15000);
-  if (!text.trim()) return res.status(400).json({ error: 'Paste ChordPro text first.' });
+  try {
+    const text = String(req.body?.text || '').slice(0, 15000);
+    if (!text.trim()) return res.status(400).json({ error: 'Paste ChordPro text first.' });
 
-  const system = `You normalise ChordPro chord-sheets. Input is messy pasted text (from websites, PDFs, Word). Output is clean ChordPro.
+    const system = `You normalise ChordPro chord-sheets. Input is messy pasted text (from websites, PDFs, Word). Output is clean ChordPro.
 
 Return ONLY a JSON object:
 
@@ -524,8 +565,12 @@ Rules:
 - Preserve original lyric line breaks. Do not add verses that aren't there.
 - If unsure, note it in "notes" rather than guessing.`;
 
-  const data = await callHaiku({ system, user: text, json: true, maxTokens: 4000 });
-  sendAIResult(res, data);
+    const data = await callHaiku({ system, user: text, json: true, maxTokens: 4000 });
+    sendAIResult(res, data);
+  } catch (err) {
+    console.error(`[ai/normalize-chordpro] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -535,25 +580,26 @@ Rules:
 // ═════════════════════════════════════════════════════════════════════════════
 router.post('/triage-enquiry', async (req, res) => {
   if (!aiGuard(res)) return;
-  const enquiryText = String(req.body?.enquiryText || '').slice(0, 3000);
-  const prospectName = String(req.body?.prospectName || '').slice(0, 100);
-  if (!enquiryText.trim()) return res.status(400).json({ error: 'Pass enquiryText.' });
-
-  // User's historical fee stats (last 12 months, by inferred venue type).
-  let feeStats = null;
   try {
-    const r = await db.query(
-      `SELECT MIN(fee) AS min, AVG(fee) AS avg, MAX(fee) AS max, COUNT(*) AS count
-       FROM gigs WHERE user_id = $1 AND status = 'confirmed' AND fee > 0 AND date > NOW() - INTERVAL '12 months'`,
-      [req.user.id]
-    );
-    feeStats = r.rows[0];
-  } catch (_) { /* non-fatal */ }
+    const enquiryText = String(req.body?.enquiryText || '').slice(0, 3000);
+    const prospectName = String(req.body?.prospectName || '').slice(0, 100);
+    if (!enquiryText.trim()) return res.status(400).json({ error: 'Pass enquiryText.' });
 
-  const u = await db.query(`SELECT name, display_name FROM users WHERE id = $1`, [req.user.id]);
-  const user = u.rows[0] || {};
+    // User's historical fee stats (last 12 months, by inferred venue type).
+    let feeStats = null;
+    try {
+      const r = await db.query(
+        `SELECT MIN(fee) AS min, AVG(fee) AS avg, MAX(fee) AS max, COUNT(*) AS count
+         FROM gigs WHERE user_id = $1 AND status = 'confirmed' AND fee > 0 AND date > NOW() - INTERVAL '12 months'`,
+        [req.user.id]
+      );
+      feeStats = r.rows[0];
+    } catch (_) { /* non-fatal */ }
 
-  const system = `You triage a booking enquiry from a prospective client on a musician's public booking page.
+    const u = await db.query(`SELECT name, display_name FROM users WHERE id = $1`, [req.user.id]);
+    const user = u.rows[0] || {};
+
+    const system = `You triage a booking enquiry from a prospective client on a musician's public booking page.
 
 Return ONLY a JSON object:
 
@@ -575,14 +621,18 @@ Fee guidance:
 
 Draft reply: warm, enthusiastic, asks one or two clarifying questions, signs off as "${user.display_name || user.name || 'the band'}". No em dashes.`;
 
-  const userPrompt = `Prospect: ${prospectName || '(anonymous)'}
+    const userPrompt = `Prospect: ${prospectName || '(anonymous)'}
 Historical fee stats (last 12 months, confirmed paid gigs): ${feeStats && feeStats.count ? `min £${feeStats.min}, avg £${Number(feeStats.avg).toFixed(0)}, max £${feeStats.max} across ${feeStats.count} gigs` : '(not enough history)'}
 
 Enquiry text:
 ${enquiryText}`;
 
-  const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 1200 });
-  sendAIResult(res, data);
+    const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 1200 });
+    sendAIResult(res, data);
+  } catch (err) {
+    console.error(`[ai/triage-enquiry] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
 });
 
 // ── Status endpoint so the frontend can feature-detect ──────────────────────
