@@ -7451,6 +7451,35 @@ function renderNudgeList() {
   const body = document.getElementById('gigNudgeBody');
   if (!body) return;
 
+  // Drop any entries the user has already imported or dismissed in this
+  // session. Without this filter, the imported card re-renders in place
+  // after importNudgeFromDetail() marks already_imported=true.
+  _nudgeEvents = _nudgeEvents.filter(e => !e.already_imported);
+
+  // Keep the Calendar grid's cached nudge set in sync so the amber pin
+  // tags and count banner also drop the imported event.
+  try {
+    if (Array.isArray(window._calendarNudges)) {
+      window._calendarNudges = window._calendarNudges.filter(e => !e.already_imported);
+    }
+    if (window._calendarNudgesById && typeof window._calendarNudgesById === 'object') {
+      for (const ev of Object.values(window._calendarNudgesById)) {
+        if (ev && ev.already_imported) delete window._calendarNudgesById[ev.id];
+      }
+    }
+  } catch (_) { /* non-fatal */ }
+
+  if (_nudgeEvents.length === 0) {
+    body.innerHTML = `
+      <div style="padding:40px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:8px;">✓</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">All caught up</div>
+        <div style="font-size:13px;color:var(--text-2);">No new events that look like gigs</div>
+      </div>
+    `;
+    return;
+  }
+
   body.innerHTML = `
     <div style="padding:16px 20px;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
