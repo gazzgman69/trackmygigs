@@ -96,15 +96,39 @@ const BASE_STYLES = `
   .section-label { font-size: 11px; font-weight: 700; color: var(--text-2); text-transform: uppercase; letter-spacing: 1px; margin: 20px 0 6px; }
 `;
 
-// Wrap body in full HTML document with shared styles
-function pageHtml(title, bodyHtml) {
+// Wrap body in full HTML document with shared styles.
+// `meta` is optional: { description, image, url, type, noindex } — when present,
+// injects Open Graph + Twitter Card + meta description + canonical tags so the
+// page previews properly when shared on WhatsApp / iMessage / socials.
+function pageHtml(title, bodyHtml, meta) {
+  meta = meta || {};
+  const desc = meta.description || 'Live music booking and availability, powered by TrackMyGigs.';
+  const image = meta.image || '';
+  const url = meta.url || '';
+  const type = meta.type || 'website';
+  const robots = meta.noindex ? 'noindex, nofollow' : 'index, follow';
+
+  const ogImageTag = image ? `\n  <meta property="og:image" content="${esc(image)}">` : '';
+  const twImageTag = image ? `\n  <meta name="twitter:image" content="${esc(image)}">` : '';
+  const ogUrlTag = url ? `\n  <meta property="og:url" content="${esc(url)}">` : '';
+  const canonicalTag = url && !meta.noindex ? `\n  <link rel="canonical" href="${esc(url)}">` : '';
+  const twCard = image ? 'summary_large_image' : 'summary';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(title)}</title>
-  <meta name="robots" content="index, follow">
+  <meta name="robots" content="${robots}">
+  <meta name="description" content="${esc(desc)}">
+  <meta property="og:title" content="${esc(title)}">
+  <meta property="og:description" content="${esc(desc)}">
+  <meta property="og:type" content="${esc(type)}">
+  <meta property="og:site_name" content="TrackMyGigs">${ogUrlTag}${ogImageTag}
+  <meta name="twitter:card" content="${twCard}">
+  <meta name="twitter:title" content="${esc(title)}">
+  <meta name="twitter:description" content="${esc(desc)}">${twImageTag}${canonicalTag}
   <style>${BASE_STYLES}</style>
 </head>
 <body>
@@ -112,6 +136,14 @@ function pageHtml(title, bodyHtml) {
   <div class="foot">Powered by <a href="https://trackmygigs.app">TrackMyGigs</a></div>
 </body>
 </html>`;
+}
+
+// Build the fully-qualified URL for the current request so OG/canonical tags
+// point at the real public URL (not the internal Replit one).
+function absoluteUrl(req) {
+  const proto = (req.get('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim();
+  const host = req.get('host') || 'trackmygigs.app';
+  return `${proto}://${host}${req.originalUrl.split('?')[0]}`;
 }
 
 // Find a user by their public_slug only. S9-01/S9-10: the previous numeric-id
@@ -182,7 +214,7 @@ router.get('/share/:slug', async (req, res) => {
     const body = `
       <div class="avatar">${esc((displayName[0] || 'M').toUpperCase())}</div>
       <h1 style="text-align:center;">${esc(displayName)}</h1>
-      <p class="sub" style="text-align:center;">Availability &mdash; next 3 months</p>
+      <p class="sub" style="text-align:center;">Availability for the next 3 months</p>
       <div class="legend">
         <span><span class="legend-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
         <span><span class="legend-dot" style="background:var(--danger);"></span>Booked</span>
@@ -204,7 +236,12 @@ router.get('/share/:slug', async (req, res) => {
         ${emailLink(user.email, 'Gig enquiry for ' + displayName, 'Enquire about a date')}
       </div>`;
 
-    res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} Availability`, body));
+    res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} Availability`, body, {
+      description: `Check ${displayName}'s live availability for the next 3 months and enquire about a date.`,
+      image: user.epk_photo_url || user.avatar_url || '',
+      url: absoluteUrl(req),
+      type: 'profile',
+    }));
   } catch (err) {
     console.error('Public share error:', err);
     res.status(500).set('Content-Type', 'text/html').send(pageHtml('Error', `<div class="empty"><h1>Something went wrong</h1><p class="sub">Please try again.</p></div>`));
@@ -298,7 +335,17 @@ router.get('/epk/:slug', async (req, res) => {
         <a class="btn btn-o" href="/share/${esc(user.public_slug || user.id)}">See availability</a>
       </div>`;
 
-    res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} EPK`, body));
+    // Build a concise OG description. Prefer a trimmed bio; otherwise a sensible default.
+    const epkDesc = (bio && bio.trim())
+      ? bio.trim().replace(/\s+/g, ' ').slice(0, 200)
+      : `${displayName}${instruments ? ' - ' + instruments : ''}. Bio, video, audio, rates and availability.`;
+
+    res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} | Electronic Press Kit`, body, {
+      description: epkDesc,
+      image: photoUrl || '',
+      url: absoluteUrl(req),
+      type: 'profile',
+    }));
   } catch (err) {
     console.error('Public EPK error:', err);
     res.status(500).set('Content-Type', 'text/html').send(pageHtml('Error', `<div class="empty"><h1>Something went wrong</h1><p class="sub">Please try again.</p></div>`));
@@ -448,7 +495,7 @@ router.get('/cal/:token', async (req, res) => {
     const body = `
       <div class="avatar">${esc((displayName[0] || 'M').toUpperCase())}</div>
       <h1 style="text-align:center;">${esc(displayName)}</h1>
-      <p class="sub" style="text-align:center;">Availability &mdash; next 3 months</p>
+      <p class="sub" style="text-align:center;">Availability for the next 3 months</p>
       <div class="legend">
         <span><span class="legend-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
         <span><span class="legend-dot" style="background:var(--danger);"></span>Booked</span>
@@ -459,7 +506,13 @@ router.get('/cal/:token', async (req, res) => {
         <a class="btn btn-o" href="${icsUrl}">Subscribe (ICS)</a>
       </div>`;
 
-    res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} Availability`, body));
+    // /cal/:token is token-gated so we explicitly noindex - tokens shouldn't
+    // leak into search engines and the canonical URL of someone's availability
+    // is /share/:slug, not the private token.
+    res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} Availability`, body, {
+      description: `Subscribe to ${displayName}'s live availability calendar.`,
+      noindex: true,
+    }));
   } catch (err) {
     console.error('Public /cal error:', err);
     res.status(500).set('Content-Type', 'text/html').send(pageHtml('Error', `<div class="empty"><h1>Something went wrong</h1><p class="sub">Please try again.</p></div>`));
