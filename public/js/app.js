@@ -2315,36 +2315,36 @@ function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
   });
   html += `</div>`;
 
-  // All-day band (only if any day has items)
-  const hasAnyAllDay = days.some(dd => (allDayByDate[dd.dateStr] || []).length > 0);
-  if (hasAnyAllDay) {
-    html += `<div style="display:grid;grid-template-columns:${TIME_COL_PX}px repeat(7, 1fr);background:var(--surface);border-bottom:1px solid var(--border);">
-      <div style="font-size:9px;color:var(--text-3);text-align:right;padding:4px 4px 0;line-height:1;">all<br/>day</div>`;
-    days.forEach(dd => {
-      const items = allDayByDate[dd.dateStr] || [];
-      html += `<div style="border-left:1px solid var(--border);padding:3px 2px;min-height:22px;display:flex;flex-direction:column;gap:2px;">`;
-      items.slice(0, 3).forEach(it => {
-        let bg = 'rgba(240,165,0,.18)', border = 'var(--accent)', col = 'var(--accent)', click = '';
-        if (it.kind === 'pin') {
-          const isNudge = it.isNudge;
-          bg = isNudge ? 'rgba(240,165,0,.18)' : 'rgba(66,133,244,.18)';
-          border = isNudge ? 'var(--accent)' : '#4285F4';
-          col = isNudge ? 'var(--accent)' : '#4285F4';
-          click = isNudge ? ` onclick="openCalendarNudgeByEventId('${String(it.id).replace(/'/g, "\\'")}')"` : '';
-        } else if (it.kind === 'blocked') {
-          bg = 'rgba(230,70,70,.16)'; border = 'var(--danger)'; col = 'var(--danger)';
-        } else if (it.kind === 'gig') {
-          click = ` onclick="openGigDetail('${String(it.id).replace(/'/g, "\\'")}')"`;
-        }
-        html += `<div${click} style="background:${bg};border-left:2px solid ${border};color:${col};font-size:9px;padding:2px 4px;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:${click ? 'pointer' : 'default'};line-height:1.3;" title="${escapeHtml(it.label)}">${escapeHtml(it.label)}</div>`;
-      });
-      if (items.length > 3) {
-        html += `<div style="font-size:9px;color:var(--text-3);text-align:center;">+${items.length - 3}</div>`;
+  // All-day band: ALWAYS render so layout doesn't shift when Google pins or
+  // blocked dates arrive from a background fetch. Each day cell has a fixed
+  // min-height of 28px and max-height of 72px (3 items × ~22px + padding).
+  // This keeps the grid's top position stable across repaints.
+  html += `<div style="display:grid;grid-template-columns:${TIME_COL_PX}px repeat(7, 1fr);background:var(--surface);border-bottom:1px solid var(--border);">
+    <div style="font-size:9px;color:var(--text-3);text-align:right;padding:4px 4px 0;line-height:1;">all<br/>day</div>`;
+  days.forEach(dd => {
+    const items = allDayByDate[dd.dateStr] || [];
+    html += `<div style="border-left:1px solid var(--border);padding:3px 2px;min-height:28px;max-height:72px;display:flex;flex-direction:column;gap:2px;overflow:hidden;">`;
+    items.slice(0, 3).forEach(it => {
+      let bg = 'rgba(240,165,0,.18)', border = 'var(--accent)', col = 'var(--accent)', click = '';
+      if (it.kind === 'pin') {
+        const isNudge = it.isNudge;
+        bg = isNudge ? 'rgba(240,165,0,.18)' : 'rgba(66,133,244,.18)';
+        border = isNudge ? 'var(--accent)' : '#4285F4';
+        col = isNudge ? 'var(--accent)' : '#4285F4';
+        click = isNudge ? ` onclick="openCalendarNudgeByEventId('${String(it.id).replace(/'/g, "\\'")}')"` : '';
+      } else if (it.kind === 'blocked') {
+        bg = 'rgba(230,70,70,.16)'; border = 'var(--danger)'; col = 'var(--danger)';
+      } else if (it.kind === 'gig') {
+        click = ` onclick="openGigDetail('${String(it.id).replace(/'/g, "\\'")}')"`;
       }
-      html += `</div>`;
+      html += `<div${click} style="background:${bg};border-left:2px solid ${border};color:${col};font-size:9px;padding:2px 4px;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:${click ? 'pointer' : 'default'};line-height:1.3;" title="${escapeHtml(it.label)}">${escapeHtml(it.label)}</div>`;
     });
+    if (items.length > 3) {
+      html += `<div style="font-size:9px;color:var(--text-3);text-align:center;">+${items.length - 3}</div>`;
+    }
     html += `</div>`;
-  }
+  });
+  html += `</div>`;
 
   // Time grid: background hour rows + absolutely-positioned events
   html += `<div id="weekTimeGrid" style="position:relative;background:var(--bg);">`;
