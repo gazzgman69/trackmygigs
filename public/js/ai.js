@@ -1,7 +1,7 @@
 // ── TrackMyGigs AI features (Claude Haiku 4.5) ───────────────────────────────
-// One module, 10 features. Each feature is a small self-contained function that
+// One module, 9 features. Each feature is a small self-contained function that
 // opens a minimal modal, posts to /api/ai/..., and either applies the result to
-// an existing screen or displays it inline. No framework dependency — same
+// an existing screen or displays it inline. No framework dependency, same
 // vanilla DOM style as app.js.
 //
 // Exposed on window so inline onclick= handlers and app.js can call them:
@@ -14,7 +14,11 @@
 //   aiMonthlyInsight(year, month) — renders a narrative card into #aiInsightSlot
 //   aiSanityCheck(fields, cb)   — runs on gig save; warns before submit
 //   aiChordProNormalise()       — normalises messy chord text in ChordPro tab
-//   aiEnquiryTriage()           — triages a pasted booking enquiry
+//
+// Feature 10 (Enquiry Triage) was retired: the app has no inbox or contact
+// form intake, so a paste-an-enquiry modal asks the user to copy from Gmail
+// into TMG just to get a draft, which is strictly worse UX than asking
+// ChatGPT directly. See server-side note in routes/ai.js.
 //
 // All calls tolerate the /api/ai endpoint returning 503 (AI disabled) by
 // showing a friendly message rather than crashing the screen.
@@ -686,64 +690,20 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // FEATURE 10 — Booking Enquiry Triage
+  // FEATURE 10 — Booking Enquiry Triage — RETIRED
   // ═══════════════════════════════════════════════════════════════════════════
-  function aiEnquiryTriage() {
-    const body = h(`
-      <div>
-        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2,#999);">Paste a booking enquiry (form submission, DM, email). I will summarise it, suggest a fee range based on your history, and draft a reply.</p>
-        <textarea id="aiEnqText" class="ai-textarea" placeholder="Paste the enquiry here"></textarea>
-        <div class="ai-row" style="justify-content:flex-end;">
-          <button type="button" class="ai-btn-secondary" onclick="document.getElementById('aiModalRoot').remove()">Cancel</button>
-          <button type="button" class="ai-btn" id="aiEnqGo">Triage</button>
-        </div>
-        <div id="aiEnqResult" style="margin-top:14px;"></div>
-      </div>
-    `);
-    openModal('Enquiry Triage', body);
-    body.querySelector('#aiEnqGo').addEventListener('click', async () => {
-      const text = body.querySelector('#aiEnqText').value.trim();
-      if (!text) { toast('Paste an enquiry first', 'warn'); return; }
-      const result = body.querySelector('#aiEnqResult');
-      result.innerHTML = '';
-      result.appendChild(spinner('Triaging...'));
-      const data = await postAI('/triage-enquiry', { text });
-      result.innerHTML = '';
-      if (!data) return;
-      const chips = [];
-      if (data.venue_type) chips.push(`<span class="ai-chip">${esc(data.venue_type)}</span>`);
-      if (data.fee_low != null && data.fee_high != null) chips.push(`<span class="ai-chip">&pound;${esc(data.fee_low)} - &pound;${esc(data.fee_high)}</span>`);
-      if (data.date) chips.push(`<span class="ai-chip">${esc(data.date)}</span>`);
-      const card = h(`
-        <div class="ai-result-card">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
-            ${chips.join('')}
-          </div>
-          <div style="font-size:13px;line-height:1.55;margin-bottom:10px;">${esc(data.summary || '')}</div>
-          ${data.draft_reply ? `
-            <div style="font-size:12px;color:var(--text-2,#ccc);font-weight:600;margin-bottom:4px;">Draft reply</div>
-            <div style="font-size:13px;white-space:pre-wrap;line-height:1.55;background:var(--bg,#0b0b0b);border:1px solid var(--border,#222);border-radius:10px;padding:12px;">${esc(data.draft_reply)}</div>
-          ` : ''}
-          <div class="ai-row" style="justify-content:flex-end;">
-            <button type="button" class="ai-btn-secondary" onclick="document.getElementById('aiModalRoot').remove()">Close</button>
-            ${data.draft_reply ? '<button type="button" class="ai-btn" id="aiEnqCopy">Copy reply</button>' : ''}
-          </div>
-        </div>
-      `);
-      if (data.draft_reply) {
-        card.querySelector('#aiEnqCopy').addEventListener('click', () => {
-          navigator.clipboard?.writeText(data.draft_reply);
-          toast('Copied', 'success');
-        });
-      }
-      result.appendChild(card);
-    });
-  }
+  // Removed along with its nav-quick-btn in index.html and the dispatcher
+  // branch in app.js. Reason: TMG has no inbox and no contact-form intake, so
+  // a paste-an-enquiry modal asks the user to copy from Gmail and paste into
+  // the app just to get a draft reply. That is strictly worse UX than asking
+  // ChatGPT directly, so the feature stays retired until a proper enquiry
+  // intake (public booking form or inbound email) is built. Server endpoint
+  // POST /api/ai/triage-enquiry was deleted in the same commit.
 
   // ═══════════════════════════════════════════════════════════════════════════
   // AI Tools launcher — RETIRED (#139)
   // ═══════════════════════════════════════════════════════════════════════════
-  // Each of the 10 AI features now lives only in its natural home:
+  // Each of the remaining 9 AI features lives only in its natural home:
   //   1. Smart Paste to Gig    → Gig wizard header
   //   2. Scan Receipt          → Receipts screen "Add with AI"
   //   3. Dep Offer Replies     → Per-offer "Draft reply with AI" in Offers
@@ -753,9 +713,8 @@
   //   7. Monthly Insight       → Finance screen header
   //   8. Sanity Check          → Auto on Save Gig (no UI)
   //   9. ChordPro Normaliser   → Repertoire
-  //  10. Enquiry Triage        → Top-nav quick-actions strip
   //
-  // The hub modal was scaffolding from the QA push when the 10 features landed
+  // The hub modal was scaffolding from the QA push when the features landed
   // together. Gareth: "I imagined these AI features being integrated in the
   // correct places rather than all in one place being able to choose."
 
@@ -779,6 +738,5 @@
     aiMonthlyInsight,
     aiSanityCheck,
     aiChordProNormalise,
-    aiEnquiryTriage,
   });
 })();

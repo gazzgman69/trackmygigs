@@ -574,66 +574,14 @@ Rules:
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// FEATURE 10 — Booking Enquiry Triage
-// POST /api/ai/triage-enquiry  { enquiryText, prospectEmail?, prospectName? }
-// Returns: { summary, venueType, date_requested, guest_count, suggested_fee_range, draft_reply }
+// FEATURE 10 — Booking Enquiry Triage — RETIRED
 // ═════════════════════════════════════════════════════════════════════════════
-router.post('/triage-enquiry', async (req, res) => {
-  if (!aiGuard(res)) return;
-  try {
-    const enquiryText = String(req.body?.enquiryText || '').slice(0, 3000);
-    const prospectName = String(req.body?.prospectName || '').slice(0, 100);
-    if (!enquiryText.trim()) return res.status(400).json({ error: 'Pass enquiryText.' });
-
-    // User's historical fee stats (last 12 months, by inferred venue type).
-    let feeStats = null;
-    try {
-      const r = await db.query(
-        `SELECT MIN(fee) AS min, AVG(fee) AS avg, MAX(fee) AS max, COUNT(*) AS count
-         FROM gigs WHERE user_id = $1 AND status = 'confirmed' AND fee > 0 AND date > NOW() - INTERVAL '12 months'`,
-        [req.user.id]
-      );
-      feeStats = r.rows[0];
-    } catch (_) { /* non-fatal */ }
-
-    const u = await db.query(`SELECT name, display_name FROM users WHERE id = $1`, [req.user.id]);
-    const user = u.rows[0] || {};
-
-    const system = `You triage a booking enquiry from a prospective client on a musician's public booking page.
-
-Return ONLY a JSON object:
-
-{
-  "summary":              short string (1-2 sentences, the ask in plain English),
-  "venue_type":           "wedding" | "corporate" | "pub" | "private_party" | "festival" | "other" | "unknown",
-  "date_requested":       "YYYY-MM-DD" | string | null,
-  "guest_count":          integer | null,
-  "suggested_fee_range":  { "low": number, "high": number, "currency": "GBP" },
-  "draft_reply":          { "subject": string, "body": string }
-}
-
-Fee guidance:
-- Use the musician's historical fee range as the anchor.
-- Weddings and corporate: skew toward the high end of their range.
-- Pub / bar: skew toward the low end.
-- Private parties: mid-range.
-- If no historical data is provided, suggest null for fee range.
-
-Draft reply: warm, enthusiastic, asks one or two clarifying questions, signs off as "${user.display_name || user.name || 'the band'}". No em dashes.`;
-
-    const userPrompt = `Prospect: ${prospectName || '(anonymous)'}
-Historical fee stats (last 12 months, confirmed paid gigs): ${feeStats && feeStats.count ? `min £${feeStats.min}, avg £${Number(feeStats.avg).toFixed(0)}, max £${feeStats.max} across ${feeStats.count} gigs` : '(not enough history)'}
-
-Enquiry text:
-${enquiryText}`;
-
-    const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 1200 });
-    sendAIResult(res, data);
-  } catch (err) {
-    console.error(`[ai/triage-enquiry] error:`, err);
-    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
-  }
-});
+// POST /api/ai/triage-enquiry was deleted along with its frontend modal and
+// nav-quick-btn. TMG has no inbox or contact-form intake, so a paste-an-
+// enquiry endpoint asks the user to copy from Gmail and POST into the app
+// just to get a draft reply. That is strictly worse UX than asking ChatGPT
+// directly, so the feature stays retired until a proper enquiry intake
+// (public booking form or inbound email) is built.
 
 // ── Status endpoint so the frontend can feature-detect ──────────────────────
 router.get('/status', (req, res) => {
@@ -649,7 +597,6 @@ router.get('/status', (req, res) => {
       'month-summary',
       'sanity-check',
       'normalize-chordpro',
-      'triage-enquiry',
     ],
   });
 });
