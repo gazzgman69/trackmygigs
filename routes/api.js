@@ -1467,6 +1467,74 @@ router.get('/earnings', async (req, res) => {
   }
 });
 
+// ── Monthly detail for the Finance panel insight card ───────────────────────
+// Returns the raw gigs / invoices / expenses for the chosen month, plus a
+// next-month gig count and the user's total outstanding invoice load. The
+// client uses this to render the deterministic 12-variation Monthly Insight
+// (no Haiku call), so this endpoint carries no narrative text itself.
+router.get('/finance/month-detail', async (req, res) => {
+  try {
+    const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+    const month = parseInt(req.query.month, 10) || (new Date().getMonth() + 1);
+    const startISO = `${year}-${String(month).padStart(2, '0')}-01`;
+    const endISO = new Date(year, month, 0).toISOString().substring(0, 10);
+    const nextStart = new Date(year, month, 1);
+    const nextStartISO = nextStart.toISOString().substring(0, 10);
+    const nextEnd = new Date(nextStart.getFullYear(), nextStart.getMonth() + 1, 0);
+    const nextEndISO = nextEnd.toISOString().substring(0, 10);
+
+    const [gigsR, invR, expR, nextGigsR, outstandingR] = await Promise.all([
+      db.query(
+        `SELECT date, band_name, venue_name, fee, status
+         FROM gigs
+         WHERE user_id = $1 AND date BETWEEN $2 AND $3
+         ORDER BY date ASC`,
+        [req.user.id, startISO, endISO]
+      ),
+      db.query(
+        `SELECT invoice_number, amount, status, due_date, created_at
+         FROM invoices
+         WHERE user_id = $1 AND created_at::date BETWEEN $2 AND $3
+         ORDER BY created_at ASC`,
+        [req.user.id, startISO, endISO]
+      ),
+      db.query(
+        `SELECT category, amount, description, date
+         FROM expenses
+         WHERE user_id = $1 AND date BETWEEN $2 AND $3
+         ORDER BY date ASC`,
+        [req.user.id, startISO, endISO]
+      ).catch(() => ({ rows: [] })),
+      db.query(
+        `SELECT COUNT(*)::int AS count
+         FROM gigs
+         WHERE user_id = $1 AND date BETWEEN $2 AND $3`,
+        [req.user.id, nextStartISO, nextEndISO]
+      ),
+      db.query(
+        `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::float AS total
+         FROM invoices
+         WHERE user_id = $1 AND status NOT IN ('paid', 'cancelled')`,
+        [req.user.id]
+      ),
+    ]);
+
+    res.json({
+      year,
+      month,
+      gigs: gigsR.rows,
+      invoices: invR.rows,
+      expenses: expR.rows,
+      next_month_gig_count: nextGigsR.rows[0]?.count || 0,
+      outstanding_invoice_count: outstandingR.rows[0]?.count || 0,
+      outstanding_invoice_total: outstandingR.rows[0]?.total || 0,
+    });
+  } catch (error) {
+    console.error('Get month-detail error:', error);
+    res.status(500).json({ error: 'Failed to load month detail' });
+  }
+});
+
 // ── Public share token (calendar ICS feed) ───────────────────────────────────
 // GET returns { token, enabled }; POST toggles on/off and generates a token on demand.
 router.get('/share-token', async (req, res) => {

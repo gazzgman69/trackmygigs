@@ -393,76 +393,7 @@ Write the three bios.`;
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// FEATURE 7 — Monthly Insight Narrative
-// POST /api/ai/month-summary  { year, month }
-// Returns: { headline, summary, highlights: [...], suggestions: [...] }
-// ═════════════════════════════════════════════════════════════════════════════
-router.post('/month-summary', async (req, res) => {
-  if (!aiGuard(res)) return;
-  try {
-    const year = parseInt(req.body?.year, 10) || new Date().getFullYear();
-    const month = parseInt(req.body?.month, 10) || (new Date().getMonth() + 1);
-    const startISO = `${year}-${String(month).padStart(2, '0')}-01`;
-    const endISO = new Date(year, month, 0).toISOString().substring(0, 10);
-
-    const [gigsR, invR, expR] = await Promise.all([
-      db.query(
-        `SELECT date, band_name, venue_name, fee, status FROM gigs
-         WHERE user_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date ASC`,
-        [req.user.id, startISO, endISO]
-      ),
-      db.query(
-        `SELECT invoice_number, amount, status, due_date FROM invoices
-         WHERE user_id = $1 AND created_at::date BETWEEN $2 AND $3 ORDER BY created_at ASC`,
-        [req.user.id, startISO, endISO]
-      ),
-      db.query(
-        `SELECT category, amount, description, date FROM expenses
-         WHERE user_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date ASC`,
-        [req.user.id, startISO, endISO]
-      ).catch(() => ({ rows: [] })),
-    ]);
-
-    const gigs = gigsR.rows;
-    const invoices = invR.rows;
-    const expenses = expR.rows;
-
-    const totalFees = gigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
-    const totalExpenses = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
-
-    const system = `You write a short friendly insight narrative for a musician's monthly finance view. No em dashes. No corporate-speak.
-
-Return ONLY a JSON object:
-
-{
-  "headline":  short string (6-10 words),
-  "summary":   2-3 short sentences describing the month,
-  "highlights": [2-4 short bullet-point strings],
-  "suggestions": [1-3 short, specific, actionable suggestions]
-}
-
-Use the numbers provided. Don't invent. If the month is quiet, say so plainly.`;
-
-    const userPrompt = `Month: ${year}-${String(month).padStart(2, '0')}
-Gigs played/booked: ${gigs.length} (total fees £${totalFees.toFixed(2)})
-Invoices issued: ${invoices.length}
-Expenses logged: ${expenses.length} (total £${totalExpenses.toFixed(2)})
-
-Gig detail:
-${gigs.map(g => `- ${g.date} | ${g.band_name || ''} @ ${g.venue_name || ''} | £${g.fee || 0} | ${g.status}`).join('\n') || '(no gigs)'}
-
-Write the monthly insight.`;
-
-    const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 900 });
-    sendAIResult(res, data);
-  } catch (err) {
-    console.error(`[ai/month-summary] error:`, err);
-    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
-  }
-});
-
-// ═════════════════════════════════════════════════════════════════════════════
-// FEATURE 8 — Calendar Sanity Check
+// FEATURE 7 — Calendar Sanity Check
 // POST /api/ai/sanity-check  { date, start_time, finish_time, venue_address?, band_name? }
 // Returns: { warnings: [{ severity, message }], ok: bool }
 // ═════════════════════════════════════════════════════════════════════════════
@@ -535,7 +466,7 @@ Return the sanity check.`;
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// FEATURE 9 — ChordPro Normaliser
+// FEATURE 8 — ChordPro Normaliser
 // POST /api/ai/normalize-chordpro  { text }
 // Returns: { cleaned, key, tempo, time_signature, notes }
 // ═════════════════════════════════════════════════════════════════════════════
@@ -584,7 +515,6 @@ router.get('/status', (req, res) => {
       'generate-setlist',
       'draft-invoice-chase',
       'generate-bio',
-      'month-summary',
       'sanity-check',
       'normalize-chordpro',
     ],

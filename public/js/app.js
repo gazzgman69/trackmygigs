@@ -4973,6 +4973,479 @@ window.togglePubCal = togglePubCal;
 window.copyToClipboard = copyToClipboard;
 window.toast = toast;
 
+// ── Monthly Insight: deterministic 12-variation generator ───────────────────
+// Replaces the Haiku-backed Monthly Insight card. Reads the month's gigs,
+// invoices and expenses from /api/finance/month-detail and renders a narrative
+// card whose tone rotates through 12 voices. Rotation index is
+//   ((year * 5 + month) % 12 + 12) % 12
+// 5 is coprime with 12, so the same calendar month drifts +5 slots each year
+// and a given voice won't repeat for 12 years. Highlights and suggestions are
+// rule-based per scenario (EMPTY / LIGHT / STEADY / BUSY). No AI calls.
+(function () {
+  const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+
+  const INSIGHT_GBP = new Intl.NumberFormat('en-GB', {
+    style: 'currency', currency: 'GBP',
+    minimumFractionDigits: 0, maximumFractionDigits: 0,
+  });
+  const money = (n) => INSIGHT_GBP.format(Math.round(Number(n) || 0));
+
+  function escH(s) {
+    if (s == null) return '';
+    return String(s)
+      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+  }
+
+  function joinVenues(venues, max) {
+    const uniq = Array.from(new Set((venues || []).filter(Boolean)));
+    if (!uniq.length) return '';
+    const cap = max || 2;
+    if (uniq.length === 1) return uniq[0];
+    if (uniq.length === 2) return `${uniq[0]} and ${uniq[1]}`;
+    if (uniq.length <= cap + 1) {
+      return uniq.slice(0, -1).join(', ') + ' and ' + uniq[uniq.length - 1];
+    }
+    const head = uniq.slice(0, cap).join(', ');
+    const rest = uniq.length - cap;
+    return `${head}, and ${rest} other venue${rest === 1 ? '' : 's'}`;
+  }
+
+  // Build a normalised context object from raw payload.
+  function buildInsightContext(payload) {
+    const year = payload.year || new Date().getFullYear();
+    const month = payload.month || (new Date().getMonth() + 1);
+    const gigs = payload.gigs || [];
+    const invoices = payload.invoices || [];
+    const expenses = payload.expenses || [];
+
+    const totalFees = gigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
+    const totalExpenses = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+    const net = totalFees - totalExpenses;
+
+    const paidCount = invoices.filter((i) => (i.status || '').toLowerCase() === 'paid').length;
+    const venues = gigs.map((g) => g.venue_name).filter(Boolean);
+    const distinctVenues = Array.from(new Set(venues));
+
+    let topGig = null;
+    for (const g of gigs) {
+      const fee = parseFloat(g.fee) || 0;
+      if (!topGig || fee > (parseFloat(topGig.fee) || 0)) topGig = g;
+    }
+
+    let scenario = 'EMPTY';
+    if (gigs.length >= 6) scenario = 'BUSY';
+    else if (gigs.length >= 3) scenario = 'STEADY';
+    else if (gigs.length >= 1) scenario = 'LIGHT';
+
+    const nextMonthIdx = month % 12; // 0-11
+    const nextMonthName = MONTH_NAMES[nextMonthIdx];
+
+    return {
+      year, month,
+      monthName: MONTH_NAMES[month - 1],
+      nextMonthName,
+      gigCount: gigs.length,
+      totalFees, totalExpenses, net,
+      hasExpenses: totalExpenses > 0,
+      expenseCount: expenses.length,
+      invoiceCount: invoices.length,
+      paidCount,
+      outstandingCount: Number(payload.outstanding_invoice_count) || 0,
+      outstandingTotal: Number(payload.outstanding_invoice_total) || 0,
+      nextMonthGigCount: Number(payload.next_month_gig_count) || 0,
+      venueList: joinVenues(venues, 2),
+      distinctVenueCount: distinctVenues.length,
+      topGig,
+      scenario,
+      isEmpty: scenario === 'EMPTY',
+      isLight: scenario === 'LIGHT',
+      isSteady: scenario === 'STEADY',
+      isBusy: scenario === 'BUSY',
+    };
+  }
+
+  // Small shared helpers used inside voice templates.
+  const expPhrase = (c) => c.hasExpenses
+    ? `${money(c.totalExpenses)} went out against them`
+    : 'nothing went out against them';
+  const expShort = (c) => c.hasExpenses
+    ? `${money(c.totalExpenses)} in expenses`
+    : 'no expenses logged';
+  const toneWord = (c) => c.isBusy ? 'busy' : c.isSteady ? 'steady' : c.isLight ? 'quiet' : 'quiet';
+  const toneTitle = (c) => c.isBusy ? 'Busy' : c.isSteady ? 'Steady' : c.isLight ? 'Quiet' : 'Quiet';
+  const gigWord = (c) => c.gigCount === 1 ? 'gig' : 'gigs';
+  const bookingWord = (c) => c.gigCount === 1 ? 'booking' : 'bookings';
+  const showWord = (c) => c.gigCount === 1 ? 'show' : 'shows';
+
+  // 12 voice templates. Each returns { headline, summary } for a context.
+  // Scenarios: EMPTY (0) / LIGHT (1-2) / STEADY (3-5) / BUSY (6+).
+  const MONTHLY_VOICES = [
+    // V1 — "Quiet/Steady/Busy {month}, clean books"
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `Quiet ${c.monthName}, clean slate`,
+          summary: `No gigs in ${c.monthName} and nothing logged against the month. The books are exactly where you left them.`,
+        };
+        if (c.isLight) return {
+          headline: `Quiet ${c.monthName}, clean books`,
+          summary: `${c.monthName} kept things calm with ${c.gigCount} ${bookingWord(c)}${c.venueList ? ` at ${c.venueList}` : ''}. Fees came in at ${money(c.totalFees)}, and ${expPhrase(c)}. The ledger is tidy.`,
+        };
+        if (c.isSteady) return {
+          headline: `Steady ${c.monthName}, clean books`,
+          summary: `${c.monthName} held a steady rhythm with ${c.gigCount} gigs across ${c.distinctVenueCount} venue${c.distinctVenueCount === 1 ? '' : 's'}. Fees came in at ${money(c.totalFees)}, and ${expPhrase(c)}.`,
+        };
+        return {
+          headline: `Busy ${c.monthName}, clean books`,
+          summary: `${c.monthName} stayed busy on the calendar with ${c.gigCount} ${bookingWord(c)}${c.venueList ? ` across ${c.venueList}` : ''}. Fees came in at ${money(c.totalFees)}, and ${expPhrase(c)}, leaving ${money(c.net)} on the books.`,
+        };
+      },
+    },
+    // V2 — raw numbers lead
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `Zero gigs, zero spend`,
+          summary: `No bookings landed in ${c.monthName}. Nothing went out either, so the books stay exactly where they were.`,
+        };
+        const hlBase = `${c.gigCount} ${gigWord(c)}, ${c.hasExpenses ? 'solid' : 'clean'} numbers`;
+        if (c.isLight) return {
+          headline: c.hasExpenses ? `${c.gigCount} ${gigWord(c)}, tidy sums` : `${c.gigCount} ${gigWord(c)}, zero expenses`,
+          summary: `${c.monthName} brought ${c.gigCount} ${bookingWord(c)} for a combined ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} in expenses, so` : 'Nothing logged against it, which leaves'} ${money(c.net)} net.`,
+        };
+        if (c.isSteady) return {
+          headline: hlBase,
+          summary: `${c.gigCount} ${bookingWord(c)} in ${c.monthName} pulled in ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} out against them puts` : 'No expenses logged puts'} ${money(c.net)} in the profit column.`,
+        };
+        return {
+          headline: `${c.gigCount} ${gigWord(c)}, ${money(c.totalFees)} banked`,
+          summary: `A strong ${c.gigCount}-gig month in ${c.monthName}. Fees totalled ${money(c.totalFees)}; expenses came to ${money(c.totalExpenses)}. Net: ${money(c.net)}.`,
+        };
+      },
+    },
+    // V3 — "A pair/handful of …" friendly count-phrase
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `${c.monthName} sat this one out`,
+          summary: `Not a single gig in ${c.monthName} and nothing logged against it. A quiet month, nothing lost.`,
+        };
+        if (c.isLight) {
+          const phrase = c.gigCount === 1 ? `A single ${c.monthName} gig` : `A pair of ${c.monthName} gigs`;
+          return {
+            headline: c.hasExpenses ? `${phrase}, balanced books` : `${phrase}, all profit`,
+            summary: `${c.gigCount === 1 ? 'One booking' : 'Two bookings'} in ${c.monthName}${c.venueList ? ` at ${c.venueList}` : ''} brought in ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} went out, leaving` : 'Nothing went out, so'} ${money(c.net)} stays in your pocket.`,
+          };
+        }
+        if (c.isSteady) return {
+          headline: `A handful of ${c.monthName} gigs, ${c.hasExpenses ? 'balanced' : 'clean'} books`,
+          summary: `${c.gigCount} bookings brought in ${money(c.totalFees)} across ${c.distinctVenueCount} venue${c.distinctVenueCount === 1 ? '' : 's'}. ${c.hasExpenses ? `${money(c.totalExpenses)} out` : 'No expenses logged'}, leaving ${money(c.net)} net.`,
+        };
+        return {
+          headline: `A packed ${c.monthName}, healthy books`,
+          summary: `A full ${c.monthName} diary with ${c.gigCount} gigs across ${c.distinctVenueCount} venues. Fees landed at ${money(c.totalFees)}, expenses at ${money(c.totalExpenses)}, net ${money(c.net)}.`,
+        };
+      },
+    },
+    // V4 — parallel construction "Light on stage, tidy on paper"
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `Empty on stage, clean on paper`,
+          summary: `Nothing hit the diary in ${c.monthName} and nothing hit the ledger. The month stays neutral on both sides.`,
+        };
+        if (c.isLight) return {
+          headline: `Light month on stage, tidy month on paper`,
+          summary: `${c.gigCount} ${bookingWord(c)} pulled in ${money(c.totalFees)} across ${c.monthName}. ${c.hasExpenses ? `${money(c.totalExpenses)} logged in expenses.` : 'No expenses to set against them.'} Net: ${money(c.net)}.`,
+        };
+        if (c.isSteady) return {
+          headline: `Steady on stage, ${c.hasExpenses ? 'tidy' : 'clean'} on paper`,
+          summary: `${c.gigCount} gigs in ${c.monthName} earned ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} went out` : 'Nothing logged against them'}, leaving ${money(c.net)} net.`,
+        };
+        return {
+          headline: `Busy on stage, busy on paper`,
+          summary: `${c.gigCount} bookings in ${c.monthName} for ${money(c.totalFees)} in fees. Expenses of ${money(c.totalExpenses)} bring net to ${money(c.net)}.`,
+        };
+      },
+    },
+    // V5 — terse "£X in, £Y out"
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `Nothing in, nothing out`,
+          summary: `${c.monthName} went quiet on every line. No gigs, no expenses, no invoices issued. Sometimes that's the month.`,
+        };
+        const headIn = c.hasExpenses
+          ? `${money(c.totalFees)} in, ${money(c.totalExpenses)} out`
+          : `${money(c.totalFees)} in, nothing out`;
+        if (c.isLight) return {
+          headline: headIn,
+          summary: `${c.gigCount} ${bookingWord(c)} in ${c.monthName}${c.venueList ? ` (${c.venueList})` : ''} brought in ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} went out against them.` : 'Nothing went out against them.'}`,
+        };
+        if (c.isSteady) return {
+          headline: headIn,
+          summary: `${c.gigCount} gigs in ${c.monthName} added up to ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} in expenses` : 'No expenses logged'}, so net sits at ${money(c.net)}.`,
+        };
+        return {
+          headline: headIn,
+          summary: `${c.gigCount} bookings in ${c.monthName} pulled in ${money(c.totalFees)}. Expenses came to ${money(c.totalExpenses)}. Net for the month: ${money(c.net)}.`,
+        };
+      },
+    },
+    // V6 — explicit "Month: [tone] month, [state] ledger"
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `${c.monthName}: empty diary, spotless ledger`,
+          summary: `No gigs and no expenses in ${c.monthName}. The ledger stays spotless and the diary is wide open for ${c.nextMonthName}.`,
+        };
+        if (c.isLight) return {
+          headline: `${c.monthName}: quieter month, ${c.hasExpenses ? 'balanced' : 'spotless'} ledger`,
+          summary: `Two ${bookingWord(c).replace('s','')}s hardly counts as busy, but ${c.monthName} still brought in ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} went out.` : 'No costs logged against it.'}`,
+        };
+        if (c.isSteady) return {
+          headline: `${c.monthName}: steady month, ${c.hasExpenses ? 'balanced' : 'clean'} ledger`,
+          summary: `${c.gigCount} gigs in ${c.monthName} added ${money(c.totalFees)} to the books. ${c.hasExpenses ? `${money(c.totalExpenses)} went out, leaving` : 'Nothing went out, leaving'} ${money(c.net)} net.`,
+        };
+        return {
+          headline: `${c.monthName}: busy month, healthy ledger`,
+          summary: `${c.gigCount} bookings in ${c.monthName} pulled in ${money(c.totalFees)}. Expenses hit ${money(c.totalExpenses)}. Net ${money(c.net)}.`,
+        };
+      },
+    },
+    // V7 — "N shows, M lines" count-focused
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `No shows, no lines`,
+          summary: `${c.monthName} had nothing on the stage and nothing on the books. A proper off-month.`,
+        };
+        const expLine = c.expenseCount === 1
+          ? `1 expense line`
+          : `${c.expenseCount} expense lines`;
+        if (c.isLight) return {
+          headline: c.hasExpenses ? `${c.gigCount} ${showWord(c)}, ${expLine}` : `${c.gigCount} ${showWord(c)}, no spend`,
+          summary: `${c.gigCount} ${bookingWord(c)} in ${c.monthName} brought in ${money(c.totalFees)}. ${c.hasExpenses ? `${expLine.charAt(0).toUpperCase() + expLine.slice(1)} totalling ${money(c.totalExpenses)}.` : 'Nothing on the expense side.'}`,
+        };
+        if (c.isSteady) return {
+          headline: `${c.gigCount} ${showWord(c)}, ${c.hasExpenses ? expLine : 'clean books'}`,
+          summary: `${c.gigCount} gigs in ${c.monthName} earned ${money(c.totalFees)}. ${c.hasExpenses ? `${expLine} at ${money(c.totalExpenses)}.` : 'No expenses filed.'} Net ${money(c.net)}.`,
+        };
+        return {
+          headline: `${c.gigCount} ${showWord(c)}, ${c.hasExpenses ? expLine : 'nothing filed against them'}`,
+          summary: `${c.gigCount} bookings in ${c.monthName}, ${money(c.totalFees)} in fees. ${c.hasExpenses ? `${expLine} totalling ${money(c.totalExpenses)}.` : 'No expenses filed.'} Net ${money(c.net)}.`,
+        };
+      },
+    },
+    // V8 — colloquial "Small/Big month, full/balanced pocket"
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `Slow month, steady pocket`,
+          summary: `${c.monthName} didn't pay anything in, but it didn't take anything out either. The pocket stays where it was.`,
+        };
+        if (c.isLight) return {
+          headline: c.hasExpenses ? `Small month, balanced pocket` : `Small month, full pocket`,
+          summary: `${c.monthName} was a light one: ${c.gigCount} ${bookingWord(c)} for ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} went back out.` : 'Nothing went back out.'}`,
+        };
+        if (c.isSteady) return {
+          headline: c.hasExpenses ? `Steady month, balanced pocket` : `Steady month, full pocket`,
+          summary: `${c.gigCount} gigs and ${money(c.totalFees)} in ${c.monthName}. ${c.hasExpenses ? `${money(c.totalExpenses)} back out, net ${money(c.net)}.` : `Nothing back out, net ${money(c.net)}.`}`,
+        };
+        return {
+          headline: `Big month, healthy pocket`,
+          summary: `${c.gigCount} bookings and ${money(c.totalFees)} in ${c.monthName}. After ${money(c.totalExpenses)} in expenses you're up ${money(c.net)}.`,
+        };
+      },
+    },
+    // V9 — "Calm/Busy {month}, clean numbers"
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `Calm ${c.monthName}, clean numbers`,
+          summary: `${c.monthName} had no gigs on the board and no expenses recorded. Clean slate going into ${c.nextMonthName}.`,
+        };
+        if (c.isLight) return {
+          headline: `Calm ${c.monthName}, clean numbers`,
+          summary: `${c.gigCount} ${bookingWord(c)} earned ${money(c.totalFees)} in ${c.monthName}. ${c.hasExpenses ? `${money(c.totalExpenses)} in expenses logged.` : 'No expenses logged.'} Net ${money(c.net)}.`,
+        };
+        if (c.isSteady) return {
+          headline: `Steady ${c.monthName}, clean numbers`,
+          summary: `${c.gigCount} gigs in ${c.monthName} added up to ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} in expenses` : 'No expenses'}, net ${money(c.net)}.`,
+        };
+        return {
+          headline: `Busy ${c.monthName}, clean numbers`,
+          summary: `${c.gigCount} bookings in ${c.monthName}, ${money(c.totalFees)} in fees. ${money(c.totalExpenses)} in expenses leaves net ${money(c.net)}.`,
+        };
+      },
+    },
+    // V10 — poetic "A short/full diary, a clean/balanced slate"
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `Empty diary, clean slate`,
+          summary: `Nothing in the diary for ${c.monthName}, nothing on the ledger. Sometimes the month is just a deep breath.`,
+        };
+        if (c.isLight) return {
+          headline: c.hasExpenses ? `A short diary, a balanced slate` : `A short diary, a clean slate`,
+          summary: `${c.gigCount} ${bookingWord(c)} in ${c.monthName}${c.venueList ? ` at ${c.venueList}` : ''} earned ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} went out.` : 'Nothing went out.'}`,
+        };
+        if (c.isSteady) return {
+          headline: c.hasExpenses ? `A steady diary, a balanced slate` : `A steady diary, a clean slate`,
+          summary: `${c.gigCount} gigs in ${c.monthName} brought ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} back out, net ${money(c.net)}.` : `Nothing back out, net ${money(c.net)}.`}`,
+        };
+        return {
+          headline: `A full diary, a balanced slate`,
+          summary: `A busy ${c.monthName} of ${c.gigCount} gigs for ${money(c.totalFees)}. After ${money(c.totalExpenses)} in expenses, net ${money(c.net)}.`,
+        };
+      },
+    },
+    // V11 — "A couple of / Several bookings, {expense state}"
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `No bookings, no costs`,
+          summary: `No gigs on the ${c.monthName} calendar and no expenses logged. The ledger sits untouched.`,
+        };
+        if (c.isLight) return {
+          headline: c.gigCount === 1
+            ? (c.hasExpenses ? `One booking, a little spend` : `One booking, zero costs`)
+            : (c.hasExpenses ? `A couple of bookings, balanced costs` : `A couple of bookings, zero costs`),
+          summary: `${c.gigCount} ${bookingWord(c)} in ${c.monthName} brought in ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} spent against them.` : 'No costs logged against them.'}`,
+        };
+        if (c.isSteady) return {
+          headline: c.hasExpenses ? `Several bookings, balanced costs` : `Several bookings, zero costs`,
+          summary: `${c.gigCount} gigs in ${c.monthName} earned ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} out, net ${money(c.net)}.` : `Nothing out, net ${money(c.net)}.`}`,
+        };
+        return {
+          headline: `Plenty of bookings, ${c.hasExpenses ? 'real costs' : 'zero costs'}`,
+          summary: `${c.gigCount} bookings in ${c.monthName} totalling ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} in expenses, net ${money(c.net)}.` : `No expenses, net ${money(c.net)}.`}`,
+        };
+      },
+    },
+    // V12 — personification "{Month} kept it simple/busy/balanced"
+    {
+      build(c) {
+        if (c.isEmpty) return {
+          headline: `${c.monthName} kept to itself`,
+          summary: `${c.monthName} passed without a gig or an expense. A rest month, nothing more.`,
+        };
+        if (c.isLight) return {
+          headline: `${c.monthName} kept it simple`,
+          summary: `${c.gigCount} ${bookingWord(c)} and ${money(c.totalFees)} in fees made up ${c.monthName}. ${c.hasExpenses ? `${money(c.totalExpenses)} in expenses to match.` : 'No expenses to match.'}`,
+        };
+        if (c.isSteady) return {
+          headline: `${c.monthName} kept it steady`,
+          summary: `${c.gigCount} gigs across ${c.monthName} brought in ${money(c.totalFees)}. ${c.hasExpenses ? `${money(c.totalExpenses)} went out, net ${money(c.net)}.` : `Nothing went out, net ${money(c.net)}.`}`,
+        };
+        return {
+          headline: `${c.monthName} kept it busy`,
+          summary: `${c.gigCount} bookings made ${c.monthName} a full diary for ${money(c.totalFees)} in fees. ${money(c.totalExpenses)} in expenses puts net at ${money(c.net)}.`,
+        };
+      },
+    },
+  ];
+
+  function pickVoiceIndex(year, month) {
+    const raw = (Number(year) || 0) * 5 + (Number(month) || 0);
+    return ((raw % 12) + 12) % 12;
+  }
+
+  function buildHighlights(c) {
+    const out = [];
+    if (c.isEmpty) {
+      out.push('No gigs logged this month');
+      if (c.invoiceCount > 0) out.push(`${c.invoiceCount} invoice${c.invoiceCount === 1 ? '' : 's'} issued${c.paidCount ? ` (${c.paidCount} paid)` : ''}`);
+      if (c.hasExpenses) out.push(`${c.expenseCount} expense${c.expenseCount === 1 ? '' : 's'} recorded (${money(c.totalExpenses)})`);
+      return out;
+    }
+    out.push(`${money(c.totalFees)} in gig fees from ${c.gigCount} ${bookingWord(c)}`);
+    if (c.invoiceCount > 0) {
+      out.push(`${c.invoiceCount} invoice${c.invoiceCount === 1 ? '' : 's'} issued${c.paidCount ? ` (${c.paidCount} paid)` : ''}`);
+    }
+    if (c.hasExpenses) {
+      out.push(`${c.expenseCount} expense${c.expenseCount === 1 ? '' : 's'} recorded (${money(c.totalExpenses)})`);
+    } else {
+      out.push('No expenses recorded this month');
+    }
+    if (c.topGig && (parseFloat(c.topGig.fee) || 0) > 0 && c.gigCount > 1) {
+      out.push(`Highest fee: ${money(c.topGig.fee)} at ${c.topGig.venue_name || c.topGig.band_name || 'a booking'}`);
+    }
+    return out.slice(0, 4);
+  }
+
+  function buildSuggestions(c) {
+    const out = [];
+    if (c.outstandingCount > 0) {
+      out.push(`Chase ${c.outstandingCount} outstanding invoice${c.outstandingCount === 1 ? '' : 's'} totalling ${money(c.outstandingTotal)}`);
+    }
+    if (!c.hasExpenses && c.gigCount > 0) {
+      out.push('Log fuel and gear receipts so the tax estimate reflects them');
+    }
+    if (c.nextMonthGigCount <= 2) {
+      out.push(`${c.nextMonthName} has ${c.nextMonthGigCount} booking${c.nextMonthGigCount === 1 ? '' : 's'} so far. Time to fill the diary`);
+    } else if (c.isBusy) {
+      out.push('Busy stretch. Worth reviewing whether fees match the workload');
+    }
+    if (!out.length) {
+      out.push(`Plan ahead for ${c.nextMonthName} to keep momentum`);
+    }
+    return out.slice(0, 3);
+  }
+
+  function generateMonthlyInsight(payload) {
+    const c = buildInsightContext(payload || {});
+    const idx = pickVoiceIndex(c.year, c.month);
+    const voice = MONTHLY_VOICES[idx];
+    const head = voice.build(c);
+    return {
+      headline: head.headline,
+      summary: head.summary,
+      highlights: buildHighlights(c),
+      suggestions: buildSuggestions(c),
+      _voiceIndex: idx,
+      _scenario: c.scenario,
+    };
+  }
+
+  // Fetch + render into a target element. Keeps the same "AI monthly insight"
+  // card layout the old Haiku renderer used so no CSS change is needed.
+  async function renderMonthlyInsight(year, month, targetEl) {
+    const slot = targetEl || document.getElementById('aiInsightSlot');
+    if (!slot) return;
+    slot.innerHTML = '<div style="font-size:12px;color:var(--text-3,#666);padding:8px 0;">Loading...</div>';
+    let payload = null;
+    try {
+      const resp = await fetch(`/api/finance/month-detail?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`);
+      if (!resp.ok) throw new Error('month-detail fetch failed');
+      payload = await resp.json();
+    } catch (e) {
+      slot.innerHTML = '<div style="font-size:12px;color:var(--text-3,#666);padding:8px 0;">Couldn\'t load this month\'s insight.</div>';
+      return;
+    }
+    const data = generateMonthlyInsight(payload);
+    const hl = (data.highlights || []).map((x) => `<li style="margin-bottom:4px;">${escH(x)}</li>`).join('');
+    const sg = (data.suggestions || []).map((x) => `<li style="margin-bottom:4px;">${escH(x)}</li>`).join('');
+    slot.innerHTML = `
+      <div class="ai-result-card" style="margin-top:0;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+          <span style="font-size:18px;">&#128221;</span>
+          <div style="font-weight:700;">${escH(data.headline || 'Your month')}</div>
+        </div>
+        <div style="font-size:13px;line-height:1.55;margin-bottom:10px;">${escH(data.summary || '')}</div>
+        ${hl ? `<div style="font-size:12px;color:var(--text-2,#ccc);font-weight:600;margin-bottom:4px;">Highlights</div><ul style="margin:0 0 10px;padding-left:18px;font-size:13px;line-height:1.5;">${hl}</ul>` : ''}
+        ${sg ? `<div style="font-size:12px;color:var(--text-2,#ccc);font-weight:600;margin-bottom:4px;">Try next month</div><ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;">${sg}</ul>` : ''}
+      </div>`;
+  }
+
+  window.generateMonthlyInsight = generateMonthlyInsight;
+  window.renderMonthlyInsight = renderMonthlyInsight;
+})();
+
 // ── Finance Panel ───────────────────────────────────────────────────────────
 async function renderFinancePanel() {
   // Target the panel body inside #panel-finance (the Finance Dashboard panel
@@ -5152,11 +5625,11 @@ async function renderFinancePanel() {
         </div>
       </div>
 
-      <!-- AI Monthly Insight (rendered async below) -->
+      <!-- Monthly Insight (rendered async below) -->
       <div data-finance-section="month-insight" style="padding:0 16px 16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-          <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">AI monthly insight</div>
-          <button type="button" onclick="(function(){var d=new Date();window.aiMonthlyInsight && window.aiMonthlyInsight(d.getFullYear(), d.getMonth()+1);})()" style="background:none;border:none;color:var(--accent,#f0a500);font-size:11px;cursor:pointer;font-weight:600;">Refresh</button>
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">Monthly insight</div>
+          <button type="button" onclick="(function(){var d=new Date();window.renderMonthlyInsight && window.renderMonthlyInsight(d.getFullYear(), d.getMonth()+1);})()" style="background:none;border:none;color:var(--accent,#f0a500);font-size:11px;cursor:pointer;font-weight:600;">Refresh</button>
         </div>
         <div id="aiInsightSlot"></div>
       </div>
@@ -5177,12 +5650,10 @@ async function renderFinancePanel() {
 
     body.innerHTML = html;
     if (typeof renderFinanceCategoryBreakdown === 'function') renderFinanceCategoryBreakdown();
-    // Kick off AI monthly insight in the background — it fails silently if
-    // AI is disabled, so the panel renders normally either way.
     try {
       const d = new Date();
-      if (typeof window.aiMonthlyInsight === 'function') {
-        window.aiMonthlyInsight(d.getFullYear(), d.getMonth() + 1);
+      if (typeof window.renderMonthlyInsight === 'function') {
+        window.renderMonthlyInsight(d.getFullYear(), d.getMonth() + 1);
       }
     } catch (_) { /* noop */ }
     // #140: honour pending scroll target set by window.openFinanceAt. The Home

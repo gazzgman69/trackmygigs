@@ -1,5 +1,5 @@
 // ── TrackMyGigs AI features (Claude Haiku 4.5) ───────────────────────────────
-// One module, 9 features. Each feature is a small self-contained function that
+// One module, 8 features. Each feature is a small self-contained function that
 // opens a minimal modal, posts to /api/ai/..., and either applies the result to
 // an existing screen or displays it inline. No framework dependency, same
 // vanilla DOM style as app.js.
@@ -11,7 +11,6 @@
 //   aiSetListGenerator()        — generates an ordered set list from repertoire
 //   aiInvoiceChase(invoiceId)   — drafts three chase emails for an invoice
 //   aiBioWriter()               — writes three bios (short/medium/long) for EPK
-//   aiMonthlyInsight(year, month) — renders a narrative card into #aiInsightSlot
 //   aiSanityCheck(fields, cb)   — runs on gig save; warns before submit
 //   aiChordProNormalise()       — normalises messy chord text in ChordPro tab
 //
@@ -567,33 +566,7 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // FEATURE 7 — Monthly Insight Narrative
-  // ═══════════════════════════════════════════════════════════════════════════
-  async function aiMonthlyInsight(year, month, targetEl) {
-    const slot = targetEl || document.getElementById('aiInsightSlot');
-    if (!slot) return;
-    slot.innerHTML = '';
-    slot.appendChild(spinner('Analysing your month...'));
-    const data = await postAI('/month-summary', { year, month });
-    slot.innerHTML = '';
-    if (!data) return;
-    const hl = (data.highlights || []).map((x) => `<li style="margin-bottom:4px;">${esc(x)}</li>`).join('');
-    const sg = (data.suggestions || []).map((x) => `<li style="margin-bottom:4px;">${esc(x)}</li>`).join('');
-    slot.appendChild(h(`
-      <div class="ai-result-card" style="margin-top:0;">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-          <span style="font-size:18px;">&#128221;</span>
-          <div style="font-weight:700;">${esc(data.headline || 'Your month')}</div>
-        </div>
-        <div style="font-size:13px;line-height:1.55;margin-bottom:10px;">${esc(data.summary || '')}</div>
-        ${hl ? `<div style="font-size:12px;color:var(--text-2,#ccc);font-weight:600;margin-bottom:4px;">Highlights</div><ul style="margin:0 0 10px;padding-left:18px;font-size:13px;line-height:1.5;">${hl}</ul>` : ''}
-        ${sg ? `<div style="font-size:12px;color:var(--text-2,#ccc);font-weight:600;margin-bottom:4px;">Try next month</div><ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;">${sg}</ul>` : ''}
-      </div>
-    `));
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // FEATURE 8 — Sanity Checks (called before saving a new gig)
+  // FEATURE 7 — Sanity Checks (called before saving a new gig)
   // fields: { date, start_time, venue_address, fee }
   // cb(proceed: boolean, ackedWarnings: array)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -625,7 +598,7 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // FEATURE 9 — ChordPro Normaliser
+  // FEATURE 8 — ChordPro Normaliser
   // ═══════════════════════════════════════════════════════════════════════════
   function aiChordProNormalise(opts) {
     const onApply = (opts && opts.onApply) || null;
@@ -701,7 +674,6 @@
     aiSetListGenerator,
     aiInvoiceChase,
     aiBioWriter,
-    aiMonthlyInsight,
     aiSanityCheck,
     aiChordProNormalise,
   });
