@@ -1536,13 +1536,30 @@ function renderGigsList(gigs) {
       <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px;">
         ${barChartHtml}
       </div>
-      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">All gigs &middot; most recent first</div>
+      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">All gigs &middot; upcoming first</div>
     `;
   }
 
   // Sort filtered gigs
   if (gigViewMode === 'year') {
-    viewFiltered.sort((a, b) => (b.date || '').localeCompare(a.date || '')); // newest first for yearly
+    // Yearly: date order starting from today.
+    // Upcoming (today onwards) soonest-first, then past below (most recent first).
+    const todayKey = (() => {
+      const n = new Date();
+      const y = n.getFullYear();
+      const m = String(n.getMonth() + 1).padStart(2, '0');
+      const d = String(n.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    })();
+    viewFiltered.sort((a, b) => {
+      const ad = (a.date || '').substring(0, 10);
+      const bd = (b.date || '').substring(0, 10);
+      const aFuture = ad >= todayKey;
+      const bFuture = bd >= todayKey;
+      if (aFuture !== bFuture) return aFuture ? -1 : 1; // upcoming block first
+      if (aFuture) return ad.localeCompare(bd);         // upcoming: ascending
+      return bd.localeCompare(ad);                      // past: descending
+    });
   } else {
     viewFiltered.sort((a, b) => (a.date || '').localeCompare(b.date || '')); // oldest first for week/month
   }
