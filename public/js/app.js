@@ -3890,6 +3890,12 @@ function openGigWizard() {
     gig_type: '',
     dress_code: '',
     notes: '',
+    // Teaching-specific: only populated when gig_type === 'Teaching'.
+    // Server derives fee from rate_per_hour * duration when these are present.
+    client_name: '',
+    client_email: '',
+    client_phone: '',
+    rate_per_hour: '',
   };
   renderCreateGigScreen();
   showScreen('createGig');
@@ -4089,6 +4095,7 @@ function renderWizardStep(step) {
         </div>
         <div id="feeBenchmarkChip" style="margin-top:10px;"></div>
       </div>
+      ${renderTeachingBlock()}
       <div class="form-group">
         <label class="form-label">Dress code</label>
         <input
@@ -4150,10 +4157,15 @@ function renderFeeBenchmarkChip() {
     host.innerHTML = '';
     return;
   }
+  // For Teaching, compare against the user's hourly rate (not the derived fee),
+  // since the benchmark for teaching is also expressed per hour.
+  const feeForBench = gigWizardData.gig_type === 'Teaching'
+    ? gigWizardData.rate_per_hour
+    : gigWizardData.fee;
   const b = window.FeeBenchmarks.getBenchmark({
     gig_type: gigWizardData.gig_type,
     address: gigWizardData.venue_address,
-    fee: gigWizardData.fee,
+    fee: feeForBench,
   });
   if (!b) {
     host.innerHTML = '';
@@ -4165,6 +4177,145 @@ function renderFeeBenchmarkChip() {
       <div style="color:var(--text-3);font-size:10px;margin-top:4px;">${escapeHtml(b.meta)}</div>
     </div>
   `;
+}
+
+// ── Teaching helpers ────────────────────────────────────────────────────────
+// Mirror of server-side deriveTeachingFee: rate × (duration in hours), 2dp.
+// Returns null if inputs are missing so the UI can show a friendly hint.
+function deriveTeachingFeeClient(startTime, endTime, ratePerHour) {
+  const rate = parseFloat(ratePerHour);
+  if (!rate || rate <= 0) return null;
+  if (!startTime || !endTime) return null;
+  const [sh, sm] = String(startTime).split(':').map(Number);
+  const [eh, em] = String(endTime).split(':').map(Number);
+  if ([sh, sm, eh, em].some((n) => !Number.isFinite(n))) return null;
+  let mins = eh * 60 + em - (sh * 60 + sm);
+  if (mins <= 0) return null;
+  return Math.round(rate * (mins / 60) * 100) / 100;
+}
+
+function renderTeachingBlock() {
+  if (gigWizardData.gig_type !== 'Teaching') return '';
+  const d = gigWizardData;
+  const derived = deriveTeachingFeeClient(d.start_time, d.end_time, d.rate_per_hour);
+  let feePreview = '';
+  if (derived != null) {
+    const hrs = (() => {
+      const [sh, sm] = String(d.start_time).split(':').map(Number);
+      const [eh, em] = String(d.end_time).split(':').map(Number);
+      const mins = eh * 60 + em - (sh * 60 + sm);
+      return Math.round((mins / 60) * 100) / 100;
+    })();
+    feePreview = `That\u2019s \u00A3${derived.toFixed(2)} for ${hrs} hour${hrs === 1 ? '' : 's'}.`;
+  } else if (d.rate_per_hour && !d.start_time) {
+    feePreview = 'Add start/end times on Step 3 to preview the lesson fee.';
+  }
+  return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:16px;">
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">\u{1F4DA} Teaching details</div>
+      <div style="font-size:11px;color:var(--text-3);margin-bottom:10px;line-height:1.45;">We\u2019ll work the lesson fee out from your hourly rate and the times on Step 3.</div>
+      <div class="form-group" style="margin-bottom:10px;">
+        <label class="form-label">Student / client name</label>
+        <input
+          type="text"
+          class="form-input"
+          id="wClientName"
+          placeholder="e.g. Sam Patel"
+          value="${escapeHtml(d.client_name)}"
+          oninput="captureTeachingField('client_name', this.value)"
+        >
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-group" style="margin-bottom:10px;">
+          <label class="form-label">Email (optional)</label>
+          <input
+            type="email"
+            class="form-input"
+            id="wClientEmail"
+            placeholder="sam@example.com"
+            value="${escapeHtml(d.client_email)}"
+            oninput="captureTeachingField('client_email', this.value)"
+          >
+        </div>
+        <div class="form-group" style="margin-bottom:10px;">
+          <label class="form-label">Phone (optional)</label>
+          <input
+            type="tel"
+            class="form-input"
+            id="wClientPhone"
+            placeholder="07..."
+            value="${escapeHtml(d.client_phone)}"
+            oninput="captureTeachingField('client_phone', this.value)"
+          >
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label class="form-label">Rate per hour (\u00A3)</label>
+        <input
+          type="number"
+          class="form-input"
+          id="wRatePerHour"
+          placeholder="35"
+          min="0"
+          step="1"
+          inputmode="decimal"
+          value="${escapeHtml(String(d.rate_per_hour))}"
+          oninput="captureTeachingRate(this.value)"
+        >
+        <div id="wTeachingFeePreview" style="margin-top:6px;font-size:12px;color:var(--text-2);min-height:18px;">${escapeHtml(feePreview)}</div>
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);">
+        <a onclick="openTeachingTermFromWizard()" style="display:inline-block;font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;text-decoration:none;">
+          \u{1F4C5} Teaching a whole term? Set up multiple lessons at once \u2192
+        </a>
+      </div>
+    </div>
+  `;
+}
+
+// Shortcut from the wizard into the bulk term panel. Seeds the panel with any
+// client name / rate the user already typed so they don't have to re-type it.
+function openTeachingTermFromWizard() {
+  captureStep5Fields();
+  window._teachingTermSeed = {
+    client_name: gigWizardData.client_name || '',
+    client_email: gigWizardData.client_email || '',
+    client_phone: gigWizardData.client_phone || '',
+    rate_per_hour: gigWizardData.rate_per_hour || '',
+  };
+  openPanel('panel-teaching-term');
+}
+
+// Live-capture handlers so the user's typing survives a re-render triggered by
+// changing gig type or re-painting the benchmark chip.
+function captureTeachingField(key, value) {
+  if (!(key in gigWizardData)) return;
+  gigWizardData[key] = value;
+}
+
+function captureTeachingRate(value) {
+  gigWizardData.rate_per_hour = value;
+  // Repaint fee preview and benchmark chip in place (no full re-render, to
+  // avoid yanking focus from the input as the user types).
+  const preview = document.getElementById('wTeachingFeePreview');
+  if (preview) {
+    const derived = deriveTeachingFeeClient(
+      gigWizardData.start_time,
+      gigWizardData.end_time,
+      value
+    );
+    if (derived != null) {
+      const [sh, sm] = String(gigWizardData.start_time).split(':').map(Number);
+      const [eh, em] = String(gigWizardData.end_time).split(':').map(Number);
+      const hrs = Math.round(((eh * 60 + em - (sh * 60 + sm)) / 60) * 100) / 100;
+      preview.textContent = `That\u2019s \u00A3${derived.toFixed(2)} for ${hrs} hour${hrs === 1 ? '' : 's'}.`;
+    } else if (value && !gigWizardData.start_time) {
+      preview.textContent = 'Add start/end times on Step 3 to preview the lesson fee.';
+    } else {
+      preview.textContent = '';
+    }
+  }
+  renderFeeBenchmarkChip();
 }
 
 function wizardNext() {
@@ -4202,10 +4353,14 @@ function wizardNext() {
     gigWizardData.fee = document.getElementById('wFee')?.value || '';
     // status is saved live via selectGigStatus()
   } else if (step === 5) {
-    gigWizardData.dress_code =
-      document.getElementById('wDressCode')?.value?.trim() || '';
-    gigWizardData.notes =
-      document.getElementById('wNotes')?.value?.trim() || '';
+    // captureStep5Fields grabs the teaching inputs too; trim the text fields
+    // that have always been trimmed.
+    captureStep5Fields();
+    gigWizardData.dress_code = (gigWizardData.dress_code || '').trim();
+    gigWizardData.notes = (gigWizardData.notes || '').trim();
+    gigWizardData.client_name = (gigWizardData.client_name || '').trim();
+    gigWizardData.client_email = (gigWizardData.client_email || '').trim();
+    gigWizardData.client_phone = (gigWizardData.client_phone || '').trim();
     submitGigWizard();
     return;
   }
@@ -4219,6 +4374,12 @@ function wizardBack() {
   if (gigWizardStep === 1) {
     showScreen('gigs');
     return;
+  }
+  // Preserve whatever the user typed on the current step before navigating.
+  if (gigWizardStep === 5) captureStep5Fields();
+  if (gigWizardStep === 4) {
+    const feeEl = document.getElementById('wFee');
+    if (feeEl) gigWizardData.fee = feeEl.value || '';
   }
   gigWizardStep--;
   renderWizardStep(gigWizardStep);
@@ -4235,7 +4396,12 @@ function selectGigStatus(status) {
 }
 
 function toggleGigType(type, btn) {
-  if (gigWizardData.gig_type === type) {
+  // Capture any in-flight field values before a potential re-render, so the
+  // user's typing in dress code / notes / teaching inputs doesn't get lost.
+  captureStep5Fields();
+
+  const prevType = gigWizardData.gig_type;
+  if (prevType === type) {
     gigWizardData.gig_type = '';
     btn.classList.remove('selected');
   } else {
@@ -4245,8 +4411,32 @@ function toggleGigType(type, btn) {
       .forEach((c) => c.classList.remove('selected'));
     btn.classList.add('selected');
   }
-  // Refresh the fee benchmark chip since gig_type just changed.
+
+  // If Teaching is turning on or off, we need a full Step 5 re-render to
+  // add/remove the teaching details block. Otherwise a chip repaint is enough.
+  const teachingChanged = (prevType === 'Teaching') !== (gigWizardData.gig_type === 'Teaching');
+  if (teachingChanged) {
+    renderWizardStep(5);
+    return;
+  }
   renderFeeBenchmarkChip();
+}
+
+// Capture all editable fields on Step 5 into gigWizardData. Safe to call even
+// when the teaching block isn't rendered (the lookups just no-op).
+function captureStep5Fields() {
+  const dress = document.getElementById('wDressCode');
+  if (dress) gigWizardData.dress_code = dress.value;
+  const notes = document.getElementById('wNotes');
+  if (notes) gigWizardData.notes = notes.value;
+  const cn = document.getElementById('wClientName');
+  if (cn) gigWizardData.client_name = cn.value;
+  const ce = document.getElementById('wClientEmail');
+  if (ce) gigWizardData.client_email = ce.value;
+  const cp = document.getElementById('wClientPhone');
+  if (cp) gigWizardData.client_phone = cp.value;
+  const rate = document.getElementById('wRatePerHour');
+  if (rate) gigWizardData.rate_per_hour = rate.value;
 }
 
 function selectBand(btn) {
@@ -4578,6 +4768,15 @@ async function submitGigWizard() {
       gig_type: gigWizardData.gig_type || null,
       dress_code: gigWizardData.dress_code || null,
       mileage_miles: gigWizardData.mileage_miles || null,
+      // Teaching-only fields: only send when gig type is Teaching, so a user
+      // who typed a rate then switched gig type doesn't save ghost data.
+      client_name: gigWizardData.gig_type === 'Teaching' ? (gigWizardData.client_name || null) : null,
+      client_email: gigWizardData.gig_type === 'Teaching' ? (gigWizardData.client_email || null) : null,
+      client_phone: gigWizardData.gig_type === 'Teaching' ? (gigWizardData.client_phone || null) : null,
+      rate_per_hour:
+        gigWizardData.gig_type === 'Teaching' && gigWizardData.rate_per_hour
+          ? parseFloat(gigWizardData.rate_per_hour)
+          : null,
       source: 'manual',
     };
 
@@ -4744,6 +4943,28 @@ function renderFullGigForm() {
           <label class="form-label">Dress code</label>
           <input type="text" class="form-input" name="dress_code" value="${escapeHtml(d.dress_code)}" placeholder="e.g. Black tie">
         </div>
+        <div id="fullFormTeachingBlock" style="display:${d.gig_type === 'Teaching' ? 'block' : 'none'};background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:16px;">
+          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">\u{1F4DA} Teaching details</div>
+          <div style="font-size:11px;color:var(--text-3);margin-bottom:10px;line-height:1.45;">Rate \u00D7 lesson duration sets the fee automatically.</div>
+          <div class="form-group" style="margin-bottom:10px;">
+            <label class="form-label">Student / client name</label>
+            <input type="text" class="form-input" name="client_name" value="${escapeHtml(d.client_name || '')}" placeholder="e.g. Sam Patel">
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="form-group" style="margin-bottom:10px;">
+              <label class="form-label">Email</label>
+              <input type="email" class="form-input" name="client_email" value="${escapeHtml(d.client_email || '')}" placeholder="sam@example.com">
+            </div>
+            <div class="form-group" style="margin-bottom:10px;">
+              <label class="form-label">Phone</label>
+              <input type="tel" class="form-input" name="client_phone" value="${escapeHtml(d.client_phone || '')}" placeholder="07...">
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label">Rate per hour (\u00A3)</label>
+            <input type="number" class="form-input" name="rate_per_hour" value="${escapeHtml(String(d.rate_per_hour || ''))}" placeholder="35" min="0" step="1">
+          </div>
+        </div>
         <div class="form-group">
           <label class="form-label">Notes</label>
           <textarea class="form-textarea" name="notes" placeholder="Parking info, contacts, anything useful..." rows="3">${escapeHtml(d.notes)}</textarea>
@@ -4781,6 +5002,16 @@ function renderFullGigForm() {
     data.status = gigWizardData.status || 'confirmed';
     data.source = gigWizardData.source || 'manual';
     data.gig_type = gigWizardData.gig_type || null;
+    // Teaching-only fields: only send when gig type is Teaching. The form
+    // inputs stay in the DOM even when hidden, so guard against stale values.
+    if (data.gig_type !== 'Teaching') {
+      data.client_name = null;
+      data.client_email = null;
+      data.client_phone = null;
+      data.rate_per_hour = null;
+    } else if (data.rate_per_hour) {
+      data.rate_per_hour = parseFloat(data.rate_per_hour);
+    }
 
     try {
       const response = await fetch('/api/gigs', {
@@ -4884,6 +5115,290 @@ function openPanel(id) {
   if (id === 'panel-chat-inbox') { if (typeof renderChatInbox === 'function') renderChatInbox(); }
   if (id === 'panel-notifications-settings') { if (typeof loadNotificationSettings === 'function') loadNotificationSettings(); }
   if (id === 'panel-dep') { if (typeof initDepPanel === 'function') initDepPanel(); }
+  if (id === 'panel-teaching-term') { if (typeof initTeachingTermPanel === 'function') initTeachingTermPanel(); }
+}
+
+// ── Teaching term (bulk weekly lesson creator) ──────────────────────────────
+
+// State lives on window so the panel can be re-initialized cleanly.
+window._teachingTerm = window._teachingTerm || null;
+
+function initTeachingTermPanel() {
+  const body = document.getElementById('teachingTermBody');
+  if (!body) return;
+  // Seed with sensible defaults the first time. On re-open, keep prior values
+  // so a failed submit doesn't lose the user's inputs.
+  if (!window._teachingTerm) {
+    const today = new Date();
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const toDate = new Date(today);
+    toDate.setDate(toDate.getDate() + 84); // default: 12 weeks
+    const seed = window._teachingTermSeed || {};
+    window._teachingTerm = {
+      client_name: seed.client_name || '',
+      client_email: seed.client_email || '',
+      client_phone: seed.client_phone || '',
+      venue_name: 'Lessons',
+      venue_address: '',
+      weekday: String(today.getDay()),
+      start_time: '16:00',
+      end_time: '17:00',
+      rate_per_hour: seed.rate_per_hour || '',
+      from_date: iso(today),
+      to_date: iso(toDate),
+      skip_dates: '',
+      band_name: '',
+    };
+    // Consume the seed so reopening later doesn't overwrite user edits.
+    window._teachingTermSeed = null;
+  }
+  renderTeachingTermPanel();
+}
+
+function renderTeachingTermPanel() {
+  const body = document.getElementById('teachingTermBody');
+  if (!body) return;
+  const t = window._teachingTerm || {};
+  const weekdays = [
+    { v: '0', label: 'Sun' },
+    { v: '1', label: 'Mon' },
+    { v: '2', label: 'Tue' },
+    { v: '3', label: 'Wed' },
+    { v: '4', label: 'Thu' },
+    { v: '5', label: 'Fri' },
+    { v: '6', label: 'Sat' },
+  ];
+  body.innerHTML = `
+    <div style="font-size:12px;color:var(--text-2);margin-bottom:16px;line-height:1.5;">
+      Set up a weekly lesson pattern, and we\u2019ll create one gig per session across the term.
+    </div>
+    <div class="form-section-label">Student</div>
+    <input type="text" class="form-input" id="ttClientName" placeholder="Name (required)" value="${escapeAttr(t.client_name)}" oninput="updateTeachingTerm('client_name', this.value)" style="margin-bottom:8px">
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <input type="email" class="form-input" id="ttClientEmail" placeholder="Email" value="${escapeAttr(t.client_email)}" oninput="updateTeachingTerm('client_email', this.value)" style="flex:1">
+      <input type="tel" class="form-input" id="ttClientPhone" placeholder="Phone" value="${escapeAttr(t.client_phone)}" oninput="updateTeachingTerm('client_phone', this.value)" style="flex:1">
+    </div>
+
+    <div class="form-section-label">Where</div>
+    <input type="text" class="form-input" id="ttVenueName" placeholder="e.g. Home studio, Student&rsquo;s house" value="${escapeAttr(t.venue_name)}" oninput="updateTeachingTerm('venue_name', this.value)" style="margin-bottom:8px">
+    <input type="text" class="form-input" id="ttVenueAddress" placeholder="Address (optional)" value="${escapeAttr(t.venue_address)}" oninput="updateTeachingTerm('venue_address', this.value)" style="margin-bottom:16px">
+
+    <div class="form-section-label">Repeats every</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;">
+      ${weekdays.map((d) => `
+        <button type="button" class="day-btn${t.weekday === d.v ? ' active' : ''}" onclick="setTeachingTermWeekday('${d.v}')" style="${t.weekday === d.v ? 'background:var(--accent);color:#000;border-color:var(--accent);' : ''}">${d.label}</button>
+      `).join('')}
+    </div>
+
+    <div class="form-section-label">Time</div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <div style="flex:1;">
+        <div class="form-label">Start</div>
+        <input type="time" class="form-input" id="ttStart" value="${escapeAttr(t.start_time)}" oninput="updateTeachingTerm('start_time', this.value); renderTeachingTermPreview();">
+      </div>
+      <div style="flex:1;">
+        <div class="form-label">End</div>
+        <input type="time" class="form-input" id="ttEnd" value="${escapeAttr(t.end_time)}" oninput="updateTeachingTerm('end_time', this.value); renderTeachingTermPreview();">
+      </div>
+    </div>
+
+    <div class="form-section-label">Rate per hour (\u00A3)</div>
+    <input type="number" class="form-input" id="ttRate" min="0" step="1" inputmode="decimal" value="${escapeAttr(String(t.rate_per_hour || ''))}" placeholder="35" oninput="updateTeachingTerm('rate_per_hour', this.value); renderTeachingTermPreview();" style="margin-bottom:16px;">
+
+    <div class="form-section-label">Term dates</div>
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <div style="flex:1;">
+        <div class="form-label">From</div>
+        <input type="date" class="form-input" id="ttFrom" value="${escapeAttr(t.from_date)}" oninput="updateTeachingTerm('from_date', this.value); renderTeachingTermPreview();">
+      </div>
+      <div style="flex:1;">
+        <div class="form-label">To</div>
+        <input type="date" class="form-input" id="ttTo" value="${escapeAttr(t.to_date)}" oninput="updateTeachingTerm('to_date', this.value); renderTeachingTermPreview();">
+      </div>
+    </div>
+    <div class="form-label" style="margin-top:8px;">Skip dates (optional)</div>
+    <input type="text" class="form-input" id="ttSkip" placeholder="e.g. 2026-05-25, 2026-06-01 (half term)" value="${escapeAttr(t.skip_dates)}" oninput="updateTeachingTerm('skip_dates', this.value); renderTeachingTermPreview();" style="margin-bottom:16px;">
+
+    <div id="ttPreview" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px;font-size:13px;color:var(--text-2);"></div>
+
+    <div id="ttError" class="alert alert-error" style="display:none;margin-bottom:12px;"></div>
+    <button class="btn-pill" id="ttSubmitBtn" onclick="submitTeachingTerm()">Create lessons</button>
+  `;
+  renderTeachingTermPreview();
+}
+
+function updateTeachingTerm(key, value) {
+  if (!window._teachingTerm) return;
+  window._teachingTerm[key] = value;
+}
+
+function setTeachingTermWeekday(v) {
+  if (!window._teachingTerm) return;
+  window._teachingTerm.weekday = v;
+  renderTeachingTermPanel();
+}
+
+// Build the list of lesson dates the term will produce, given the current
+// inputs. Returns { dates, warnings, error }. Dates are ISO yyyy-mm-dd strings.
+function computeTeachingTermDates() {
+  const t = window._teachingTerm || {};
+  const warnings = [];
+  if (!t.from_date || !t.to_date) return { dates: [], warnings, error: 'Pick from and to dates.' };
+  const weekday = Number(t.weekday);
+  if (!(weekday >= 0 && weekday <= 6)) return { dates: [], warnings, error: 'Pick a weekday.' };
+  const from = new Date(t.from_date + 'T00:00:00Z');
+  const to = new Date(t.to_date + 'T00:00:00Z');
+  if (isNaN(from) || isNaN(to)) return { dates: [], warnings, error: 'Dates look invalid.' };
+  if (to < from) return { dates: [], warnings, error: '\u201CTo\u201D date is before \u201Cfrom\u201D.' };
+
+  // Parse skip dates (comma / newline / space separated).
+  const skipSet = new Set(
+    String(t.skip_dates || '')
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+
+  const dates = [];
+  const MAX = 80;
+  // Walk forward from `from` to the first matching weekday.
+  const cursor = new Date(from);
+  while (cursor.getUTCDay() !== weekday && cursor <= to) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  while (cursor <= to && dates.length < MAX) {
+    const iso = cursor.toISOString().slice(0, 10);
+    if (!skipSet.has(iso)) dates.push(iso);
+    cursor.setUTCDate(cursor.getUTCDate() + 7);
+  }
+  if (dates.length === MAX) warnings.push(`Capped at ${MAX} lessons. Split a long term into chunks.`);
+
+  return { dates, warnings, error: null };
+}
+
+function renderTeachingTermPreview() {
+  const preview = document.getElementById('ttPreview');
+  if (!preview) return;
+  const t = window._teachingTerm || {};
+  const { dates, warnings, error } = computeTeachingTermDates();
+  const rate = parseFloat(t.rate_per_hour);
+  const feePerLesson = deriveTeachingFeeClient(t.start_time, t.end_time, rate);
+
+  if (error) {
+    preview.innerHTML = `<div style="color:var(--text-3);">${escapeHtml(error)}</div>`;
+    return;
+  }
+  if (dates.length === 0) {
+    preview.innerHTML = `<div style="color:var(--text-3);">No lessons fall in that date range on the chosen weekday.</div>`;
+    return;
+  }
+
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  const lessonLabel = dates.length === 1 ? 'lesson' : 'lessons';
+  const feeTotal = feePerLesson != null ? (feePerLesson * dates.length) : null;
+  const feeLine = feePerLesson != null
+    ? `<div style="color:var(--text);"><strong>\u00A3${feePerLesson.toFixed(2)}</strong> per lesson \u00B7 <strong>\u00A3${feeTotal.toFixed(2)}</strong> total for the term.</div>`
+    : `<div style="color:var(--text-3);">Add a rate and times to see the fee.</div>`;
+  const warnLine = warnings.length
+    ? `<div style="color:var(--warning);font-size:11px;margin-top:6px;">\u26A0\uFE0F ${escapeHtml(warnings.join(' '))}</div>`
+    : '';
+
+  preview.innerHTML = `
+    <div style="font-weight:700;color:var(--text);margin-bottom:4px;">${dates.length} ${lessonLabel}</div>
+    <div style="color:var(--text-2);margin-bottom:6px;">${escapeHtml(first)} \u2192 ${escapeHtml(last)}</div>
+    ${feeLine}
+    ${warnLine}
+  `;
+}
+
+async function submitTeachingTerm() {
+  const t = window._teachingTerm || {};
+  const btn = document.getElementById('ttSubmitBtn');
+  const errEl = document.getElementById('ttError');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  // Client-side validation.
+  if (!t.client_name || !t.client_name.trim()) {
+    if (errEl) { errEl.textContent = 'Student name is required.'; errEl.style.display = 'block'; }
+    return;
+  }
+  const rate = parseFloat(t.rate_per_hour);
+  if (!rate || rate <= 0) {
+    if (errEl) { errEl.textContent = 'Rate per hour must be greater than zero.'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (!t.start_time || !t.end_time) {
+    if (errEl) { errEl.textContent = 'Lesson start and end times are required.'; errEl.style.display = 'block'; }
+    return;
+  }
+  const { dates, error } = computeTeachingTermDates();
+  if (error) {
+    if (errEl) { errEl.textContent = error; errEl.style.display = 'block'; }
+    return;
+  }
+  if (dates.length === 0) {
+    if (errEl) { errEl.textContent = 'No lessons fall in that date range on the chosen weekday.'; errEl.style.display = 'block'; }
+    return;
+  }
+
+  if (btn) { btn.textContent = 'Creating...'; btn.disabled = true; }
+
+  const payload = {
+    client_name: t.client_name.trim(),
+    client_email: (t.client_email || '').trim() || null,
+    client_phone: (t.client_phone || '').trim() || null,
+    band_name: (t.band_name || t.client_name || '').trim(),
+    venue_name: (t.venue_name || 'Lessons').trim(),
+    venue_address: (t.venue_address || '').trim() || null,
+    weekday: Number(t.weekday),
+    start_time: t.start_time,
+    end_time: t.end_time,
+    rate_per_hour: rate,
+    from_date: t.from_date,
+    to_date: t.to_date,
+    skip_dates: String(t.skip_dates || '')
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+  };
+
+  try {
+    const resp = await fetch('/api/gigs/teaching-term', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      let msg = 'Failed to create lessons';
+      try { const err = await resp.json(); msg = err.error || msg; } catch (_) {}
+      if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+      if (btn) { btn.textContent = 'Create lessons'; btn.disabled = false; }
+      return;
+    }
+    const result = await resp.json();
+    // Refresh the gig cache so the new lessons show up everywhere.
+    window._cachedGigs = null;
+    closePanel('panel-teaching-term');
+    window._teachingTerm = null;
+    // Re-render whichever gigs-adjacent screen the user came from.
+    const gigsVisible =
+      document.getElementById('gigsScreen') &&
+      document.getElementById('gigsScreen').style.display !== 'none';
+    if (gigsVisible && typeof renderGigsScreen === 'function') {
+      renderGigsScreen();
+    } else if (typeof renderCalendarScreen === 'function') {
+      // Calendar pulls from the same cache, refresh it too so lessons appear.
+      try { renderCalendarScreen(); } catch (_) {}
+    }
+    if (typeof showToast === 'function') {
+      showToast(`${result.count || dates.length} lessons added.`);
+    }
+  } catch (e) {
+    console.error('submitTeachingTerm:', e);
+    if (errEl) { errEl.textContent = 'Network error. Try again.'; errEl.style.display = 'block'; }
+    if (btn) { btn.textContent = 'Create lessons'; btn.disabled = false; }
+  }
 }
 
 // ── Notifications Panel ─────────────────────────────────────────────────────
@@ -9509,7 +10024,200 @@ function initInvoicePanel() {
 
   document.getElementById('sendInvoiceBtn').onclick = submitInvoice;
   document.getElementById('saveInvoiceDraft').onclick = () => saveInvoiceDraft();
+
+  // Reset the teaching bundle panel to a clean state each time Invoice opens.
+  window._invBundleSelected = null;
+  const bundle = document.getElementById('invTeachingBundle');
+  if (bundle) bundle.style.display = 'none';
+  const toggle = document.getElementById('invTeachingBundleToggle');
+  if (toggle) toggle.innerHTML = '\uD83D\uDCDA Bundle teaching lessons into this invoice \u2192';
+  const bundleResults = document.getElementById('invBundleResults');
+  if (bundleResults) bundleResults.innerHTML = '';
 }
+
+// ── Teaching lesson bundling ─────────────────────────────────────────────────
+// Lets a teacher pull every Teaching gig for a given student in a date range
+// into a single invoice. We sum the fees and write a single-line description
+// (the per-lesson breakdown stays in the gig records, not the invoice row).
+
+function toggleInvoiceTeachingBundle() {
+  const el = document.getElementById('invTeachingBundle');
+  const toggle = document.getElementById('invTeachingBundleToggle');
+  if (!el || !toggle) return;
+  const isOpen = el.style.display !== 'none';
+  if (isOpen) {
+    el.style.display = 'none';
+    toggle.innerHTML = '\uD83D\uDCDA Bundle teaching lessons into this invoice \u2192';
+    return;
+  }
+  el.style.display = 'block';
+  toggle.innerHTML = '\uD83D\uDCDA Hide lesson bundle &#8595;';
+
+  // Prefill client field from Bill to so the common case needs zero typing.
+  const client = document.getElementById('invBundleClient');
+  const billTo = document.getElementById('invBillTo');
+  if (client && billTo && !client.value && billTo.value) client.value = billTo.value;
+
+  // Prefill date range: last 3 months to today.
+  const fromEl = document.getElementById('invBundleFrom');
+  const toEl = document.getElementById('invBundleTo');
+  if (fromEl && !fromEl.value) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 3);
+    fromEl.value = d.toISOString().slice(0, 10);
+  }
+  if (toEl && !toEl.value) {
+    toEl.value = new Date().toISOString().slice(0, 10);
+  }
+}
+
+function loadTeachingBundleCandidates() {
+  const results = document.getElementById('invBundleResults');
+  if (!results) return;
+  const raw = (document.getElementById('invBundleClient')?.value || '').trim().toLowerCase();
+  const fromStr = document.getElementById('invBundleFrom')?.value || '';
+  const toStr = document.getElementById('invBundleTo')?.value || '';
+  if (!raw) {
+    results.innerHTML = '<div style="color:var(--danger);font-size:12px;">Enter a student name or email.</div>';
+    return;
+  }
+  if (!fromStr || !toStr) {
+    results.innerHTML = '<div style="color:var(--danger);font-size:12px;">Pick both a From and To date.</div>';
+    return;
+  }
+  if (fromStr > toStr) {
+    results.innerHTML = '<div style="color:var(--danger);font-size:12px;">From date is after To date.</div>';
+    return;
+  }
+
+  const gigs = (window._cachedGigs || []).filter((g) => {
+    if ((g.gig_type || '') !== 'Teaching') return false;
+    if (!g.date) return false;
+    const d = String(g.date).slice(0, 10);
+    if (d < fromStr || d > toStr) return false;
+    const haystack = [g.client_name, g.client_email, g.band_name]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return haystack.indexOf(raw) !== -1;
+  });
+  gigs.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  if (gigs.length === 0) {
+    results.innerHTML = '<div style="color:var(--text-2);font-size:12px;">No teaching lessons match. Check the name/email or widen the date range.</div>';
+    return;
+  }
+
+  // Default: all found lessons are pre-selected. User can uncheck any they've
+  // already invoiced separately.
+  window._invBundleSelected = new Set(gigs.map((g) => g.id));
+  window._invBundleAll = gigs;
+
+  renderInvoiceBundleList();
+}
+
+function renderInvoiceBundleList() {
+  const results = document.getElementById('invBundleResults');
+  const gigs = window._invBundleAll || [];
+  const selected = window._invBundleSelected || new Set();
+  if (!results || gigs.length === 0) return;
+
+  const rows = gigs.map((g) => {
+    const checked = selected.has(g.id) ? 'checked' : '';
+    const d = new Date(String(g.date).slice(0, 10));
+    const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const timeStr = [g.start_time, g.end_time].filter(Boolean).join('\u2013') || '';
+    const fee = parseFloat(g.fee) || 0;
+    return `
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;">
+        <input type="checkbox" ${checked} onchange="toggleBundleLesson('${g.id}', this.checked)" style="width:18px;height:18px;flex-shrink:0;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(dateStr)}</div>
+          <div style="font-size:11px;color:var(--text-3);">${escapeHtml(timeStr)}</div>
+        </div>
+        <div style="font-size:13px;font-weight:700;color:var(--text);">\u00A3${fee.toFixed(2)}</div>
+      </label>
+    `;
+  }).join('');
+
+  const count = selected.size;
+  const total = gigs
+    .filter((g) => selected.has(g.id))
+    .reduce((acc, g) => acc + (parseFloat(g.fee) || 0), 0);
+
+  results.innerHTML = `
+    <div style="font-size:11px;color:var(--text-3);margin-bottom:6px;">${gigs.length} lesson${gigs.length === 1 ? '' : 's'} found. Uncheck any already invoiced.</div>
+    ${rows}
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;color:var(--text-2);">${count} selected</div>
+      <div style="font-size:16px;font-weight:800;color:var(--accent);">\u00A3${total.toFixed(2)}</div>
+    </div>
+    <button type="button" class="btn-pill" style="margin-top:10px;" onclick="applyTeachingBundleToInvoice()" ${count === 0 ? 'disabled' : ''}>
+      Use ${count} lesson${count === 1 ? '' : 's'} on this invoice
+    </button>
+  `;
+}
+
+function toggleBundleLesson(gigId, on) {
+  if (!window._invBundleSelected) return;
+  if (on) window._invBundleSelected.add(gigId);
+  else window._invBundleSelected.delete(gigId);
+  renderInvoiceBundleList();
+}
+
+function applyTeachingBundleToInvoice() {
+  const gigs = window._invBundleAll || [];
+  const selected = window._invBundleSelected || new Set();
+  const chosen = gigs.filter((g) => selected.has(g.id));
+  if (chosen.length === 0) return;
+
+  chosen.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const first = new Date(String(chosen[0].date).slice(0, 10));
+  const last = new Date(String(chosen[chosen.length - 1].date).slice(0, 10));
+  const fmt = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const total = chosen.reduce((acc, g) => acc + (parseFloat(g.fee) || 0), 0);
+
+  const studentName = chosen[0].client_name || chosen[0].band_name || '';
+
+  // Bill to defaults to the student's name if the field is empty.
+  const billToEl = document.getElementById('invBillTo');
+  if (billToEl && !billToEl.value && studentName) billToEl.value = studentName;
+
+  // Description reads naturally for the single-line invoice layout.
+  const descEl = document.getElementById('invDesc');
+  if (descEl) {
+    const dateRange = first.getTime() === last.getTime() ? fmt(first) : `${fmt(first)} \u2013 ${fmt(last)}`;
+    const who = studentName ? ` for ${studentName}` : '';
+    descEl.value = `Teaching: ${chosen.length} lesson${chosen.length === 1 ? '' : 's'}${who} (${dateRange})`;
+  }
+
+  const amtEl = document.getElementById('invAmount');
+  if (amtEl) amtEl.value = total.toFixed(2);
+
+  // Clear the linked-gig dropdown: a bundle can't point at a single gig.
+  const linked = document.getElementById('invLinkedGig');
+  if (linked) linked.value = '';
+  const venueRow = document.getElementById('invPreviewVenueRow');
+  if (venueRow) venueRow.style.display = 'none';
+  const gigPreview = document.getElementById('invPreviewGig');
+  if (gigPreview) {
+    gigPreview.textContent = `${chosen.length} teaching lesson${chosen.length === 1 ? '' : 's'}`;
+  }
+
+  updateInvoicePreview();
+  if (typeof showToast === 'function') showToast(`${chosen.length} lessons added, total \u00A3${total.toFixed(2)}.`);
+
+  // Collapse the bundle panel now that the invoice fields are populated.
+  const bundle = document.getElementById('invTeachingBundle');
+  if (bundle) bundle.style.display = 'none';
+  const toggle = document.getElementById('invTeachingBundleToggle');
+  if (toggle) toggle.innerHTML = '\uD83D\uDCDA Bundle teaching lessons into this invoice \u2192';
+}
+
+window.toggleInvoiceTeachingBundle = toggleInvoiceTeachingBundle;
+window.loadTeachingBundleCandidates = loadTeachingBundleCandidates;
+window.toggleBundleLesson = toggleBundleLesson;
+window.applyTeachingBundleToInvoice = applyTeachingBundleToInvoice;
 
 function populateGigDropdown() {
   const select = document.getElementById('invLinkedGig');

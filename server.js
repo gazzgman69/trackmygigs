@@ -317,6 +317,16 @@ async function runMigrations() {
     // required-start-time rule. Idempotent: only matches if both times are
     // still 00:00:00.
     await db.query(`DELETE FROM gigs WHERE id::text LIKE '1cc2b3e0%' AND start_time = '00:00:00'::time AND end_time = '00:00:00'::time`);
+    // Teaching gig support. Private lessons need a client contact that is
+    // distinct from the band/venue (the parent or the pupil) and an hourly
+    // rate that drives the per-lesson fee and the invoice bundler. These
+    // columns stay NULL for non-teaching rows.
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS client_name VARCHAR(255)`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS client_email VARCHAR(255)`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS client_phone VARCHAR(64)`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS rate_per_hour DECIMAL(10,2)`);
+    // Fast lookup for the bundler: "all teaching gigs for a client in a range"
+    await db.query(`CREATE INDEX IF NOT EXISTS gigs_teaching_client_idx ON gigs (user_id, gig_type, client_email) WHERE gig_type = 'Teaching'`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);

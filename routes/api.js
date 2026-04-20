@@ -51,6 +51,30 @@ router.get('/gigs', async (req, res) => {
   }
 });
 
+// Derive the stored fee from a rate per hour and the gig's start/end times.
+// Kept server-side so a client that only sends rate_per_hour still lands a
+// valid `fee` column (which Finance + invoicing read from).
+function deriveTeachingFee({ fee, rate_per_hour, start_time, end_time }) {
+  const feeNum = fee === null || fee === undefined || fee === '' ? NaN : parseFloat(fee);
+  if (!isNaN(feeNum) && feeNum > 0) return feeNum;
+  const rate = parseFloat(rate_per_hour);
+  if (!rate || isNaN(rate) || rate <= 0) return null;
+  if (!start_time || !end_time) return null;
+  // Times arrive as 'HH:MM' or 'HH:MM:SS'. Split + reduce to minutes for a
+  // lesson-safe duration (teaching slots are usually 30-60 min).
+  const toMin = (t) => {
+    const parts = String(t).split(':').map((n) => parseInt(n, 10));
+    if (parts.length < 2 || parts.some((n) => isNaN(n))) return NaN;
+    return parts[0] * 60 + parts[1];
+  };
+  const startMin = toMin(start_time);
+  const endMin = toMin(end_time);
+  if (isNaN(startMin) || isNaN(endMin) || endMin <= startMin) return null;
+  const hours = (endMin - startMin) / 60;
+  // Round to 2dp so 45 min at £50/hr lands on £37.50 cleanly.
+  return Math.round(rate * hours * 100) / 100;
+}
+
 router.post('/gigs', async (req, res) => {
   try {
     const {
@@ -70,11 +94,22 @@ router.post('/gigs', async (req, res) => {
       parking_info,
       day_of_contact,
       mileage_miles,
+      client_name,
+      client_email,
+      client_phone,
+      rate_per_hour,
     } = req.body;
 
+    // Teaching: if the client didn't include an explicit fee but did include
+    // a rate, compute the fee from rate x duration so Finance + the invoice
+    // bundler agree with the wizard.
+    const effectiveFee = gig_type === 'Teaching'
+      ? deriveTeachingFee({ fee, rate_per_hour, start_time, end_time })
+      : fee;
+
     const result = await db.query(
-      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, day_of_contact, mileage_miles)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, day_of_contact, mileage_miles, client_name, client_email, client_phone, rate_per_hour)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
        RETURNING *`,
       [
         req.user.id,
@@ -85,7 +120,7 @@ router.post('/gigs', async (req, res) => {
         start_time,
         end_time,
         load_in_time,
-        fee,
+        effectiveFee,
         status || 'confirmed',
         source || 'manual',
         dress_code,
@@ -94,6 +129,10 @@ router.post('/gigs', async (req, res) => {
         parking_info || null,
         day_of_contact || null,
         mileage_miles || null,
+        client_name || null,
+        client_email || null,
+        client_phone || null,
+        rate_per_hour || null,
       ]
     );
 
@@ -122,7 +161,14 @@ router.get('/gigs/:id', async (req, res) => {
 
 router.patch('/gigs/:id', async (req, res) => {
   try {
-    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, day_of_contact, mileage_miles } = req.body;
+    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, day_of_contact, mileage_miles, client_name, client_email, client_phone, rate_per_hour } = req.body;
+    // Teaching: recompute fee from rate if rate changed and fee wasn't sent
+    // explicitly. We only substitute when the caller didn't pass a fee, so an
+    // explicit £0 fee still wins (cancellation credits etc.).
+    let effectiveFee = fee;
+    if (gig_type === 'Teaching' && (fee === undefined || fee === null || fee === '') && rate_per_hour) {
+      effectiveFee = deriveTeachingFee({ fee, rate_per_hour, start_time, end_time });
+    }
     const result = await db.query(
       `UPDATE gigs SET
         band_name = COALESCE($1, band_name), venue_name = COALESCE($2, venue_name),
@@ -136,9 +182,13 @@ router.patch('/gigs/:id', async (req, res) => {
         set_times = COALESCE($18, set_times),
         parking_info = COALESCE($19, parking_info),
         day_of_contact = COALESCE($20, day_of_contact),
-        mileage_miles = COALESCE($21, mileage_miles)
+        mileage_miles = COALESCE($21, mileage_miles),
+        client_name = COALESCE($22, client_name),
+        client_email = COALESCE($23, client_email),
+        client_phone = COALESCE($24, client_phone),
+        rate_per_hour = COALESCE($25, rate_per_hour)
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, day_of_contact || null, mileage_miles != null ? mileage_miles : null]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, day_of_contact || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     const gig = result.rows[0];
@@ -162,6 +212,103 @@ router.delete('/gigs/:id', async (req, res) => {
   } catch (error) {
     console.error('Delete gig error:', error);
     res.status(500).json({ error: 'Failed to delete gig' });
+  }
+});
+
+// Bulk-create teaching gigs from a weekly recurrence pattern. Example body:
+//   { client_name, client_email, client_phone, rate_per_hour,
+//     weekday: 1 /* 0=Sun..6=Sat */, start_time: '16:30', end_time: '17:30',
+//     from_date: '2026-04-27', to_date: '2026-07-13',
+//     venue_name, venue_address, notes, skip_dates: ['2026-05-25'] }
+// Generates one Teaching gig per matching date in the range (inclusive), all
+// with gig_type='Teaching' and fee derived from rate x duration. Returns the
+// created gigs so the UI can refresh its cache. Bulk creation bypasses the
+// Google Calendar sync helper per-row; the client should trigger a Sync Now
+// after the response if they want to push the whole term to Google at once.
+router.post('/gigs/teaching-term', async (req, res) => {
+  try {
+    const {
+      client_name,
+      client_email,
+      client_phone,
+      rate_per_hour,
+      weekday,
+      start_time,
+      end_time,
+      from_date,
+      to_date,
+      band_name,
+      venue_name,
+      venue_address,
+      notes,
+      skip_dates,
+    } = req.body || {};
+
+    if (!start_time || !end_time) return res.status(400).json({ error: 'Start and end times required' });
+    if (!from_date || !to_date) return res.status(400).json({ error: 'Date range required' });
+    const wd = Number(weekday);
+    if (isNaN(wd) || wd < 0 || wd > 6) return res.status(400).json({ error: 'Weekday must be 0-6' });
+    const rate = parseFloat(rate_per_hour);
+    if (isNaN(rate) || rate <= 0) return res.status(400).json({ error: 'rate_per_hour required' });
+
+    // Build the date list entirely in UTC to avoid DST shifts and off-by-one
+    // errors when the server's local tz differs from the user's.
+    const start = new Date(from_date + 'T00:00:00Z');
+    const end = new Date(to_date + 'T00:00:00Z');
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) {
+      return res.status(400).json({ error: 'Invalid date range' });
+    }
+    const MAX_LESSONS = 80; // a full academic year of weekly lessons, with headroom
+    const skipSet = new Set(Array.isArray(skip_dates) ? skip_dates : []);
+    const dates = [];
+    const cur = new Date(start);
+    while (cur <= end) {
+      if (cur.getUTCDay() === wd) {
+        const iso = cur.toISOString().slice(0, 10);
+        if (!skipSet.has(iso)) dates.push(iso);
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    if (dates.length === 0) return res.status(400).json({ error: 'No dates match that weekday in the range' });
+    if (dates.length > MAX_LESSONS) return res.status(400).json({ error: `Range produced ${dates.length} lessons; max is ${MAX_LESSONS}` });
+
+    const fee = deriveTeachingFee({ rate_per_hour: rate, start_time, end_time });
+    const band = band_name || (client_name ? client_name + ' (lesson)' : 'Teaching');
+    const venue = venue_name || 'Lesson';
+
+    const created = [];
+    for (const date of dates) {
+      const row = await db.query(
+        `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, fee, status, source, notes, gig_type, client_name, client_email, client_phone, rate_per_hour)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', 'teaching_term', $9, 'Teaching', $10, $11, $12, $13)
+         RETURNING *`,
+        [
+          req.user.id,
+          band,
+          venue,
+          venue_address || null,
+          date,
+          start_time,
+          end_time,
+          fee,
+          notes || null,
+          client_name || null,
+          client_email || null,
+          client_phone || null,
+          rate,
+        ]
+      );
+      created.push(row.rows[0]);
+    }
+    // Fire Google Calendar syncs in the background but don't block the
+    // response on them. The client shows a success toast and the pins
+    // appear on the next Calendar refresh.
+    for (const g of created) syncGigSafely('create', req.user.id, g);
+
+    res.json({ count: created.length, gigs: created });
+  } catch (error) {
+    console.error('Teaching-term bulk create error:', error);
+    res.status(500).json({ error: 'Failed to create teaching term' });
   }
 });
 
