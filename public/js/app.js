@@ -2325,15 +2325,16 @@ function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
 
   const timedGigs = [];
   weekGigs.forEach(g => {
+    const gDate = (g.date || '').slice(0, 10);
     const sMin = toMin(g.start_time);
     if (sMin == null) {
-      allDayByDate[g.date].push({ kind: 'gig', label: g.band_name || 'Gig', id: g.id });
+      if (allDayByDate[gDate]) allDayByDate[gDate].push({ kind: 'gig', label: g.band_name || 'Gig', id: g.id });
     } else {
       const eMin = toMin(g.end_time) != null ? toMin(g.end_time) : Math.min(sMin + 180, 24 * 60 - 1);
       timedGigs.push({
         kind: 'gig',
         id: g.id,
-        dateStr: g.date,
+        dateStr: gDate,
         startMin: sMin,
         endMin: Math.max(eMin, sMin + 30),
         crossMidnight: eMin < sMin,
@@ -2345,15 +2346,16 @@ function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
 
   const timedPins = [];
   weekPins.forEach(p => {
+    const pDate = (p.date || '').slice(0, 10);
     if (p.all_day || !p.start_time) {
-      allDayByDate[p.date].push({ kind: 'pin', label: p.summary || 'Busy', id: p.id, isNudge: !!(window._calendarNudgesById && window._calendarNudgesById[p.id]) });
+      if (allDayByDate[pDate]) allDayByDate[pDate].push({ kind: 'pin', label: p.summary || 'Busy', id: p.id, isNudge: !!(window._calendarNudgesById && window._calendarNudgesById[p.id]) });
     } else {
       const sMin = toMin(p.start_time);
       const eMin = toMin(p.end_time) != null ? toMin(p.end_time) : sMin + 60;
       timedPins.push({
         kind: 'pin',
         id: p.id,
-        dateStr: p.date,
+        dateStr: pDate,
         startMin: sMin,
         endMin: Math.max(eMin, sMin + 30),
         crossMidnight: eMin < sMin,
@@ -4792,10 +4794,23 @@ async function renderNotificationsPanel() {
   if (!body) return;
 
   try {
-    const resp = await fetch('/api/notifications');
-    const notifications = await resp.json();
+    // Fetch server notifications and the calendar-nudge cache in parallel so
+    // the bell panel has a complete picture before painting. BUG #3 fix:
+    // calendar nudges used to be Calendar-screen-only, invisible from any
+    // other surface.
+    const [notifResp, nudges] = await Promise.all([
+      fetch('/api/notifications').then(r => r.json()).catch(() => []),
+      (async () => {
+        try { return (await loadCalendarNudges()) || []; } catch (_) { return []; }
+      })(),
+    ]);
+    const notifications = Array.isArray(notifResp) ? notifResp : [];
+    const nudgeCount = Array.isArray(nudges) ? nudges.length : 0;
 
-    if (!Array.isArray(notifications) || notifications.length === 0) {
+    // Build the calendar-nudge entry point if there's anything to review.
+    const nudgeCardHTML = nudgeCount > 0 ? buildNudgeEntryCard(nudgeCount) : '';
+
+    if (notifications.length === 0 && nudgeCount === 0) {
       body.innerHTML = `
         <div style="padding:60px 24px;text-align:center;">
           <div style="font-size:32px;margin-bottom:12px;">🔔</div>
@@ -4811,7 +4826,7 @@ async function renderNotificationsPanel() {
     const dismissed = JSON.parse(localStorage.getItem('dismissedNotifications') || '[]');
     const visible = notifications.filter((n) => !dismissed.includes(notifKey(n)));
 
-    if (visible.length === 0) {
+    if (visible.length === 0 && nudgeCount === 0) {
       body.innerHTML = `
         <div style="padding:60px 24px;text-align:center;">
           <div style="font-size:32px;margin-bottom:12px;">🔔</div>
@@ -4824,11 +4839,33 @@ async function renderNotificationsPanel() {
     // Sort by timestamp desc
     visible.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-    body.innerHTML = `<div style="padding:10px 14px;">${visible.map(buildNotifCard).join('')}</div>`;
+    body.innerHTML = `<div style="padding:10px 14px;">${nudgeCardHTML}${visible.map(buildNotifCard).join('')}</div>`;
+
+    // Make sure the bell dot reflects the nudge queue too — if the user has
+    // dismissed every notification but still has calendar events to review,
+    // the bell should keep glowing.
+    const dot = document.getElementById('notificationDot');
+    if (dot) dot.style.display = (visible.length + nudgeCount) > 0 ? 'block' : 'none';
   } catch (err) {
     console.error('Notifications panel error:', err);
     body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load notifications. Pull to retry.</div>`;
   }
+}
+
+// BUG #3 fix: entry point card surfaced in the bell panel. Tapping it opens
+// the same Gig Nudge overlay the Calendar screen banner already uses.
+function buildNudgeEntryCard(count) {
+  const label = `${count} calendar event${count === 1 ? '' : 's'} look${count === 1 ? 's' : ''} like gig${count === 1 ? '' : 's'}`;
+  return `
+    <div style="position:relative;background:linear-gradient(135deg,rgba(240,165,0,.12),transparent);border:1px solid rgba(240,165,0,.4);border-radius:12px;padding:12px 14px;margin-bottom:10px;cursor:pointer;" onclick="closePanel('panel-notifications');openGigNudge();">
+      <div style="font-size:22px;margin-bottom:6px;">📅</div>
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">${label}</div>
+      <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:8px;">We spotted events in your Google Calendar that might be gigs. Review them now.</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <button onclick="event.stopPropagation();closePanel('panel-notifications');openGigNudge();" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">Review</button>
+        <div style="font-size:11px;color:var(--text-3);">Calendar</div>
+      </div>
+    </div>`;
 }
 
 function notifKey(n) {

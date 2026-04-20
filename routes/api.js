@@ -1998,6 +1998,31 @@ router.get('/notifications', async (req, res) => {
       .toISOString()
       .split('T')[0];
 
+    // Helper: format a date/timestamp as "Thu 23 Apr 2026" for UK readability.
+    // Accepts either a Date or ISO/YYYY-MM-DD string. Returns '' on failure so
+    // subtitles never crash the panel.
+    const fmtNotifDate = (val) => {
+      if (!val) return '';
+      try {
+        const d = val instanceof Date ? val : new Date(val);
+        if (Number.isNaN(d.getTime())) return '';
+        return d.toLocaleDateString('en-GB', {
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          timeZone: 'Europe/London',
+        });
+      } catch (e) {
+        return '';
+      }
+    };
+    const fmtMoney = (val) => {
+      const n = Number(val);
+      if (!Number.isFinite(n)) return String(val);
+      return `£${n.toFixed(2)}`;
+    };
+
     const notifications = [];
 
     // Upcoming gigs in next 3 days
@@ -2012,7 +2037,7 @@ router.get('/notifications', async (req, res) => {
       notifications.push({
         type: 'gig',
         title: 'Upcoming gig',
-        subtitle: `${gig.band_name} at ${gig.venue_name} on ${gig.date}`,
+        subtitle: `${gig.band_name} at ${gig.venue_name} on ${fmtNotifDate(gig.date)}`,
         icon: 'calendar',
         timestamp: new Date(gig.date).toISOString(),
         action_type: 'gig',
@@ -2032,7 +2057,7 @@ router.get('/notifications', async (req, res) => {
       notifications.push({
         type: 'invoice',
         title: 'Overdue invoice',
-        subtitle: `${inv.band_name} - ${inv.amount} due ${inv.due_date}`,
+        subtitle: `${inv.band_name} - ${fmtMoney(inv.amount)} due ${fmtNotifDate(inv.due_date)}`,
         icon: 'alert',
         timestamp: new Date(inv.due_date).toISOString(),
         action_type: 'invoice',
@@ -2052,7 +2077,7 @@ router.get('/notifications', async (req, res) => {
       notifications.push({
         type: 'offer',
         title: 'Offer expiring soon',
-        subtitle: `Offer deadline ${offer.deadline}`,
+        subtitle: `Offer deadline ${fmtNotifDate(offer.deadline)}`,
         icon: 'hourglass',
         timestamp: new Date(offer.deadline).toISOString(),
         action_type: 'offer',

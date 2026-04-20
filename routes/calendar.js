@@ -636,9 +636,14 @@ router.post('/import', async (req, res) => {
       ? (isAllDayEnd ? { date: end, time: null } : londonDateTime(end))
       : { date: null, time: null };
 
+    // IMPORTANT: populate google_event_id at import time (in addition to the
+    // `source='gcal:<id>'` tag). Without this, Google-side cancellations and
+    // TMG-side deletes silently miss imported gigs, because both the pull
+    // cancellation handler and removeGigFromGoogle key on google_event_id.
+    // source is kept for backwards compat + provenance labeling.
     const result = await db.query(
-      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, fee, status, source, dress_code)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, fee, status, source, dress_code, google_event_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
       [
         req.user.id,
@@ -652,6 +657,7 @@ router.post('/import', async (req, res) => {
         'confirmed',
         `gcal:${event_id}`,
         dress_code || null,
+        event_id,
       ]
     );
 
@@ -756,7 +762,20 @@ function buildEventResource(gig) {
     const start = `${dateStr}T${gig.start_time.length === 5 ? gig.start_time + ':00' : gig.start_time}`;
     let end;
     if (gig.end_time) {
-      end = `${dateStr}T${gig.end_time.length === 5 ? gig.end_time + ':00' : gig.end_time}`;
+      // Cross-midnight gigs (end_time numerically earlier than start_time)
+      // need the end date bumped by one day, otherwise Google rejects the event
+      // because end < start. Compared as "HH:MM" strings lexicographically —
+      // '01:30' < '23:30' flags the cross-midnight case correctly.
+      let endDateStr = dateStr;
+      const startHM = gig.start_time.slice(0, 5);
+      const endHM = gig.end_time.slice(0, 5);
+      if (endHM < startHM) {
+        const d = new Date(dateStr + 'T00:00:00');
+        d.setDate(d.getDate() + 1);
+        const pad = (n) => String(n).padStart(2, '0');
+        endDateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      }
+      end = `${endDateStr}T${gig.end_time.length === 5 ? gig.end_time + ':00' : gig.end_time}`;
     } else {
       // Default 2hr duration if no end supplied
       const startDt = new Date(start);
@@ -838,13 +857,23 @@ async function pushGigToGoogle(userId, gig) {
 
 async function removeGigFromGoogle(userId, gig) {
   try {
-    if (!gig || !gig.google_event_id) return false;
+    if (!gig) return false;
+    // Same fallback chain as pushGigToGoogle: google_event_id is the canonical
+    // link, but gigs imported via /api/calendar/import only have source='gcal:<id>'
+    // until first edit backfills google_event_id. Without this fallback, deleting
+    // an imported-but-never-edited gig in TMG left the Google event orphaned.
+    let targetEventId = gig.google_event_id;
+    if (!targetEventId && gig.source && String(gig.source).startsWith('gcal:')) {
+      targetEventId = String(gig.source).slice('gcal:'.length);
+    }
+    if (!targetEventId) return false;
+
     const auth = await getGoogleAuth(userId);
     if (!auth) return false;
     const calendar = google.calendar({ version: 'v3', auth });
     await calendar.events.delete({
       calendarId: 'primary',
-      eventId: gig.google_event_id,
+      eventId: targetEventId,
     });
     return true;
   } catch (err) {
