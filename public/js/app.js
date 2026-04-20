@@ -3689,6 +3689,7 @@ async function renderProfileScreen() {
   const now = Date.now();
   if (window._cachedProfile && (now - window._cachedProfileTime) < PROFILE_CACHE_TTL) {
     buildProfileHTML(content, window._cachedProfile);
+    if (typeof refreshDocsExpiryDot === 'function') refreshDocsExpiryDot();
     return;
   }
 
@@ -3709,6 +3710,9 @@ async function renderProfileScreen() {
     window._cachedProfile = profile;
     window._cachedProfileTime = Date.now();
     buildProfileHTML(content, profile);
+    // Paint the red-dot warning on the Documents & certs row if anything is
+    // within 7 days of expiry. Fire-and-forget so the profile paint isn't blocked.
+    if (typeof refreshDocsExpiryDot === 'function') refreshDocsExpiryDot();
   } catch (err) {
     console.error('Profile error:', err);
     content.innerHTML = `<div style="padding:40px 20px;text-align:center;">Error loading profile</div>`;
@@ -3779,16 +3783,9 @@ function buildProfileHTML(content, profile) {
           <span style="color:var(--text);font-size:14px;">Professional EPK</span>
           <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
-        <div onclick="toggleDocs()" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
-          <span style="color:var(--text);font-size:14px;">Documents & certs</span>
-          <span style="color:var(--accent);font-size:16px;" id="docs-arrow">›</span>
-        </div>
-        <div id="docs-section" style="display:none;background:var(--card);padding:8px 14px;border-bottom:1px solid var(--border);">
-          <!-- S8-03: hardcoded DBS/PLI/RA list removed. Upload-with-expiry UI is not built yet,
-               so we show a truthful coming-soon state instead of fake document rows. -->
-          <div style="font-size:12px;color:var(--text-2);padding:6px 0;line-height:1.5;">
-            Upload DBS, public liability insurance, risk assessments and other certs so leaders can see them at a glance. Coming soon.
-          </div>
+        <div onclick="openPanel('panel-documents'); openDocumentsPanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+          <span style="color:var(--text);font-size:14px;display:flex;align-items:center;gap:8px;">Documents & certs <span id="docsExpiryDot" style="display:none;width:8px;height:8px;border-radius:50%;background:var(--danger,#f85149);"></span></span>
+          <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
         <div onclick="openPanel('panel-finance'); if (typeof renderFinancePanel === 'function') renderFinancePanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span style="color:var(--text);font-size:14px;">Earnings & tax summary</span>
@@ -3857,13 +3854,6 @@ function buildProfileHTML(content, profile) {
     // Highlight the active colour swatch
     const activeColour = localStorage.getItem('colourTheme') || 'amber';
     applyColourTheme(activeColour);
-}
-
-function toggleDocs() {
-  const section = document.getElementById('docs-section');
-  const arrow = document.getElementById('docs-arrow');
-  section.style.display = section.style.display === 'none' ? 'block' : 'none';
-  arrow.textContent = section.style.display === 'none' ? '›' : '‹';
 }
 
 function toggleConnected() {
@@ -5738,6 +5728,20 @@ function buildNotifCard(n) {
       bg = 'linear-gradient(135deg,rgba(240,165,0,.08),transparent)';
       actionHTML = `<button onclick="showScreen('offers');closePanel('panel-notifications');" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">View offer</button>`;
       break;
+    case 'document':
+      icon = '📄';
+      // Red when expired or within 7 days, amber for 30-day warning.
+      if (n.action_type === 'document_expired' || n.action_type === 'document_expiring_7') {
+        borderColor = 'rgba(248,81,73,.35)';
+        bg = 'linear-gradient(135deg,rgba(248,81,73,.08),transparent)';
+      } else {
+        borderColor = 'rgba(240,165,0,.35)';
+        bg = 'linear-gradient(135deg,rgba(240,165,0,.08),transparent)';
+      }
+      actionHTML = n.action_id
+        ? `<button onclick="openPanel('panel-documents'); openDocumentsPanel(); setTimeout(() => openDocumentForm('${n.action_id}'), 100); closePanel('panel-notifications');" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">View document</button>`
+        : '';
+      break;
   }
 
   return `
@@ -5819,6 +5823,260 @@ function clearAllNotifications() {
 window.dismissNotification = dismissNotification;
 window.clearAllNotifications = clearAllNotifications;
 window.renderNotificationsPanel = renderNotificationsPanel;
+
+// ── Documents & Certs Panel ─────────────────────────────────────────────────
+// Shows a list of uploaded certs (DBS, PLI, risk assessments, etc). Colour-
+// coded expiry badge: grey when no expiry, green 30d+, amber 7-30d, red
+// when <=7d or expired. Upload form supports file replacement so a renewed
+// cert keeps its history row but gets a fresh PDF.
+
+const DOC_TYPE_LABELS = {
+  dbs: 'DBS certificate',
+  pli: 'Public liability insurance',
+  risk_assessment: 'Risk assessment',
+  insurance: 'Other insurance',
+  qualification: 'Qualification',
+  other: 'Other document',
+};
+
+function _docExpiryBadge(expiry) {
+  if (!expiry) return { label: 'No expiry', bg: 'rgba(160,160,160,.18)', color: 'var(--text-2)' };
+  const expMs = new Date(String(expiry).slice(0, 10) + 'T00:00:00Z').getTime();
+  const now = Date.now();
+  const days = Math.round((expMs - now) / (24 * 60 * 60 * 1000));
+  if (days < 0) return { label: `Expired ${Math.abs(days)}d ago`, bg: 'rgba(248,81,73,.18)', color: '#f85149' };
+  if (days === 0) return { label: 'Expires today', bg: 'rgba(248,81,73,.18)', color: '#f85149' };
+  if (days <= 7) return { label: `${days}d left`, bg: 'rgba(248,81,73,.18)', color: '#f85149' };
+  if (days <= 30) return { label: `${days}d left`, bg: 'rgba(240,165,0,.18)', color: '#f0a500' };
+  return { label: `${days}d left`, bg: 'rgba(46,204,113,.18)', color: '#2ecc71' };
+}
+
+function _docFmtDate(d) {
+  if (!d) return '';
+  try {
+    const dt = new Date(String(d).slice(0, 10) + 'T00:00:00Z');
+    if (Number.isNaN(dt.getTime())) return '';
+    return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  } catch (e) { return ''; }
+}
+
+async function openDocumentsPanel() {
+  const body = document.getElementById('documentsBody');
+  if (!body) return;
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading documents...</div>';
+  try {
+    const res = await fetch('/api/documents');
+    const data = res.ok ? await res.json() : { documents: [] };
+    const docs = Array.isArray(data.documents) ? data.documents : [];
+
+    let html = `
+      <div style="padding:14px 16px;">
+        <div style="font-size:12px;color:var(--text-2);line-height:1.5;margin-bottom:12px;">
+          Store your DBS, PLI, risk assessments and other certs. Add an expiry date and TrackMyGigs will remind you 30 and 7 days before and on the day.
+        </div>
+        <button onclick="openDocumentForm()" class="pill" style="margin-bottom:14px;">+ Upload document</button>`;
+
+    if (docs.length === 0) {
+      html += `
+        <div style="padding:30px 16px;text-align:center;color:var(--text-2);border:1px dashed var(--border);border-radius:var(--r);">
+          <div style="font-size:28px;margin-bottom:8px;">📄</div>
+          <div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:4px;">No documents yet</div>
+          <div style="font-size:12px;line-height:1.5;">Upload your first cert and it will show up here with a colour-coded expiry.</div>
+        </div>`;
+    } else {
+      html += docs.map(d => {
+        const badge = _docExpiryBadge(d.expiry_date);
+        const typeLabel = DOC_TYPE_LABELS[d.doc_type] || DOC_TYPE_LABELS.other;
+        const expiryText = d.expiry_date ? `Expires ${_docFmtDate(d.expiry_date)}` : 'No expiry set';
+        return `
+        <div onclick="openDocumentDetail('${escapeHtml(d.id)}')" style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:10px;cursor:pointer;">
+          <div style="display:flex;align-items:start;justify-content:space-between;gap:10px;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:2px;">${escapeHtml(d.name)}</div>
+              <div style="font-size:11px;color:var(--text-2);margin-bottom:6px;">${escapeHtml(typeLabel)}</div>
+              <div style="font-size:12px;color:var(--text-2);">${expiryText}</div>
+            </div>
+            <div style="background:${badge.bg};color:${badge.color};font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;white-space:nowrap;">${badge.label}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    html += `</div>`;
+    body.innerHTML = html;
+  } catch (err) {
+    console.error('Documents panel error:', err);
+    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load documents</div>';
+  }
+}
+
+function openDocumentForm(docId) {
+  const body = document.getElementById('documentFormBody');
+  const title = document.getElementById('documentFormTitle');
+  if (!body) return;
+  if (title) title.textContent = docId ? 'Edit document' : 'Upload document';
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading...</div>';
+  openPanel('panel-document-form');
+
+  const buildForm = (doc) => {
+    const isEdit = !!doc;
+    const typeOptions = Object.entries(DOC_TYPE_LABELS)
+      .map(([k, v]) => `<option value="${k}" ${doc && doc.doc_type === k ? 'selected' : ''}>${v}</option>`)
+      .join('');
+    const clamp = (v) => (v ? String(v).slice(0, 10) : '');
+    body.innerHTML = `
+      <div style="padding:14px 16px;">
+        <form id="docForm" onsubmit="saveDocument(event, ${isEdit ? `'${escapeHtml(doc.id)}'` : 'null'})">
+          <div style="margin-bottom:12px;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px;">Name *</label>
+            <input id="docName" class="fi" required maxlength="255" placeholder="e.g. Enhanced DBS, PLI 2026" value="${isEdit ? escapeHtml(doc.name) : ''}" />
+          </div>
+          <div style="margin-bottom:12px;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px;">Type</label>
+            <select id="docType" class="fi">${typeOptions}</select>
+          </div>
+          <div style="display:flex;gap:10px;margin-bottom:12px;">
+            <div style="flex:1;">
+              <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px;">Issue date</label>
+              <input id="docIssued" type="date" class="fi" value="${isEdit ? clamp(doc.issued_date) : ''}" />
+            </div>
+            <div style="flex:1;">
+              <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px;">Expiry date</label>
+              <input id="docExpiry" type="date" class="fi" value="${isEdit ? clamp(doc.expiry_date) : ''}" />
+            </div>
+          </div>
+          <div style="margin-bottom:12px;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px;">File ${isEdit ? '(leave blank to keep existing)' : ''}</label>
+            <input id="docFile" type="file" accept="application/pdf,image/*" style="display:block;width:100%;padding:10px;background:var(--card);border:1px dashed var(--border);border-radius:var(--rs);color:var(--text-2);font-size:12px;cursor:pointer;" />
+            ${isEdit && doc.has_file ? `<div style="font-size:11px;color:var(--text-3);margin-top:4px;">Current file: ${escapeHtml(doc.file_name || 'document')}</div>` : ''}
+          </div>
+          <div style="margin-bottom:16px;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px;">Notes</label>
+            <textarea id="docNotes" class="fi" rows="3" maxlength="2000" placeholder="Policy number, reference, renewal contact">${isEdit ? escapeHtml(doc.notes || '') : ''}</textarea>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button type="submit" class="pill" id="docSaveBtn">${isEdit ? 'Save changes' : 'Upload'}</button>
+            ${isEdit ? `<button type="button" onclick="deleteDocument('${escapeHtml(doc.id)}')" style="background:transparent;color:#f85149;border:1px solid rgba(248,81,73,.4);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;">Delete</button>` : ''}
+          </div>
+        </form>
+      </div>`;
+  };
+
+  if (docId) {
+    fetch(`/api/documents/${docId}`).then(r => r.json()).then(data => {
+      if (!data || !data.document) throw new Error('not found');
+      buildForm(data.document);
+    }).catch(() => { body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load document</div>'; });
+  } else {
+    buildForm(null);
+  }
+}
+
+async function openDocumentDetail(docId) {
+  // Simple flow: open the edit form so users can update metadata, replace the
+  // file, or delete. A read-only detail screen would be nice-to-have but the
+  // form already shows everything.
+  openDocumentForm(docId);
+}
+
+function _fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('read failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function saveDocument(ev, docId) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  const btn = document.getElementById('docSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  try {
+    const name = (document.getElementById('docName').value || '').trim();
+    if (!name) { alert('Give the document a name.'); if (btn) { btn.disabled = false; btn.textContent = docId ? 'Save changes' : 'Upload'; } return; }
+    const doc_type = document.getElementById('docType').value;
+    const issued_date = document.getElementById('docIssued').value || null;
+    const expiry_date = document.getElementById('docExpiry').value || null;
+    const notes = document.getElementById('docNotes').value || '';
+    const fileEl = document.getElementById('docFile');
+    const file = fileEl && fileEl.files && fileEl.files[0];
+    const payload = { name, doc_type, issued_date, notes };
+    // Explicit clear when user wipes the expiry on edit.
+    if (docId && !expiry_date) payload.clear_expiry = true;
+    else payload.expiry_date = expiry_date;
+    if (file) {
+      if (file.size > 8 * 1024 * 1024) {
+        alert('File is too big. Max 8MB.');
+        if (btn) { btn.disabled = false; btn.textContent = docId ? 'Save changes' : 'Upload'; }
+        return;
+      }
+      payload.file_base64 = await _fileToBase64(file);
+      payload.file_name = file.name;
+      payload.mime_type = file.type || 'application/octet-stream';
+    }
+    const url = docId ? `/api/documents/${docId}` : '/api/documents';
+    const method = docId ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Save failed');
+    }
+    closePanel('panel-document-form');
+    await openDocumentsPanel();
+    await refreshDocsExpiryDot();
+  } catch (err) {
+    console.error('Save document error:', err);
+    alert(err.message || 'Save failed');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = docId ? 'Save changes' : 'Upload'; }
+  }
+}
+
+async function deleteDocument(docId) {
+  if (!docId) return;
+  if (!confirm('Delete this document? The file and all its reminders will be removed.')) return;
+  try {
+    const res = await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('delete failed');
+    closePanel('panel-document-form');
+    await openDocumentsPanel();
+    await refreshDocsExpiryDot();
+  } catch (err) {
+    console.error('Delete document error:', err);
+    alert('Failed to delete');
+  }
+}
+
+// Red dot on the Profile row — visible if any doc is within 7 days or expired.
+async function refreshDocsExpiryDot() {
+  try {
+    const res = await fetch('/api/documents');
+    if (!res.ok) return;
+    const data = await res.json();
+    const docs = Array.isArray(data.documents) ? data.documents : [];
+    const now = Date.now();
+    const hasRed = docs.some(d => {
+      if (!d.expiry_date) return false;
+      const expMs = new Date(String(d.expiry_date).slice(0, 10) + 'T00:00:00Z').getTime();
+      const days = Math.round((expMs - now) / (24 * 60 * 60 * 1000));
+      return days <= 7;
+    });
+    const dot = document.getElementById('docsExpiryDot');
+    if (dot) dot.style.display = hasRed ? 'inline-block' : 'none';
+  } catch (e) { /* silent */ }
+}
+
+window.openDocumentsPanel = openDocumentsPanel;
+window.openDocumentForm = openDocumentForm;
+window.openDocumentDetail = openDocumentDetail;
+window.saveDocument = saveDocument;
+window.deleteDocument = deleteDocument;
+window.refreshDocsExpiryDot = refreshDocsExpiryDot;
 
 // ── Public Calendar Share Panel ─────────────────────────────────────────────
 async function renderPubCalShare() {

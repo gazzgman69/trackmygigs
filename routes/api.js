@@ -2274,6 +2274,53 @@ router.get('/notifications', async (req, res) => {
     // Note: unpaid is same query as overdue, don't double-add them
     // They're already included above
 
+    // Documents & certs expiry. Each doc with an expiry_date emits up to three
+    // notifications — 30-day warning, 7-day warning, and expired-or-today. Each
+    // threshold carries its own action_type suffix so dismissing the 30-day
+    // ping doesn't mute the final "expired" alert. The client key includes the
+    // action_type so the three rows dismiss independently.
+    try {
+      const docsResult = await db.query(
+        `SELECT id, name, doc_type, expiry_date FROM user_documents
+         WHERE user_id = $1 AND expiry_date IS NOT NULL
+         ORDER BY expiry_date ASC`,
+        [userId]
+      );
+      const todayMs = new Date(today + 'T00:00:00Z').getTime();
+      docsResult.rows.forEach(doc => {
+        const expStr = doc.expiry_date instanceof Date
+          ? doc.expiry_date.toISOString().slice(0, 10)
+          : String(doc.expiry_date).slice(0, 10);
+        const expMs = new Date(expStr + 'T00:00:00Z').getTime();
+        const daysLeft = Math.round((expMs - todayMs) / (24 * 60 * 60 * 1000));
+        const thresholds = [];
+        if (daysLeft <= 0) {
+          thresholds.push({ key: 'expired', title: 'Document expired',
+            subtitle: `${doc.name} expired on ${fmtNotifDate(expStr)}` });
+        } else {
+          if (daysLeft <= 7) thresholds.push({ key: 'expiring_7', title: 'Document expiring soon',
+            subtitle: `${doc.name} expires ${fmtNotifDate(expStr)} (${daysLeft} day${daysLeft === 1 ? '' : 's'})` });
+          else if (daysLeft <= 30) thresholds.push({ key: 'expiring_30', title: 'Document expiring',
+            subtitle: `${doc.name} expires ${fmtNotifDate(expStr)}` });
+        }
+        thresholds.forEach(t => {
+          notifications.push({
+            type: 'document',
+            title: t.title,
+            subtitle: t.subtitle,
+            icon: 'document',
+            timestamp: new Date(expStr + 'T00:00:00Z').toISOString(),
+            action_type: `document_${t.key}`,
+            action_id: doc.id,
+          });
+        });
+      });
+    } catch (docsErr) {
+      // Migration may not have run yet on a fresh deploy. Fall through so the
+      // rest of the notifications still render.
+      console.error('Docs notifications error (non-fatal):', docsErr.message);
+    }
+
     // S8-05: filter out anything the user has dismissed server-side. Keeps
     // dismissals in sync across devices — a dismissal on the phone stays
     // dismissed on the iPad.
@@ -2364,6 +2411,277 @@ router.post('/notifications/dismiss-all', async (req, res) => {
   } catch (error) {
     console.error('Dismiss-all notifications error:', error);
     res.status(500).json({ error: 'Failed to dismiss notifications' });
+  }
+});
+
+// ── Documents & Certs ────────────────────────────────────────────────────────
+// Uploaders POST the file as base64 in a JSON body (there's no multer in the
+// stack — adding one for a low-volume cert list felt like premature tooling).
+// File sizes are capped server-side so a rogue upload can't wedge the Postgres
+// row-size limit. Anything serious should migrate to S3/R2 later.
+
+const DOC_MAX_BYTES = 8 * 1024 * 1024; // 8MB — fits a phone camera photo of a multi-page cert
+const DOC_TYPES = new Set(['dbs', 'pli', 'risk_assessment', 'insurance', 'qualification', 'other']);
+
+// Compact list view: never ship file_data back here — a 20-cert list would be
+// tens of megabytes otherwise. /documents/:id/file serves bytes on demand.
+router.get('/documents', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, name, doc_type, mime_type, file_name, file_size,
+              issued_date, expiry_date, notes, uploaded_at, updated_at,
+              (file_data IS NOT NULL) AS has_file
+       FROM user_documents
+       WHERE user_id = $1
+       ORDER BY
+         CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END,
+         expiry_date ASC,
+         uploaded_at DESC`,
+      [req.user.id]
+    );
+    res.json({ documents: result.rows });
+  } catch (error) {
+    console.error('Get documents error:', error);
+    res.status(500).json({ error: 'Failed to fetch documents' });
+  }
+});
+
+router.get('/documents/:id', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, name, doc_type, mime_type, file_name, file_size,
+              issued_date, expiry_date, notes, uploaded_at, updated_at,
+              (file_data IS NOT NULL) AS has_file
+       FROM user_documents
+       WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ document: result.rows[0] });
+  } catch (error) {
+    console.error('Get document error:', error);
+    res.status(500).json({ error: 'Failed to fetch document' });
+  }
+});
+
+// Binary endpoint: used by the "View" button on the list. Sends the original
+// mime type so PDFs preview inline and photos render as images.
+router.get('/documents/:id/file', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT file_data, mime_type, file_name FROM user_documents
+       WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0 || !result.rows[0].file_data) {
+      return res.status(404).send('Not found');
+    }
+    const row = result.rows[0];
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    // `inline` so the browser previews. Download uses the save-as dialog from
+    // the browser itself. filename fallback covers rows uploaded before we
+    // started capturing it.
+    const safeName = (row.file_name || 'document').replace(/[^\w.\-]/g, '_');
+    res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+    res.send(row.file_data);
+  } catch (error) {
+    console.error('Get document file error:', error);
+    res.status(500).send('Failed to fetch file');
+  }
+});
+
+function _docDecodeBase64(dataUrlOrB64) {
+  if (!dataUrlOrB64 || typeof dataUrlOrB64 !== 'string') return null;
+  // Strip data URL prefix if present ("data:application/pdf;base64,...")
+  const m = dataUrlOrB64.match(/^data:([^;]+);base64,(.*)$/);
+  const mime = m ? m[1] : null;
+  const b64 = m ? m[2] : dataUrlOrB64;
+  try {
+    const buf = Buffer.from(b64, 'base64');
+    return { buf, mime };
+  } catch (e) {
+    return null;
+  }
+}
+
+router.post('/documents', async (req, res) => {
+  try {
+    const { name, doc_type, issued_date, expiry_date, notes, file_base64, file_name, mime_type } = req.body || {};
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    const docType = DOC_TYPES.has(doc_type) ? doc_type : 'other';
+    let fileData = null;
+    let fileMime = null;
+    let fileSize = null;
+    let fileNameSafe = null;
+    if (file_base64) {
+      const decoded = _docDecodeBase64(file_base64);
+      if (!decoded) return res.status(400).json({ error: 'Invalid file data' });
+      if (decoded.buf.length > DOC_MAX_BYTES) {
+        return res.status(400).json({ error: `File too large. Max ${DOC_MAX_BYTES / 1024 / 1024}MB.` });
+      }
+      fileData = decoded.buf;
+      fileMime = mime_type || decoded.mime || 'application/octet-stream';
+      fileSize = decoded.buf.length;
+      fileNameSafe = file_name ? String(file_name).slice(0, 255) : null;
+    }
+    const issuedVal = issued_date && /^\d{4}-\d{2}-\d{2}/.test(String(issued_date))
+      ? String(issued_date).slice(0, 10) : null;
+    const expiryVal = expiry_date && /^\d{4}-\d{2}-\d{2}/.test(String(expiry_date))
+      ? String(expiry_date).slice(0, 10) : null;
+    const notesVal = notes ? String(notes).slice(0, 2000) : null;
+    const result = await db.query(
+      `INSERT INTO user_documents
+         (user_id, name, doc_type, file_data, mime_type, file_name, file_size,
+          issued_date, expiry_date, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING id, name, doc_type, mime_type, file_name, file_size,
+                 issued_date, expiry_date, notes, uploaded_at, updated_at,
+                 (file_data IS NOT NULL) AS has_file`,
+      [req.user.id, name.trim().slice(0, 255), docType, fileData, fileMime,
+       fileNameSafe, fileSize, issuedVal, expiryVal, notesVal]
+    );
+    res.json({ success: true, document: result.rows[0] });
+  } catch (error) {
+    console.error('Create document error:', error);
+    res.status(500).json({ error: 'Failed to save document' });
+  }
+});
+
+// Edit metadata or replace file. If the expiry_date moves forward (renewal),
+// purge any notification_dismissals tied to this doc so the new 30/7-day
+// warnings surface instead of staying silenced by the previous cycle.
+router.put('/documents/:id', async (req, res) => {
+  try {
+    const existing = await db.query(
+      `SELECT expiry_date FROM user_documents WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const prevExpiry = existing.rows[0].expiry_date;
+    const prevExpiryStr = prevExpiry
+      ? (prevExpiry instanceof Date ? prevExpiry.toISOString().slice(0, 10) : String(prevExpiry).slice(0, 10))
+      : null;
+
+    const { name, doc_type, issued_date, expiry_date, notes, file_base64, file_name, mime_type, clear_expiry } = req.body || {};
+    const fields = [];
+    const params = [];
+    let idx = 1;
+    if (name !== undefined) {
+      fields.push(`name = $${idx++}`);
+      params.push(String(name).trim().slice(0, 255));
+    }
+    if (doc_type !== undefined) {
+      fields.push(`doc_type = $${idx++}`);
+      params.push(DOC_TYPES.has(doc_type) ? doc_type : 'other');
+    }
+    if (issued_date !== undefined) {
+      const v = issued_date && /^\d{4}-\d{2}-\d{2}/.test(String(issued_date))
+        ? String(issued_date).slice(0, 10) : null;
+      fields.push(`issued_date = $${idx++}`);
+      params.push(v);
+    }
+    // Allow explicit null via clear_expiry flag, or a new ISO date via expiry_date.
+    if (clear_expiry) {
+      fields.push(`expiry_date = NULL`);
+    } else if (expiry_date !== undefined) {
+      const v = expiry_date && /^\d{4}-\d{2}-\d{2}/.test(String(expiry_date))
+        ? String(expiry_date).slice(0, 10) : null;
+      fields.push(`expiry_date = $${idx++}`);
+      params.push(v);
+    }
+    if (notes !== undefined) {
+      fields.push(`notes = $${idx++}`);
+      params.push(notes ? String(notes).slice(0, 2000) : null);
+    }
+    if (file_base64) {
+      const decoded = _docDecodeBase64(file_base64);
+      if (!decoded) return res.status(400).json({ error: 'Invalid file data' });
+      if (decoded.buf.length > DOC_MAX_BYTES) {
+        return res.status(400).json({ error: `File too large. Max ${DOC_MAX_BYTES / 1024 / 1024}MB.` });
+      }
+      fields.push(`file_data = $${idx++}`); params.push(decoded.buf);
+      fields.push(`mime_type = $${idx++}`); params.push(mime_type || decoded.mime || 'application/octet-stream');
+      fields.push(`file_size = $${idx++}`); params.push(decoded.buf.length);
+      if (file_name) {
+        fields.push(`file_name = $${idx++}`);
+        params.push(String(file_name).slice(0, 255));
+      }
+    }
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    fields.push(`updated_at = NOW()`);
+    params.push(req.params.id, req.user.id);
+    const result = await db.query(
+      `UPDATE user_documents SET ${fields.join(', ')}
+       WHERE id = $${idx++} AND user_id = $${idx}
+       RETURNING id, name, doc_type, mime_type, file_name, file_size,
+                 issued_date, expiry_date, notes, uploaded_at, updated_at,
+                 (file_data IS NOT NULL) AS has_file`,
+      params
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+
+    // Renewal reset: if expiry moved forward (or a previously null expiry was
+    // set), the old threshold dismissals are stale — wipe them so the new
+    // 30/7-day pings can reach the user.
+    try {
+      const newExpiry = result.rows[0].expiry_date;
+      const newExpiryStr = newExpiry
+        ? (newExpiry instanceof Date ? newExpiry.toISOString().slice(0, 10) : String(newExpiry).slice(0, 10))
+        : null;
+      const forwardShift = newExpiryStr && (!prevExpiryStr || newExpiryStr > prevExpiryStr);
+      if (forwardShift) {
+        const keys = [
+          `document:document_expired:${req.params.id}:`,
+          `document:document_expiring_7:${req.params.id}:`,
+          `document:document_expiring_30:${req.params.id}:`,
+        ];
+        // notif_key uses the timestamp suffix — use LIKE to cover both old and
+        // new expiry timestamps.
+        for (const prefix of keys) {
+          await db.query(
+            `DELETE FROM notification_dismissals
+             WHERE user_id = $1 AND notif_key LIKE $2`,
+            [req.user.id, prefix + '%']
+          );
+        }
+      }
+    } catch (dismissErr) {
+      console.error('Docs dismiss reset (non-fatal):', dismissErr.message);
+    }
+
+    res.json({ success: true, document: result.rows[0] });
+  } catch (error) {
+    console.error('Update document error:', error);
+    res.status(500).json({ error: 'Failed to update document' });
+  }
+});
+
+router.delete('/documents/:id', async (req, res) => {
+  try {
+    const result = await db.query(
+      `DELETE FROM user_documents WHERE id = $1 AND user_id = $2 RETURNING id`,
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    // Also sweep any dismissals for this doc — no point keeping rows that
+    // reference a deleted cert.
+    try {
+      await db.query(
+        `DELETE FROM notification_dismissals
+         WHERE user_id = $1 AND notif_key LIKE $2`,
+        [req.user.id, `document:%:${req.params.id}:%`]
+      );
+    } catch (dismissErr) {
+      console.error('Docs dismiss cleanup (non-fatal):', dismissErr.message);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete document error:', error);
+    res.status(500).json({ error: 'Failed to delete document' });
   }
 });
 

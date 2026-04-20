@@ -327,6 +327,27 @@ async function runMigrations() {
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS rate_per_hour DECIMAL(10,2)`);
     // Fast lookup for the bundler: "all teaching gigs for a client in a range"
     await db.query(`CREATE INDEX IF NOT EXISTS gigs_teaching_client_idx ON gigs (user_id, gig_type, client_email) WHERE gig_type = 'Teaching'`);
+    // Documents & certs. Stores DBS, PLI, risk assessments, etc. File bytes
+    // live in-row as bytea for MVP — we're not pulling in object storage until
+    // average file size or usage forces it. expiry_date is optional so users
+    // can log a policy number or reference doc with no renewal date.
+    await db.query(`CREATE TABLE IF NOT EXISTS user_documents (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      doc_type VARCHAR(32) NOT NULL DEFAULT 'other',
+      file_data BYTEA,
+      mime_type VARCHAR(128),
+      file_name VARCHAR(255),
+      file_size INTEGER,
+      issued_date DATE,
+      expiry_date DATE,
+      notes TEXT,
+      uploaded_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )`);
+    await db.query(`CREATE INDEX IF NOT EXISTS user_documents_user_idx ON user_documents (user_id)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS user_documents_expiry_idx ON user_documents (user_id, expiry_date) WHERE expiry_date IS NOT NULL`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);
