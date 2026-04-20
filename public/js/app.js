@@ -1854,6 +1854,11 @@ function buildCalendarView(content, gigsData, blockedData) {
   const currentDate = window._calDate || new Date();
   const layers = getCalendarLayers();
 
+  const needsReconnect = !!window._googleNeedsReconnect;
+  const reconnectReason = window._googleConnectionState === 'revoked'
+    ? 'Access to your Google Calendar was revoked. Reconnect to resume syncing.'
+    : 'Google Calendar sync has failed. Reconnect to resume syncing.';
+
   let html = `
     <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
       <div style="font-size:24px;font-weight:700;color:var(--text);">Calendar</div>
@@ -1863,6 +1868,15 @@ function buildCalendarView(content, gigsData, blockedData) {
         <button type="button" onclick="toggleCalendarMenu()" aria-label="More actions" title="More" style="width:40px;height:40px;border-radius:20px;background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;padding:0;">&#8943;</button>
       </div>
     </div>
+    ${needsReconnect ? `
+    <div style="margin:0 16px 8px;padding:12px 14px;background:#FFF4E5;border:1px solid #F5B949;border-radius:var(--r);display:flex;align-items:center;gap:10px;">
+      <span style="font-size:18px;flex-shrink:0;">&#9888;</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;color:#7A4A00;">Google Calendar needs to be reconnected</div>
+        <div style="font-size:12px;color:#7A4A00;margin-top:2px;">${reconnectReason}</div>
+      </div>
+      <a href="/auth/google/calendar" style="background:#4285F4;color:#fff;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;text-decoration:none;flex-shrink:0;">Reconnect</a>
+    </div>` : ''}
     <div id="calendarLayers" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;">
       <div style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Layers</div>
       ${[
@@ -1886,11 +1900,17 @@ function buildCalendarView(content, gigsData, blockedData) {
         if (isConnected) {
           const lastSyncRaw = window._calendarLastSyncedAt || prof.google_last_pull_at || null;
           const lastSyncText = formatRelativeTime(lastSyncRaw);
+          const selectedCal = window._googleSelectedCalendar || 'primary';
           return `
             <div style="margin-top:10px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-2);display:flex;align-items:center;justify-content:space-between;gap:8px;">
               <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Connected${linkedEmail ? ' as <span style="color:var(--text);font-weight:600;">' + linkedEmail + '</span>' : ''}</span>
               <button onclick="disconnectGoogleCalendar()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--danger);font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0;">Disconnect</button>
             </div>
+            <div style="margin-top:6px;padding:6px 10px;font-size:11px;color:var(--text-2);display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Syncing calendar: <span id="calendarPickerLabel" style="color:var(--text);font-weight:600;">${selectedCal === 'primary' ? 'Primary' : selectedCal}</span></span>
+              <button onclick="openCalendarPicker()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text);font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0;">Change</button>
+            </div>
+            <div id="calendarPickerList" style="display:none;margin-top:6px;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;"></div>
             <div style="margin-top:6px;padding:6px 10px;font-size:11px;color:var(--text-2);display:flex;align-items:center;justify-content:space-between;gap:8px;">
               <span>Last synced: <span id="calendarLastSyncLabel" style="color:var(--text);">${lastSyncText}</span></span>
               <button onclick="triggerSyncNow()" style="background:var(--accent);border:none;border-radius:6px;padding:4px 10px;color:#fff;font-size:11px;font-weight:600;cursor:pointer;">Sync now</button>
@@ -1982,11 +2002,15 @@ function toggleCalendarLayers() {
       .then(r => r.ok ? r.json() : { connected: false })
       .then(d => {
         const was = window._googleConnected;
+        const wasNeedsReconnect = !!window._googleNeedsReconnect;
         window._googleConnected = !!d.connected;
         window._googleCalendarEmail = d.calendar_email || null;
         window._calendarLastSyncedAt = d.last_synced_at || null;
+        window._googleNeedsReconnect = !!d.needs_reconnect;
+        window._googleConnectionState = d.connection_state || null;
+        window._googleSelectedCalendar = d.selected_calendar || 'primary';
         window._calendarStatusProbedAt = Date.now();
-        if (was !== window._googleConnected) {
+        if (was !== window._googleConnected || wasNeedsReconnect !== window._googleNeedsReconnect) {
           renderCalendarScreen();
         } else {
           const lbl = document.getElementById('calendarLastSyncLabel');
@@ -1999,6 +2023,71 @@ function toggleCalendarLayers() {
 
 // Disconnect the linked Google Calendar. Confirms, hits the API, refreshes
 // state, and re-renders anything that shows connection status.
+// Open the inline calendar picker inside the Layers panel. Lazily fetches the
+// user's list of owned/writable calendars the first time it's opened, then
+// caches. Each row is a radio button that fires selectCalendar() on change.
+async function openCalendarPicker() {
+  const el = document.getElementById('calendarPickerList');
+  if (!el) return;
+  if (el.style.display === 'block') {
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = 'block';
+  el.innerHTML = '<div style="padding:8px;color:var(--text-2);font-size:12px;">Loading calendars&hellip;</div>';
+  try {
+    const resp = await fetch('/api/calendar/list-calendars');
+    if (!resp.ok) throw new Error('list failed');
+    const data = await resp.json();
+    if (!data.connected || !Array.isArray(data.calendars) || !data.calendars.length) {
+      el.innerHTML = '<div style="padding:8px;color:var(--text-2);font-size:12px;">No calendars available.</div>';
+      return;
+    }
+    const selected = data.selected_id || 'primary';
+    el.innerHTML = data.calendars.map(c => {
+      const id = c.primary ? 'primary' : c.id;
+      const label = c.primary ? `${c.summary || 'Primary'} (Primary)` : (c.summary || c.id);
+      const checked = id === selected ? 'checked' : '';
+      const safeId = (id || '').replace(/"/g, '&quot;');
+      const safeLabel = label.replace(/</g, '&lt;');
+      return `
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;font-size:12px;color:var(--text);">
+          <input type="radio" name="tmg-calendar-picker" value="${safeId}" ${checked} onchange="selectCalendar(this.value)" style="accent-color:var(--accent);">
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${safeLabel}</span>
+        </label>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = '<div style="padding:8px;color:var(--danger);font-size:12px;">Failed to load calendars. Try again.</div>';
+  }
+}
+
+// Persist the new calendar selection server-side and refresh the Calendar
+// screen so pins and layers re-query against the right calendar. Also nukes
+// any in-memory google pin cache because the old cache is for a different id.
+async function selectCalendar(calendarId) {
+  if (!calendarId) return;
+  try {
+    const resp = await fetch('/api/calendar/select-calendar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ calendar_id: calendarId }),
+    });
+    if (!resp.ok) {
+      alert('Could not switch calendar. Please try again.');
+      return;
+    }
+    window._googleSelectedCalendar = calendarId;
+    window._googlePins = [];
+    window._googlePinsKey = null;
+    window._calendarStatusProbedAt = 0; // force re-probe next open
+    const lbl = document.getElementById('calendarPickerLabel');
+    if (lbl) lbl.textContent = calendarId === 'primary' ? 'Primary' : calendarId;
+    renderCalendarScreen();
+  } catch (e) {
+    alert('Could not switch calendar. Please try again.');
+  }
+}
+
 async function disconnectGoogleCalendar() {
   const who = window._googleCalendarEmail ? ` (${window._googleCalendarEmail})` : '';
   if (!confirm(`Disconnect your Google Calendar${who}? You can reconnect anytime.`)) return;
@@ -2013,6 +2102,9 @@ async function disconnectGoogleCalendar() {
     window._googleCalendarEmail = null;
     window._googlePins = [];
     window._googlePinsKey = null;
+    window._googleNeedsReconnect = false;
+    window._googleConnectionState = null;
+    window._googleSelectedCalendar = 'primary';
     // Update the cached profile in place so the next renderProfileScreen()
     // (which is cache-first) shows the disconnected state instead of stale
     // token data. Also invalidate the cache timestamp so a subsequent

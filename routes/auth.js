@@ -437,7 +437,9 @@ router.get('/google/callback', async (req, res) => {
           google_access_token = $1,
           google_refresh_token = COALESCE($2, google_refresh_token),
           google_token_expires_at = $3,
-          google_calendar_email = COALESCE($4, google_calendar_email)
+          google_calendar_email = COALESCE($4, google_calendar_email),
+          google_connection_state = NULL,
+          google_connection_error = NULL
          WHERE id = $5`,
         [
           tokens.access_token,
@@ -464,7 +466,9 @@ router.get('/google/callback', async (req, res) => {
         google_access_token = $1,
         google_refresh_token = COALESCE($2, google_refresh_token),
         google_token_expires_at = $3,
-        google_calendar_email = COALESCE($4, google_calendar_email)
+        google_calendar_email = COALESCE($4, google_calendar_email),
+        google_connection_state = NULL,
+        google_connection_error = NULL
        WHERE id = $5`,
       [
         tokens.access_token,

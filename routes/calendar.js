@@ -263,7 +263,9 @@ function scoreEvent(event) {
 
 async function getGoogleAuth(userId) {
   const result = await db.query(
-    'SELECT google_access_token, google_refresh_token, google_token_expires_at FROM users WHERE id = $1',
+    `SELECT google_access_token, google_refresh_token, google_token_expires_at,
+            google_selected_calendar
+       FROM users WHERE id = $1`,
     [userId]
   );
   const user = result.rows[0];
@@ -287,35 +289,113 @@ async function getGoogleAuth(userId) {
       const { credentials } = await client.refreshAccessToken();
       client.setCredentials(credentials);
       await db.query(
-        'UPDATE users SET google_access_token = $1, google_token_expires_at = $2 WHERE id = $3',
+        `UPDATE users SET google_access_token = $1, google_token_expires_at = $2,
+           google_connection_state = NULL, google_connection_error = NULL
+         WHERE id = $3`,
         [credentials.access_token, credentials.expiry_date ? new Date(credentials.expiry_date) : null, userId]
       );
     } catch (err) {
+      // Refresh failed. Most common cause: the user revoked TMG access from
+      // their Google security page (so the refresh_token is now invalid), but
+      // we don't know what happened locally so the app just stopped syncing
+      // with no user-visible signal. Persist the error state so /status can
+      // return needs_reconnect:true and the Calendar UI can render a banner.
       console.error('Token refresh failed:', err);
+      const reason = (err && (err.message || err.code)) ? String(err.message || err.code) : 'refresh_failed';
+      const state = /invalid_grant/i.test(reason) ? 'revoked' : 'refresh_failed';
+      try {
+        await db.query(
+          `UPDATE users SET google_connection_state = $1, google_connection_error = $2
+           WHERE id = $3`,
+          [state, reason.slice(0, 500), userId]
+        );
+      } catch (_) {}
       return null;
     }
   }
 
-  return client;
+  const calendarId = user.google_selected_calendar || 'primary';
+  return { auth: client, calendarId };
+}
+
+// Back-compat accessor for call sites that only need the auth client.
+async function getGoogleAuthClient(userId) {
+  const handle = await getGoogleAuth(userId);
+  return handle ? handle.auth : null;
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-// Check if calendar is connected + when we last pulled changes from Google
+// Check if calendar is connected + when we last pulled changes from Google.
+// needs_reconnect fires when the refresh_token was revoked (user unlinked TMG
+// from their Google security page) or any other refresh failure; the banner in
+// the Calendar UI keys off this so sync failures stop being silent.
 router.get('/status', async (req, res) => {
   const result = await db.query(
-    'SELECT google_access_token, google_calendar_email, google_last_pull_at FROM users WHERE id = $1',
+    `SELECT google_access_token, google_calendar_email, google_last_pull_at,
+            google_connection_state, google_connection_error, google_selected_calendar
+       FROM users WHERE id = $1`,
     [req.user.id]
   );
   const row = result.rows[0] || {};
   const aiSource = getAnthropicSource();
+  const connected = !!row.google_access_token;
   res.json({
-    connected: !!row.google_access_token,
+    connected,
     calendar_email: row.google_calendar_email || null,
     last_synced_at: row.google_last_pull_at || null,
+    needs_reconnect: connected && !!row.google_connection_state,
+    connection_state: row.google_connection_state || null,
+    connection_error: row.google_connection_error || null,
+    selected_calendar: row.google_selected_calendar || 'primary',
     ai_enabled: !!aiSource,
     ai_source: aiSource, // 'replit' | 'direct' | null
   });
+});
+
+// List all calendars the user has access to in Google. Used by the Layers
+// panel picker so they can point TMG at a work/band calendar rather than the
+// hard default of 'primary'. Returns id, summary, primary flag, and the
+// currently selected id for the radio-group UI.
+router.get('/list-calendars', async (req, res) => {
+  try {
+    const handle = await getGoogleAuth(req.user.id);
+    if (!handle) return res.json({ connected: false, calendars: [], selected_id: null });
+    const { auth, calendarId } = handle;
+    const calendar = google.calendar({ version: 'v3', auth });
+    const resp = await calendar.calendarList.list({ maxResults: 100, showHidden: false });
+    const items = (resp.data.items || [])
+      .filter(c => c.accessRole === 'owner' || c.accessRole === 'writer')
+      .map(c => ({
+        id: c.id,
+        summary: c.summary,
+        primary: !!c.primary,
+        background_color: c.backgroundColor || null,
+      }));
+    res.json({ connected: true, calendars: items, selected_id: calendarId });
+  } catch (err) {
+    console.error('list-calendars failed:', err);
+    res.status(500).json({ error: 'list_failed', message: err.message || String(err) });
+  }
+});
+
+// Switch which Google calendar TMG reads from and writes to. Clears the sync
+// token because it is per-calendar; the next pullFromGoogle will re-baseline
+// against the newly selected calendar instead of tripping 410 every call.
+router.post('/select-calendar', async (req, res) => {
+  try {
+    const calendarId = typeof req.body?.calendar_id === 'string' ? req.body.calendar_id.trim() : '';
+    if (!calendarId) return res.status(400).json({ error: 'missing_calendar_id' });
+    await db.query(
+      `UPDATE users SET google_selected_calendar = $1, google_sync_token = NULL
+       WHERE id = $2`,
+      [calendarId, req.user.id]
+    );
+    res.json({ ok: true, selected_id: calendarId });
+  } catch (err) {
+    console.error('select-calendar failed:', err);
+    res.status(500).json({ error: 'select_failed' });
+  }
 });
 
 // Minimal end-to-end test of the AI classifier path. Fires a tiny prompt
@@ -404,7 +484,11 @@ router.post('/disconnect', async (req, res) => {
          google_access_token = NULL,
          google_refresh_token = NULL,
          google_token_expires_at = NULL,
-         google_calendar_email = NULL
+         google_calendar_email = NULL,
+         google_connection_state = NULL,
+         google_connection_error = NULL,
+         google_sync_token = NULL,
+         google_selected_calendar = 'primary'
        WHERE id = $1`,
       [req.user.id]
     );
@@ -421,10 +505,11 @@ router.post('/disconnect', async (req, res) => {
 // not configured, we fall back to the deterministic keyword scorer.
 router.get('/events', async (req, res) => {
   try {
-    const auth = await getGoogleAuth(req.user.id);
-    if (!auth) {
+    const handle = await getGoogleAuth(req.user.id);
+    if (!handle) {
       return res.json({ events: [], connected: false });
     }
+    const { auth, calendarId } = handle;
 
     const calendar = google.calendar({ version: 'v3', auth });
 
@@ -434,7 +519,7 @@ router.get('/events', async (req, res) => {
     future.setDate(future.getDate() + 60);
 
     const response = await calendar.events.list({
-      calendarId: 'primary',
+      calendarId,
       timeMin: now.toISOString(),
       timeMax: future.toISOString(),
       singleEvents: true,
@@ -542,15 +627,16 @@ router.get('/events', async (req, res) => {
 // Query: ?start=YYYY-MM-DD&end=YYYY-MM-DD (defaults to today..+35 days).
 router.get('/pins', async (req, res) => {
   try {
-    const auth = await getGoogleAuth(req.user.id);
-    if (!auth) return res.json({ pins: [], connected: false });
+    const handle = await getGoogleAuth(req.user.id);
+    if (!handle) return res.json({ pins: [], connected: false });
+    const { auth, calendarId } = handle;
 
     const start = req.query.start ? new Date(req.query.start) : new Date();
     const end = req.query.end ? new Date(req.query.end) : new Date(Date.now() + 35 * 24 * 60 * 60 * 1000);
 
     const calendar = google.calendar({ version: 'v3', auth });
     const response = await calendar.events.list({
-      calendarId: 'primary',
+      calendarId,
       timeMin: start.toISOString(),
       timeMax: end.toISOString(),
       singleEvents: true,
@@ -800,8 +886,9 @@ function buildEventResource(gig) {
 
 async function pushGigToGoogle(userId, gig) {
   try {
-    const auth = await getGoogleAuth(userId);
-    if (!auth) return null;
+    const handle = await getGoogleAuth(userId);
+    if (!handle) return null;
+    const { auth, calendarId } = handle;
 
     const calendar = google.calendar({ version: 'v3', auth });
     const resource = buildEventResource(gig);
@@ -818,7 +905,7 @@ async function pushGigToGoogle(userId, gig) {
 
     if (targetEventId) {
       const resp = await calendar.events.update({
-        calendarId: 'primary',
+        calendarId,
         eventId: targetEventId,
         requestBody: resource,
       });
@@ -837,7 +924,7 @@ async function pushGigToGoogle(userId, gig) {
 
     // Create new event
     const resp = await calendar.events.insert({
-      calendarId: 'primary',
+      calendarId,
       requestBody: resource,
     });
     const newId = resp.data.id;
@@ -868,11 +955,12 @@ async function removeGigFromGoogle(userId, gig) {
     }
     if (!targetEventId) return false;
 
-    const auth = await getGoogleAuth(userId);
-    if (!auth) return false;
+    const handle = await getGoogleAuth(userId);
+    if (!handle) return false;
+    const { auth, calendarId } = handle;
     const calendar = google.calendar({ version: 'v3', auth });
     await calendar.events.delete({
-      calendarId: 'primary',
+      calendarId,
       eventId: targetEventId,
     });
     return true;
@@ -902,8 +990,8 @@ router.post('/push/:gigId', async (req, res) => {
 // set times, notes) is mirrored back into the Google event.
 router.post('/push-all', async (req, res) => {
   try {
-    const auth = await getGoogleAuth(req.user.id);
-    if (!auth) return res.status(400).json({ error: 'Calendar not connected' });
+    const handle = await getGoogleAuth(req.user.id);
+    if (!handle) return res.status(400).json({ error: 'Calendar not connected' });
     const gigs = await db.query(
       "SELECT * FROM gigs WHERE user_id = $1 AND (status IS NULL OR status != 'cancelled')",
       [req.user.id]
@@ -932,14 +1020,15 @@ router.post('/push-all', async (req, res) => {
 // (/events) so the user stays in control of what becomes a gig.
 
 async function pullFromGoogle(userId) {
-  const auth = await getGoogleAuth(userId);
-  if (!auth) return { error: 'not_connected' };
+  const handle = await getGoogleAuth(userId);
+  if (!handle) return { error: 'not_connected' };
+  const { auth, calendarId } = handle;
 
   const userRow = await db.query('SELECT google_sync_token FROM users WHERE id = $1', [userId]);
   let syncToken = userRow.rows[0]?.google_sync_token || null;
 
   const calendar = google.calendar({ version: 'v3', auth });
-  const listParams = { calendarId: 'primary', singleEvents: true, showDeleted: true };
+  const listParams = { calendarId, singleEvents: true, showDeleted: true };
 
   if (syncToken) {
     listParams.syncToken = syncToken;
@@ -1066,8 +1155,8 @@ router.post('/pull', async (req, res) => {
 router.post('/sync-now', async (req, res) => {
   const startedAt = Date.now();
   try {
-    const auth = await getGoogleAuth(req.user.id);
-    if (!auth) {
+    const handle = await getGoogleAuth(req.user.id);
+    if (!handle) {
       return res.json({
         ok: false,
         error: 'not_connected',
@@ -1139,8 +1228,9 @@ router.get('/diag-gig', async (req, res) => {
       [req.user.id, `%${q}%`]
     );
 
-    const auth = await getGoogleAuth(req.user.id);
-    const calendar = auth ? google.calendar({ version: 'v3', auth }) : null;
+    const handle = await getGoogleAuth(req.user.id);
+    const calendar = handle ? google.calendar({ version: 'v3', auth: handle.auth }) : null;
+    const calendarId = handle ? handle.calendarId : 'primary';
 
     const out = [];
     for (const g of gigs.rows) {
@@ -1167,7 +1257,7 @@ router.get('/diag-gig', async (req, res) => {
 
       if (calendar && targetEventId) {
         try {
-          const r = await calendar.events.get({ calendarId: 'primary', eventId: targetEventId });
+          const r = await calendar.events.get({ calendarId, eventId: targetEventId });
           row.google = {
             id: r.data.id,
             summary: r.data.summary,

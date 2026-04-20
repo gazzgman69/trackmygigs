@@ -299,6 +299,24 @@ async function runMigrations() {
     // Stage-4 QA fix: contacts.location was referenced by POST /api/contacts but
     // the column was never added — every contact create returned 500.
     await db.query(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS location TEXT`);
+    // Calendar connection error state: when the refresh_token gets revoked
+    // (user unlinks TMG from their Google security page), the next refresh
+    // throws invalid_grant. Used to silently return null from getGoogleAuth
+    // and the app just stopped syncing with no user-visible signal. Now we
+    // persist the state so the Calendar UI can render a "reconnect" banner.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_connection_state VARCHAR(32)`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_connection_error TEXT`);
+    // Multi-calendar selection: TMG used to hardcode calendarId:'primary', so
+    // users who kept gigs on a separate work or band calendar saw nothing flow
+    // through. Single calendar selection (default primary) is enough for the
+    // launch cohort; bumping to multi-select would need per-calendar sync tokens.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_selected_calendar VARCHAR(255) DEFAULT 'primary'`);
+    // One-time cleanup: a legacy gig row (uuid prefix 1cc2b3e0, "The Vents @
+    // The Post Barn", 2026-04-23) was created with 00:00/00:00 start+end times
+    // and kept surfacing on the Calendar as a ghost. Predates the wizard's
+    // required-start-time rule. Idempotent: only matches if both times are
+    // still 00:00:00.
+    await db.query(`DELETE FROM gigs WHERE id::text LIKE '1cc2b3e0%' AND start_time = '00:00:00'::time AND end_time = '00:00:00'::time`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);
