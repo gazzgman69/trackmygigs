@@ -740,6 +740,64 @@ router.post('/import', async (req, res) => {
       ? (isAllDayEnd ? { date: end, time: null } : londonDateTime(end))
       : { date: null, time: null };
 
+    // UPSERT behaviour: if this Google event has already been imported (by
+    // either the quick-import path or a prior detail-import), we must not
+    // create a second row. Instead we MERGE the caller's new details into
+    // the existing row — preferring caller-provided values where present,
+    // never clobbering non-null existing fields with nulls. This fixes the
+    // duplicate-row bug when a user imports a flagged gig then re-opens
+    // the detail pane to add band name / fee / dress code.
+    const existing = await db.query(
+      `SELECT * FROM gigs WHERE user_id = $1 AND google_event_id = $2 LIMIT 1`,
+      [req.user.id, event_id]
+    );
+
+    if (existing.rows.length) {
+      const g = existing.rows[0];
+      const newBandName = band_name || title || g.band_name;
+      const newVenueName = (location ? location.split(',')[0] : null) || g.venue_name;
+      const newVenueAddress = location || g.venue_address;
+      const newDate = startParts.date || g.date;
+      const newStartTime = startParts.time || g.start_time;
+      const newEndTime = endParts.time || g.end_time;
+      const newFee = (fee !== undefined && fee !== null && fee !== '')
+        ? parseFloat(fee)
+        : g.fee;
+      const newDressCode = dress_code || g.dress_code;
+
+      const updated = await db.query(
+        `UPDATE gigs
+           SET band_name = $1,
+               venue_name = $2,
+               venue_address = $3,
+               date = $4,
+               start_time = $5,
+               end_time = $6,
+               fee = $7,
+               dress_code = $8
+         WHERE id = $9 AND user_id = $10
+         RETURNING *`,
+        [
+          newBandName,
+          newVenueName,
+          newVenueAddress,
+          newDate,
+          newStartTime,
+          newEndTime,
+          newFee,
+          newDressCode,
+          g.id,
+          req.user.id,
+        ]
+      );
+
+      // Mirror the merged details back to Google so the calendar event
+      // body reflects the full gig (fee, dress code, etc.).
+      try { await pushGigToGoogle(req.user.id, updated.rows[0]); } catch (_) {}
+
+      return res.json({ gig: updated.rows[0], success: true, merged: true });
+    }
+
     // IMPORTANT: populate google_event_id at import time (in addition to the
     // `source='gcal:<id>'` tag). Without this, Google-side cancellations and
     // TMG-side deletes silently miss imported gigs, because both the pull
