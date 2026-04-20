@@ -550,12 +550,26 @@ router.get('/pins', async (req, res) => {
       maxResults: 250,
     });
 
-    // Exclude events already imported as gigs (they render as gigs already)
+    // Exclude events already linked to a gig. Covers BOTH directions:
+    //   (1) Gigs pulled IN from Google Calendar (source = 'gcal:<id>')
+    //   (2) Gigs created in the app and pushed OUT to Google (google_event_id set,
+    //       but source stays 'manual' / 'crm' etc.)
+    // Missing case (2) was the cause of every app-created gig showing up twice
+    // on the calendar: once as the TMG gig row, once as its own Google pin.
     const existingGigs = await db.query(
-      "SELECT source FROM gigs WHERE user_id = $1 AND source LIKE 'gcal:%'",
+      `SELECT source, google_event_id
+         FROM gigs
+        WHERE user_id = $1
+          AND (source LIKE 'gcal:%' OR google_event_id IS NOT NULL)`,
       [req.user.id]
     );
-    const importedIds = new Set(existingGigs.rows.map(g => g.source.replace('gcal:', '')));
+    const importedIds = new Set();
+    for (const g of existingGigs.rows) {
+      if (g.google_event_id) importedIds.add(g.google_event_id);
+      if (g.source && g.source.startsWith('gcal:')) {
+        importedIds.add(g.source.slice('gcal:'.length));
+      }
+    }
 
     const pins = (response.data.items || [])
       .filter(ev => !importedIds.has(ev.id))
