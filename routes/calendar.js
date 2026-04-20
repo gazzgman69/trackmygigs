@@ -1045,6 +1045,75 @@ router.post('/sync-now', async (req, res) => {
   }
 });
 
+// GET /calendar/diag-gig?q=... — diagnostic: show DB state + Google state for
+// gigs whose band_name or venue_name matches the query. Useful for debugging
+// date-mismatch bugs between TMG and Google Calendar without shell access.
+// Not linked from the UI; access via URL only.
+router.get('/diag-gig', async (req, res) => {
+  try {
+    const q = (req.query.q || '').toString().trim();
+    if (!q) return res.status(400).json({ error: 'q required' });
+
+    const gigs = await db.query(
+      `SELECT id, band_name, venue_name, date, start_time, end_time, source, google_event_id
+         FROM gigs
+        WHERE user_id = $1
+          AND (band_name ILIKE $2 OR venue_name ILIKE $2)
+        ORDER BY date ASC
+        LIMIT 25`,
+      [req.user.id, `%${q}%`]
+    );
+
+    const auth = await getGoogleAuth(req.user.id);
+    const calendar = auth ? google.calendar({ version: 'v3', auth }) : null;
+
+    const out = [];
+    for (const g of gigs.rows) {
+      const row = {
+        id: g.id,
+        band_name: g.band_name,
+        venue_name: g.venue_name,
+        db_date_raw: g.date,
+        db_date_iso: g.date instanceof Date ? g.date.toISOString() : String(g.date),
+        db_date_slice10: g.date instanceof Date
+          ? g.date.toISOString().slice(0, 10)
+          : String(g.date).slice(0, 10),
+        start_time: g.start_time,
+        end_time: g.end_time,
+        source: g.source,
+        google_event_id: g.google_event_id,
+        google: null,
+      };
+
+      let targetEventId = g.google_event_id;
+      if (!targetEventId && g.source && String(g.source).startsWith('gcal:')) {
+        targetEventId = String(g.source).slice('gcal:'.length);
+      }
+
+      if (calendar && targetEventId) {
+        try {
+          const r = await calendar.events.get({ calendarId: 'primary', eventId: targetEventId });
+          row.google = {
+            id: r.data.id,
+            summary: r.data.summary,
+            start: r.data.start,
+            end: r.data.end,
+          };
+        } catch (e) {
+          row.google = { error: e.message || String(e) };
+        }
+      }
+
+      out.push(row);
+    }
+
+    res.json({ ok: true, server_tz_offset_min: new Date().getTimezoneOffset(), count: out.length, gigs: out });
+  } catch (err) {
+    console.error('diag-gig error:', err);
+    res.status(500).json({ error: err.message || 'diag failed' });
+  }
+});
+
 // Export helpers for fire-and-forget use in api.js
 module.exports = router;
 module.exports.pushGigToGoogle = pushGigToGoogle;
