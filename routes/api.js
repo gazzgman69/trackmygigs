@@ -2025,10 +2025,12 @@ router.get('/notifications', async (req, res) => {
 
     const notifications = [];
 
-    // Upcoming gigs in next 3 days
+    // Upcoming gigs in next 3 days. Skip cancelled so dismissed QA data
+    // stops pinging real users.
     const gigsResult = await db.query(
       `SELECT id, band_name, venue_name, date FROM gigs
        WHERE user_id = $1 AND date > $2 AND date <= $3
+         AND (status IS NULL OR status != 'cancelled')
        ORDER BY date ASC`,
       [userId, today, threeDaysFromNow]
     );
@@ -2138,6 +2140,26 @@ router.post('/notifications/dismiss', async (req, res) => {
   } catch (error) {
     console.error('Dismiss notification error:', error);
     res.status(500).json({ error: 'Failed to dismiss notification' });
+  }
+});
+
+// S8-05: undo a dismissal. Removes one row from notification_dismissals so the
+// reminder re-appears on the next /api/notifications fetch. Safe to call for a
+// key that was never dismissed (rowCount will just be 0).
+router.delete('/notifications/dismiss', async (req, res) => {
+  try {
+    const key = req.body && req.body.key;
+    if (!key || typeof key !== 'string') {
+      return res.status(400).json({ error: 'Missing key' });
+    }
+    const r = await db.query(
+      `DELETE FROM notification_dismissals WHERE user_id = $1 AND notif_key = $2`,
+      [req.user.id, key]
+    );
+    res.json({ success: true, removed: r.rowCount });
+  } catch (error) {
+    console.error('Undismiss notification error:', error);
+    res.status(500).json({ error: 'Failed to undismiss notification' });
   }
 });
 
