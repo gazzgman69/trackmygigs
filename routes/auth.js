@@ -386,9 +386,9 @@ async function resolveSessionUser(req) {
 }
 
 // Redirect user to Google consent screen with Calendar scope.
-// Scope note (2026-04-18): upgraded from calendar.readonly to calendar.events
-// because routes/calendar.js performs events.insert/update/delete for two-way
-// sync. readonly tokens were causing silent 403s on every push.
+// Scopes:
+//   calendar.events           - read/write events (two-way sync)
+//   calendar.calendarlist.readonly - let user pick which calendar to sync
 router.get('/google/calendar', (req, res) => {
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
@@ -397,6 +397,7 @@ router.get('/google/calendar', (req, res) => {
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/userinfo.profile',
       'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
     ],
   });
   res.redirect(authUrl);

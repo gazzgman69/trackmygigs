@@ -363,7 +363,25 @@ router.get('/list-calendars', async (req, res) => {
     if (!handle) return res.json({ connected: false, calendars: [], selected_id: null });
     const { auth, calendarId } = handle;
     const calendar = google.calendar({ version: 'v3', auth });
-    const resp = await calendar.calendarList.list({ maxResults: 100, showHidden: false });
+    let resp;
+    try {
+      resp = await calendar.calendarList.list({ maxResults: 100, showHidden: false });
+    } catch (apiErr) {
+      const msg = apiErr?.response?.data?.error?.message || apiErr?.message || '';
+      if (/insufficient authentication scopes/i.test(msg)) {
+        // Users who connected before calendarlist.readonly was added to the
+        // scope set cannot enumerate calendars. Fall back to primary-only so
+        // the picker still renders; the UI surfaces needs_rescope to prompt
+        // a reconnect for the full list.
+        return res.json({
+          connected: true,
+          calendars: [{ id: 'primary', summary: 'Primary', primary: true, background_color: null }],
+          selected_id: calendarId,
+          needs_rescope: true,
+        });
+      }
+      throw apiErr;
+    }
     const items = (resp.data.items || [])
       .filter(c => c.accessRole === 'owner' || c.accessRole === 'writer')
       .map(c => ({

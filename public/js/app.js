@@ -2044,7 +2044,7 @@ async function openCalendarPicker() {
       return;
     }
     const selected = data.selected_id || 'primary';
-    el.innerHTML = data.calendars.map(c => {
+    const rows = data.calendars.map(c => {
       const id = c.primary ? 'primary' : c.id;
       const label = c.primary ? `${c.summary || 'Primary'} (Primary)` : (c.summary || c.id);
       const checked = id === selected ? 'checked' : '';
@@ -2056,6 +2056,12 @@ async function openCalendarPicker() {
           <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${safeLabel}</span>
         </label>`;
     }).join('');
+    const rescope = data.needs_rescope
+      ? `<div style="padding:8px 10px;margin-top:6px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4);border-radius:8px;font-size:11px;line-height:1.4;color:var(--text-2);">
+          To pick a different calendar, reconnect Google Calendar so TrackMyGigs can see your full list. Disconnect and reconnect from the Profile screen.
+        </div>`
+      : '';
+    el.innerHTML = rows + rescope;
   } catch (e) {
     el.innerHTML = '<div style="padding:8px;color:var(--danger);font-size:12px;">Failed to load calendars. Try again.</div>';
   }
