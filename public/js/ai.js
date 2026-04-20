@@ -505,8 +505,40 @@
     const onApply = opts && typeof opts.onApply === 'function' ? opts.onApply : null;
     const body = h(`
       <div>
-        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2,#999);">Feed me key facts. I will write three bios: short (50w), medium (150w), long (300w).</p>
-        <textarea id="aiBioFacts" class="ai-textarea" placeholder="Wedding band based in London. 4 piece. Standards, soul, pop. 10 years experience. Played Kew Gardens, Claridge&#039;s, The Ned."></textarea>
+        <p style="margin:0 0 12px;font-size:13px;color:var(--text-2,#999);">Answer as many or as few as you like. I will combine your answers into short (~50w), medium (~150w) and long (~300w) bios.</p>
+
+        <label class="ai-field-label">Act name & style</label>
+        <input type="text" id="aiBioAct" class="ai-input" placeholder="e.g. The Velvet Ramps, 4-piece soul & funk wedding band" />
+
+        <label class="ai-field-label" style="margin-top:12px;">Based in / travel range</label>
+        <input type="text" id="aiBioLocation" class="ai-input" placeholder="e.g. London, available UK-wide" />
+
+        <label class="ai-field-label" style="margin-top:12px;">Line-up or instrumentation</label>
+        <input type="text" id="aiBioLineup" class="ai-input" placeholder="e.g. Vocals, guitar, bass, drums (sax on request)" />
+
+        <label class="ai-field-label" style="margin-top:12px;">Experience</label>
+        <input type="text" id="aiBioExperience" class="ai-input" placeholder="e.g. 10 years playing weddings, corporates and private parties" />
+
+        <label class="ai-field-label" style="margin-top:12px;">Notable gigs, venues or clients</label>
+        <textarea id="aiBioGigs" class="ai-textarea" style="min-height:64px;" placeholder="e.g. Kew Gardens, Claridge's, The Ned, Glastonbury acoustic stage"></textarea>
+
+        <label class="ai-field-label" style="margin-top:12px;">What makes you different?</label>
+        <textarea id="aiBioUSP" class="ai-textarea" style="min-height:64px;" placeholder="e.g. Tight four-part harmonies, full rhythm section, custom first-dance arrangements"></textarea>
+
+        <label class="ai-field-label" style="margin-top:12px;">Press quotes or testimonials (optional)</label>
+        <textarea id="aiBioQuotes" class="ai-textarea" style="min-height:50px;" placeholder="e.g. 'Best band we've ever booked' - mother of the bride, June 2024"></textarea>
+
+        <label class="ai-field-label" style="margin-top:12px;">Tone</label>
+        <select id="aiBioTone" class="ai-select">
+          <option value="warm and professional">Warm & professional</option>
+          <option value="punchy and confident">Punchy & confident</option>
+          <option value="playful and cheeky">Playful & cheeky</option>
+          <option value="elegant and understated">Elegant & understated</option>
+        </select>
+
+        <label class="ai-field-label" style="margin-top:12px;">Anything else? (optional)</label>
+        <textarea id="aiBioFacts" class="ai-textarea" style="min-height:70px;" placeholder="Add any other details that don't fit above"></textarea>
+
         <div class="ai-row" style="justify-content:flex-end;">
           <button type="button" class="ai-btn-secondary" onclick="document.getElementById('aiModalRoot').remove()">Cancel</button>
           <button type="button" class="ai-btn" id="aiBioGo">Write</button>
@@ -516,12 +548,26 @@
     `);
     openModal('Bio Writer', body);
     body.querySelector('#aiBioGo').addEventListener('click', async () => {
-      const facts = body.querySelector('#aiBioFacts').value.trim();
-      if (!facts) { toast('Enter some facts first', 'warn'); return; }
+      const pick = (id) => (body.querySelector('#' + id)?.value || '').trim();
+      const labelled = [
+        ['Act', pick('aiBioAct')],
+        ['Based in', pick('aiBioLocation')],
+        ['Line-up', pick('aiBioLineup')],
+        ['Experience', pick('aiBioExperience')],
+        ['Notable gigs or venues', pick('aiBioGigs')],
+        ['What makes us different', pick('aiBioUSP')],
+        ['Quotes or testimonials', pick('aiBioQuotes')],
+      ].filter(([, v]) => v);
+      const extra = pick('aiBioFacts');
+      const lines = labelled.map(([k, v]) => `${k}: ${v}`);
+      if (extra) lines.push(extra);
+      const facts = lines.join('\n');
+      if (!facts) { toast('Fill in at least one field', 'warn'); return; }
+      const style = pick('aiBioTone') || 'warm and professional';
       const result = body.querySelector('#aiBioResult');
       result.innerHTML = '';
       result.appendChild(spinner('Writing bios...'));
-      const data = await postAI('/generate-bio', { facts });
+      const data = await postAI('/generate-bio', { facts, style });
       result.innerHTML = '';
       if (!data) return;
       const tones = [

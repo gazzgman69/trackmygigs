@@ -5605,67 +5605,87 @@ async function submitTeachingTerm() {
 }
 
 // ── Notifications Panel ─────────────────────────────────────────────────────
+//
+// Perf note: the panel used to block on both /api/notifications AND
+// /api/calendar/events (which hits the Google Calendar API + Haiku AI
+// classifier) before painting. That made the bell feel like it took 3-5s to
+// open. New flow:
+//   1. Paint server notifications immediately (fast DB query).
+//   2. If the calendar-nudge cache is fresh (<60s), fold it in on first paint.
+//   3. Otherwise fire the nudge fetch in the background and re-render just
+//      the nudge card when it arrives. The user sees the panel open instantly.
 async function renderNotificationsPanel() {
   const body = document.getElementById('notificationsPanelBody');
   if (!body) return;
 
+  // Cached nudges are free — use them for the first paint if fresh.
+  const cacheFresh = Array.isArray(window._calendarNudges)
+    && (Date.now() - (window._calendarNudgesFetchedAt || 0)) < 60 * 1000;
+  const cachedNudges = cacheFresh ? window._calendarNudges : null;
+
   try {
-    // Fetch server notifications and the calendar-nudge cache in parallel so
-    // the bell panel has a complete picture before painting. BUG #3 fix:
-    // calendar nudges used to be Calendar-screen-only, invisible from any
-    // other surface.
-    const [notifResp, nudges] = await Promise.all([
-      fetch('/api/notifications').then(r => r.json()).catch(() => []),
-      (async () => {
-        try { return (await loadCalendarNudges()) || []; } catch (_) { return []; }
-      })(),
-    ]);
+    const notifResp = await fetch('/api/notifications').then(r => r.json()).catch(() => []);
     const notifications = Array.isArray(notifResp) ? notifResp : [];
-    const nudgeCount = Array.isArray(nudges) ? nudges.length : 0;
 
-    // Build the calendar-nudge entry point if there's anything to review.
-    const nudgeCardHTML = nudgeCount > 0 ? buildNudgeEntryCard(nudgeCount) : '';
+    paintNotificationsPanel(body, notifications, cachedNudges);
 
-    if (notifications.length === 0 && nudgeCount === 0) {
-      body.innerHTML = `
-        <div style="padding:60px 24px;text-align:center;">
-          <div style="font-size:32px;margin-bottom:12px;">🔔</div>
-          <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px;">You're all caught up</div>
-          <div style="font-size:13px;color:var(--text-2);line-height:1.5;">New gig offers, upcoming gigs and payment updates will show up here.</div>
-        </div>`;
-      const dot = document.getElementById('notificationDot');
-      if (dot) dot.style.display = 'none';
-      return;
+    // If we don't have fresh nudges cached, fetch them in the background and
+    // re-render only when they arrive. We never block the open on this.
+    if (!cacheFresh) {
+      loadCalendarNudges()
+        .then((nudges) => {
+          // Body may have been replaced by the time this resolves (user closed
+          // and reopened panel). Only re-paint if the same element is still
+          // mounted with our notifications view.
+          const stillMounted = document.getElementById('notificationsPanelBody');
+          if (!stillMounted) return;
+          paintNotificationsPanel(stillMounted, notifications, Array.isArray(nudges) ? nudges : []);
+        })
+        .catch(() => {}); // silent — the panel already rendered fine without them
     }
-
-    // Hide dismissed ones from local storage
-    const dismissed = JSON.parse(localStorage.getItem('dismissedNotifications') || '[]');
-    const visible = notifications.filter((n) => !dismissed.includes(notifKey(n)));
-
-    if (visible.length === 0 && nudgeCount === 0) {
-      body.innerHTML = `
-        <div style="padding:60px 24px;text-align:center;">
-          <div style="font-size:32px;margin-bottom:12px;">🔔</div>
-          <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px;">You're all caught up</div>
-          <div style="font-size:13px;color:var(--text-2);line-height:1.5;">Cleared notifications will come back when something new happens.</div>
-        </div>`;
-      return;
-    }
-
-    // Sort by timestamp desc
-    visible.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-    body.innerHTML = `<div style="padding:10px 14px;">${nudgeCardHTML}${visible.map(buildNotifCard).join('')}</div>`;
-
-    // Make sure the bell dot reflects the nudge queue too — if the user has
-    // dismissed every notification but still has calendar events to review,
-    // the bell should keep glowing.
-    const dot = document.getElementById('notificationDot');
-    if (dot) dot.style.display = (visible.length + nudgeCount) > 0 ? 'block' : 'none';
   } catch (err) {
     console.error('Notifications panel error:', err);
     body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load notifications. Pull to retry.</div>`;
   }
+}
+
+// Split out of renderNotificationsPanel so the async nudge fetch can re-paint
+// in place without re-running the server notifications fetch.
+function paintNotificationsPanel(body, notifications, nudges) {
+  const nudgeCount = Array.isArray(nudges) ? nudges.length : 0;
+  const nudgeCardHTML = nudgeCount > 0 ? buildNudgeEntryCard(nudgeCount) : '';
+
+  if (notifications.length === 0 && nudgeCount === 0) {
+    body.innerHTML = `
+      <div style="padding:60px 24px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:12px;">🔔</div>
+        <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px;">You're all caught up</div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.5;">New gig offers, upcoming gigs and payment updates will show up here.</div>
+      </div>`;
+    const dot = document.getElementById('notificationDot');
+    if (dot) dot.style.display = 'none';
+    return;
+  }
+
+  const dismissed = JSON.parse(localStorage.getItem('dismissedNotifications') || '[]');
+  const visible = notifications.filter((n) => !dismissed.includes(notifKey(n)));
+
+  if (visible.length === 0 && nudgeCount === 0) {
+    body.innerHTML = `
+      <div style="padding:60px 24px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:12px;">🔔</div>
+        <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px;">You're all caught up</div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.5;">Cleared notifications will come back when something new happens.</div>
+      </div>`;
+    return;
+  }
+
+  visible.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+  body.innerHTML = `<div style="padding:10px 14px;">${nudgeCardHTML}${visible.map(buildNotifCard).join('')}</div>`;
+
+  const dot = document.getElementById('notificationDot');
+  if (dot) dot.style.display = (visible.length + nudgeCount) > 0 ? 'block' : 'none';
 }
 
 // BUG #3 fix: entry point card surfaced in the bell panel. Tapping it opens
