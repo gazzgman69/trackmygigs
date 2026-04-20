@@ -277,9 +277,20 @@ async function runMigrations() {
     await db.query(`ALTER TABLE offers ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMP`);
     // S8-05: notification dismissals persisted server-side by notification key.
     // Notification "keys" are synthesized client-side from type:action_type:action_id:timestamp.
+    // user_id is UUID (users.id is UUID). An earlier version of this migration
+    // typed it as INTEGER, so every INSERT silently failed and the try/catch
+    // masked it. If the column still exists as INTEGER, drop and recreate —
+    // any stored data is garbage (the INSERTs never succeeded).
+    const dismissCol = await db.query(`
+      SELECT data_type FROM information_schema.columns
+      WHERE table_name = 'notification_dismissals' AND column_name = 'user_id'
+    `);
+    if (dismissCol.rows.length && dismissCol.rows[0].data_type !== 'uuid') {
+      await db.query(`DROP TABLE IF EXISTS notification_dismissals`);
+    }
     await db.query(`CREATE TABLE IF NOT EXISTS notification_dismissals (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
+      user_id UUID NOT NULL,
       notif_key TEXT NOT NULL,
       dismissed_at TIMESTAMP DEFAULT NOW(),
       UNIQUE (user_id, notif_key)
