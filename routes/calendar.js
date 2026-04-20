@@ -6,6 +6,36 @@ const authMiddleware = require('../middleware/auth');
 const router = express.Router();
 router.use(authMiddleware);
 
+// ── LONDON-LOCAL DATE/TIME PARTS ─────────────────────────────────────────────
+// Google events arrive as RFC3339 strings like "2026-04-23T00:00:00+01:00".
+// `new Date(...)` produces a correct UTC instant, but `.toISOString()` and
+// `.toTimeString()` then return UTC parts (on Replit the server TZ is UTC),
+// which shifts late-evening events onto the wrong calendar day. Gigs are
+// scheduled and displayed in London local time, so we extract date + time
+// in 'Europe/London' regardless of what the server thinks the local zone is.
+function londonDateTime(isoOrDate) {
+  if (!isoOrDate) return { date: null, time: null };
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  if (isNaN(d.getTime())) return { date: null, time: null };
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t) => parts.find(p => p.type === t)?.value;
+  const year = get('year');
+  const month = get('month');
+  const day = get('day');
+  let hour = get('hour');
+  if (hour === '24') hour = '00'; // en-GB midnight quirk on some Node versions
+  const minute = get('minute');
+  return {
+    date: year && month && day ? `${year}-${month}-${day}` : null,
+    time: hour && minute ? `${hour}:${minute}` : null,
+  };
+}
+
 // ── AI CLASSIFICATION (Claude Haiku 4.5) ─────────────────────────────────────
 // Given a batch of Google Calendar events, classify each as gig / not-gig with
 // confidence + extracted metadata. Falls back to the deterministic keyword
@@ -227,32 +257,6 @@ function scoreEvent(event) {
   }
 
   return { score, reasons };
-}
-
-function formatEventForNudge(event) {
-  const start = event.start?.dateTime || event.start?.date;
-  const end = event.end?.dateTime || event.end?.date;
-  const startDate = start ? new Date(start) : null;
-  const endDate = end ? new Date(end) : null;
-
-  const { score, reasons } = scoreEvent(event);
-
-  return {
-    id: event.id,
-    title: event.summary || 'Untitled event',
-    location: event.location || null,
-    start: start,
-    end: end,
-    start_time: startDate ? startDate.toTimeString().substring(0, 5) : null,
-    end_time: endDate ? endDate.toTimeString().substring(0, 5) : null,
-    date_formatted: startDate ? startDate.toLocaleDateString('en-GB', {
-      weekday: 'short', day: 'numeric', month: 'short',
-    }) : null,
-    calendar_email: event.organizer?.email || null,
-    score,
-    reasons,
-    source: 'google_calendar',
-  };
 }
 
 // ── Helper: get authenticated Google client ──────────────────────────────────
@@ -491,16 +495,20 @@ router.get('/events', async (req, res) => {
         reasons = kw.reasons;
       }
 
+      // London-local components so a 23:00+01:00 event doesn't get labelled
+      // 22:00 the day before on a UTC server.
+      const startLondon = ev.start?.dateTime ? londonDateTime(start) : { date: null, time: null };
+      const endLondon = ev.end?.dateTime ? londonDateTime(end) : { date: null, time: null };
       return {
         id: ev.id,
         title: ev.summary || 'Untitled event',
         location: ev.location || null,
         start,
         end,
-        start_time: startDate && ev.start?.dateTime ? startDate.toTimeString().substring(0, 5) : null,
-        end_time: endDate && ev.end?.dateTime ? endDate.toTimeString().substring(0, 5) : null,
+        start_time: startLondon.time,
+        end_time: endLondon.time,
         date_formatted: startDate ? startDate.toLocaleDateString('en-GB', {
-          weekday: 'short', day: 'numeric', month: 'short',
+          weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Europe/London',
         }) : null,
         calendar_email: ev.organizer?.email || null,
         score,
@@ -576,18 +584,28 @@ router.get('/pins', async (req, res) => {
       .map(ev => {
         const s = ev.start?.dateTime || ev.start?.date;
         const e = ev.end?.dateTime || ev.end?.date;
-        const sd = s ? new Date(s) : null;
+        const isAllDay = !!(ev.start?.date && !ev.start?.dateTime);
+        // All-day events already carry a bare YYYY-MM-DD. Timed events get
+        // their date + time resolved in Europe/London so the pin lands on the
+        // user-visible day, not the server's UTC day.
+        let date = null;
+        let startTime = null;
+        if (isAllDay) {
+          date = ev.start?.date || null;
+        } else if (s) {
+          const parts = londonDateTime(s);
+          date = parts.date;
+          startTime = parts.time;
+        }
         return {
           id: ev.id,
           title: ev.summary || 'Untitled event',
           location: ev.location || null,
-          date: sd
-            ? `${sd.getFullYear()}-${String(sd.getMonth() + 1).padStart(2, '0')}-${String(sd.getDate()).padStart(2, '0')}`
-            : null,
+          date,
           start: s,
           end: e,
-          start_time: sd && ev.start?.dateTime ? sd.toTimeString().substring(0, 5) : null,
-          all_day: !!(ev.start?.date && !ev.start?.dateTime),
+          start_time: startTime,
+          all_day: isAllDay,
         };
       })
       .filter(p => p.date);
@@ -606,8 +624,17 @@ router.post('/import', async (req, res) => {
   try {
     const { event_id, title, location, start, end, fee, band_name, dress_code } = req.body;
 
-    const startDate = start ? new Date(start) : new Date();
-    const endDate = end ? new Date(end) : null;
+    // `start` / `end` may be either a full dateTime ("2026-04-23T00:00:00+01:00")
+    // or an all-day bare date ("2026-04-23"). Split parts in Europe/London so
+    // an event that runs 23:00→01:00 lands on the correct day for the user.
+    const isAllDayStart = typeof start === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(start);
+    const startParts = start
+      ? (isAllDayStart ? { date: start, time: null } : londonDateTime(start))
+      : londonDateTime(new Date());
+    const isAllDayEnd = typeof end === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(end);
+    const endParts = end
+      ? (isAllDayEnd ? { date: end, time: null } : londonDateTime(end))
+      : { date: null, time: null };
 
     const result = await db.query(
       `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, fee, status, source, dress_code)
@@ -618,9 +645,9 @@ router.post('/import', async (req, res) => {
         band_name || title,
         location ? location.split(',')[0] : null,
         location || null,
-        startDate.toISOString().split('T')[0],
-        startDate.toTimeString().substring(0, 5),
-        endDate ? endDate.toTimeString().substring(0, 5) : null,
+        startParts.date,
+        startParts.time,
+        endParts.time,
         fee ? parseFloat(fee) : null,
         'confirmed',
         `gcal:${event_id}`,
@@ -919,11 +946,23 @@ async function pullFromGoogle(userId) {
 
         const startDT = event.start?.dateTime || event.start?.date;
         if (!startDT) continue;
-        const start = new Date(startDT);
-        const end = event.end?.dateTime || event.end?.date ? new Date(event.end.dateTime || event.end.date) : null;
-        const dateStr = start.toISOString().split('T')[0];
-        const startTime = event.start?.dateTime ? start.toTimeString().substring(0, 5) : null;
-        const endTime = event.end?.dateTime && end ? end.toTimeString().substring(0, 5) : null;
+        // All-day events already come as bare YYYY-MM-DD; timed events get
+        // resolved to London-local parts so the gig lands on the correct day.
+        const isAllDay = !!(event.start?.date && !event.start?.dateTime);
+        let dateStr = null;
+        let startTime = null;
+        let endTime = null;
+        if (isAllDay) {
+          dateStr = event.start.date;
+        } else {
+          const startLondon = londonDateTime(event.start.dateTime);
+          dateStr = startLondon.date;
+          startTime = startLondon.time;
+          if (event.end?.dateTime) {
+            endTime = londonDateTime(event.end.dateTime).time;
+          }
+        }
+        if (!dateStr) continue;
 
         const r = await db.query(
           `UPDATE gigs
@@ -973,6 +1012,13 @@ async function pullFromGoogle(userId) {
 // POST /calendar/pull — fetch changes from Google and apply to linked gigs
 router.post('/pull', async (req, res) => {
   try {
+    // Optional full resync: clears the per-user sync token so pullFromGoogle
+    // re-baselines against Google and re-reads every linked event from scratch.
+    // Needed after a parsing-layer fix so existing rows get rewritten with the
+    // corrected values. POST /calendar/pull?full=1
+    if (req.query.full === '1' || req.query.full === 'true') {
+      await db.query('UPDATE users SET google_sync_token = NULL WHERE id = $1', [req.user.id]);
+    }
     let result = await pullFromGoogle(req.user.id);
     if (result.retry) {
       result = await pullFromGoogle(req.user.id);
