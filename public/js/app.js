@@ -3949,6 +3949,7 @@ function renderWizardStep(step) {
       { label: '\u{1F3AD} Theatre', value: 'Theatre' },
       { label: '\u26EA Church', value: 'Church' },
       { label: '\u{1F37D}\uFE0F Restaurant', value: 'Restaurant' },
+      { label: '\u{1F4DA} Teaching', value: 'Teaching' },
       { label: '\u{1F4CC} Other', value: 'Other' },
     ];
     stepHTML = `
@@ -3969,6 +3970,7 @@ function renderWizardStep(step) {
             )
             .join('')}
         </div>
+        <div id="feeBenchmarkChip" style="margin-top:10px;"></div>
       </div>
       <div class="form-group">
         <label class="form-label">Dress code</label>
@@ -4017,6 +4019,35 @@ function renderWizardStep(step) {
       if (firstInput) firstInput.focus();
     }, 100);
   }
+
+  // Paint the fee benchmark chip on Step 5 once the DOM is in place.
+  if (step === 5) {
+    setTimeout(renderFeeBenchmarkChip, 0);
+  }
+}
+
+function renderFeeBenchmarkChip() {
+  const host = document.getElementById('feeBenchmarkChip');
+  if (!host) return;
+  if (!window.FeeBenchmarks) {
+    host.innerHTML = '';
+    return;
+  }
+  const b = window.FeeBenchmarks.getBenchmark({
+    gig_type: gigWizardData.gig_type,
+    address: gigWizardData.venue_address,
+    fee: gigWizardData.fee,
+  });
+  if (!b) {
+    host.innerHTML = '';
+    return;
+  }
+  host.innerHTML = `
+    <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:12px;padding:10px 12px;font-size:12px;line-height:1.45;">
+      <div style="color:var(--text);">\u{1F4A1} ${escapeHtml(b.text)}</div>
+      <div style="color:var(--text-3);font-size:10px;margin-top:4px;">${escapeHtml(b.meta)}</div>
+    </div>
+  `;
 }
 
 function wizardNext() {
@@ -4097,6 +4128,8 @@ function toggleGigType(type, btn) {
       .forEach((c) => c.classList.remove('selected'));
     btn.classList.add('selected');
   }
+  // Refresh the fee benchmark chip since gig_type just changed.
+  renderFeeBenchmarkChip();
 }
 
 function selectBand(btn) {
@@ -4504,6 +4537,7 @@ function renderFullGigForm() {
     { label: '\u{1F3AD} Theatre', value: 'Theatre' },
     { label: '\u26EA Church', value: 'Church' },
     { label: '\u{1F37D}\uFE0F Restaurant', value: 'Restaurant' },
+    { label: '\u{1F4DA} Teaching', value: 'Teaching' },
     { label: '\u{1F4CC} Other', value: 'Other' },
   ];
 
