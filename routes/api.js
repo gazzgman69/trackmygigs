@@ -225,6 +225,11 @@ router.delete('/gigs/:id', async (req, res) => {
 // created gigs so the UI can refresh its cache. Bulk creation bypasses the
 // Google Calendar sync helper per-row; the client should trigger a Sync Now
 // after the response if they want to push the whole term to Google at once.
+//
+// Two input modes:
+//   Weekly pattern: { weekday, from_date, to_date, skip_dates? }
+//   Specific dates: { dates: ['2026-04-27', '2026-05-04', ...] }
+// If `dates` is a non-empty array the weekly fields are ignored.
 router.post('/gigs/teaching-term', async (req, res) => {
   try {
     const {
@@ -242,70 +247,94 @@ router.post('/gigs/teaching-term', async (req, res) => {
       venue_address,
       notes,
       skip_dates,
+      dates: explicitDates,
     } = req.body || {};
 
     if (!start_time || !end_time) return res.status(400).json({ error: 'Start and end times required' });
-    if (!from_date || !to_date) return res.status(400).json({ error: 'Date range required' });
-    const wd = Number(weekday);
-    if (isNaN(wd) || wd < 0 || wd > 6) return res.status(400).json({ error: 'Weekday must be 0-6' });
     const rate = parseFloat(rate_per_hour);
     if (isNaN(rate) || rate <= 0) return res.status(400).json({ error: 'rate_per_hour required' });
 
-    // Build the date list entirely in UTC to avoid DST shifts and off-by-one
-    // errors when the server's local tz differs from the user's.
-    const start = new Date(from_date + 'T00:00:00Z');
-    const end = new Date(to_date + 'T00:00:00Z');
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) {
-      return res.status(400).json({ error: 'Invalid date range' });
-    }
     const MAX_LESSONS = 80; // a full academic year of weekly lessons, with headroom
-    const skipSet = new Set(Array.isArray(skip_dates) ? skip_dates : []);
-    const dates = [];
-    const cur = new Date(start);
-    while (cur <= end) {
-      if (cur.getUTCDay() === wd) {
-        const iso = cur.toISOString().slice(0, 10);
-        if (!skipSet.has(iso)) dates.push(iso);
+    const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+    let dates;
+
+    if (Array.isArray(explicitDates) && explicitDates.length > 0) {
+      // Specific-dates mode: dedupe, validate, sort.
+      const uniq = Array.from(new Set(explicitDates.map((d) => String(d).trim())));
+      const bad = uniq.filter((d) => !ISO_RE.test(d));
+      if (bad.length) return res.status(400).json({ error: `Invalid date format: ${bad[0]}` });
+      dates = uniq.sort();
+    } else {
+      // Weekly-pattern mode.
+      if (!from_date || !to_date) return res.status(400).json({ error: 'Date range required' });
+      const wd = Number(weekday);
+      if (isNaN(wd) || wd < 0 || wd > 6) return res.status(400).json({ error: 'Weekday must be 0-6' });
+      // Build the date list entirely in UTC to avoid DST shifts and off-by-one
+      // errors when the server's local tz differs from the user's.
+      const start = new Date(from_date + 'T00:00:00Z');
+      const end = new Date(to_date + 'T00:00:00Z');
+      if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) {
+        return res.status(400).json({ error: 'Invalid date range' });
       }
-      cur.setUTCDate(cur.getUTCDate() + 1);
+      const skipSet = new Set(Array.isArray(skip_dates) ? skip_dates : []);
+      dates = [];
+      const cur = new Date(start);
+      while (cur <= end) {
+        if (cur.getUTCDay() === wd) {
+          const iso = cur.toISOString().slice(0, 10);
+          if (!skipSet.has(iso)) dates.push(iso);
+        }
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+      if (dates.length === 0) return res.status(400).json({ error: 'No dates match that weekday in the range' });
     }
-    if (dates.length === 0) return res.status(400).json({ error: 'No dates match that weekday in the range' });
-    if (dates.length > MAX_LESSONS) return res.status(400).json({ error: `Range produced ${dates.length} lessons; max is ${MAX_LESSONS}` });
+    if (dates.length > MAX_LESSONS) return res.status(400).json({ error: `Produced ${dates.length} lessons; max is ${MAX_LESSONS}` });
 
     const fee = deriveTeachingFee({ rate_per_hour: rate, start_time, end_time });
     const band = band_name || (client_name ? client_name + ' (lesson)' : 'Teaching');
     const venue = venue_name || 'Lesson';
 
+    // Per-row try/catch so a single bad row (e.g. unique-violation, bad DB
+    // column) can't silently eat the other N-1 inserts. Any failures are
+    // collected and returned to the client so the UI can show what actually
+    // happened instead of just a generic 500.
     const created = [];
+    const failed = [];
     for (const date of dates) {
-      const row = await db.query(
-        `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, fee, status, source, notes, gig_type, client_name, client_email, client_phone, rate_per_hour)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', 'teaching_term', $9, 'Teaching', $10, $11, $12, $13)
-         RETURNING *`,
-        [
-          req.user.id,
-          band,
-          venue,
-          venue_address || null,
-          date,
-          start_time,
-          end_time,
-          fee,
-          notes || null,
-          client_name || null,
-          client_email || null,
-          client_phone || null,
-          rate,
-        ]
-      );
-      created.push(row.rows[0]);
+      try {
+        const row = await db.query(
+          `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, fee, status, source, notes, gig_type, client_name, client_email, client_phone, rate_per_hour)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', 'teaching_term', $9, 'Teaching', $10, $11, $12, $13)
+           RETURNING *`,
+          [
+            req.user.id,
+            band,
+            venue,
+            venue_address || null,
+            date,
+            start_time,
+            end_time,
+            fee,
+            notes || null,
+            client_name || null,
+            client_email || null,
+            client_phone || null,
+            rate,
+          ]
+        );
+        created.push(row.rows[0]);
+      } catch (rowErr) {
+        console.error(`Teaching-term insert failed for ${date}:`, rowErr && rowErr.message);
+        failed.push({ date, error: rowErr && rowErr.message ? rowErr.message : 'insert failed' });
+      }
     }
+    console.log(`Teaching-term: requested=${dates.length} created=${created.length} failed=${failed.length} user=${req.user.id}`);
     // Fire Google Calendar syncs in the background but don't block the
     // response on them. The client shows a success toast and the pins
     // appear on the next Calendar refresh.
     for (const g of created) syncGigSafely('create', req.user.id, g);
 
-    res.json({ count: created.length, gigs: created });
+    res.json({ count: created.length, requested: dates.length, failed, gigs: created });
   } catch (error) {
     console.error('Teaching-term bulk create error:', error);
     res.status(500).json({ error: 'Failed to create teaching term' });

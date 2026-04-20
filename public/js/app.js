@@ -5135,6 +5135,7 @@ function initTeachingTermPanel() {
     toDate.setDate(toDate.getDate() + 84); // default: 12 weeks
     const seed = window._teachingTermSeed || {};
     window._teachingTerm = {
+      mode: 'weekly', // 'weekly' = from/to + weekday, 'dates' = explicit selected dates
       client_name: seed.client_name || '',
       client_email: seed.client_email || '',
       client_phone: seed.client_phone || '',
@@ -5148,6 +5149,10 @@ function initTeachingTermPanel() {
       to_date: iso(toDate),
       skip_dates: '',
       band_name: '',
+      // Explicit-dates mode: picked dates as ISO yyyy-mm-dd, and the month
+      // the mini calendar is currently viewing (YYYY-MM-01).
+      selected_dates: [],
+      cal_month: iso(new Date(today.getFullYear(), today.getMonth(), 1)),
     };
     // Consume the seed so reopening later doesn't overwrite user edits.
     window._teachingTermSeed = null;
@@ -5159,6 +5164,7 @@ function renderTeachingTermPanel() {
   const body = document.getElementById('teachingTermBody');
   if (!body) return;
   const t = window._teachingTerm || {};
+  const mode = t.mode === 'dates' ? 'dates' : 'weekly';
   const weekdays = [
     { v: '0', label: 'Sun' },
     { v: '1', label: 'Mon' },
@@ -5168,10 +5174,58 @@ function renderTeachingTermPanel() {
     { v: '5', label: 'Fri' },
     { v: '6', label: 'Sat' },
   ];
+
+  const modeBlurb = mode === 'weekly'
+    ? 'Set up a weekly lesson pattern, and we\u2019ll create one gig per session across the term.'
+    : 'Pick any dates for this student. Useful when lessons don\u2019t fall on a fixed weekday.';
+
+  const datesBlock = mode === 'weekly'
+    ? `
+      <div class="form-section-label">Repeats every</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;">
+        ${weekdays.map((d) => `
+          <button type="button" class="day-btn${t.weekday === d.v ? ' active' : ''}" onclick="setTeachingTermWeekday('${d.v}')" style="${t.weekday === d.v ? 'background:var(--accent);color:#000;border-color:var(--accent);' : ''}">${d.label}</button>
+        `).join('')}
+      </div>
+
+      <div class="form-section-label">Term dates</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <div style="flex:1;">
+          <div class="form-label">From</div>
+          <input type="date" class="form-input" id="ttFrom" value="${escapeAttr(t.from_date)}" oninput="updateTeachingTerm('from_date', this.value); renderTeachingTermPreview();">
+        </div>
+        <div style="flex:1;">
+          <div class="form-label">To</div>
+          <input type="date" class="form-input" id="ttTo" value="${escapeAttr(t.to_date)}" oninput="updateTeachingTerm('to_date', this.value); renderTeachingTermPreview();">
+        </div>
+      </div>
+      <div class="form-label" style="margin-top:8px;">Skip dates (optional)</div>
+      <input type="text" class="form-input" id="ttSkip" placeholder="e.g. 2026-05-25, 2026-06-01 (half term)" value="${escapeAttr(t.skip_dates)}" oninput="updateTeachingTerm('skip_dates', this.value); renderTeachingTermPreview();" style="margin-bottom:16px;">
+    `
+    : `
+      <div class="form-section-label">Pick dates</div>
+      ${renderTeachingTermMiniCalendar()}
+      ${renderTeachingTermSelectedChips()}
+    `;
+
   body.innerHTML = `
-    <div style="font-size:12px;color:var(--text-2);margin-bottom:16px;line-height:1.5;">
-      Set up a weekly lesson pattern, and we\u2019ll create one gig per session across the term.
+    <div style="font-size:12px;color:var(--text-2);margin-bottom:12px;line-height:1.5;">
+      ${modeBlurb}
     </div>
+
+    <div style="display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:16px;">
+      <button type="button"
+        onclick="setTeachingTermMode('weekly')"
+        style="flex:1;padding:8px 10px;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;background:${mode === 'weekly' ? 'var(--accent)' : 'transparent'};color:${mode === 'weekly' ? '#000' : 'var(--text-2)'};">
+        Weekly
+      </button>
+      <button type="button"
+        onclick="setTeachingTermMode('dates')"
+        style="flex:1;padding:8px 10px;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;background:${mode === 'dates' ? 'var(--accent)' : 'transparent'};color:${mode === 'dates' ? '#000' : 'var(--text-2)'};">
+        Specific dates
+      </button>
+    </div>
+
     <div class="form-section-label">Student</div>
     <input type="text" class="form-input" id="ttClientName" placeholder="Name (required)" value="${escapeAttr(t.client_name)}" oninput="updateTeachingTerm('client_name', this.value)" style="margin-bottom:8px">
     <div style="display:flex;gap:8px;margin-bottom:16px;">
@@ -5182,13 +5236,6 @@ function renderTeachingTermPanel() {
     <div class="form-section-label">Where</div>
     <input type="text" class="form-input" id="ttVenueName" placeholder="e.g. Home studio, Student&rsquo;s house" value="${escapeAttr(t.venue_name)}" oninput="updateTeachingTerm('venue_name', this.value)" style="margin-bottom:8px">
     <input type="text" class="form-input" id="ttVenueAddress" placeholder="Address (optional)" value="${escapeAttr(t.venue_address)}" oninput="updateTeachingTerm('venue_address', this.value)" style="margin-bottom:16px">
-
-    <div class="form-section-label">Repeats every</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;">
-      ${weekdays.map((d) => `
-        <button type="button" class="day-btn${t.weekday === d.v ? ' active' : ''}" onclick="setTeachingTermWeekday('${d.v}')" style="${t.weekday === d.v ? 'background:var(--accent);color:#000;border-color:var(--accent);' : ''}">${d.label}</button>
-      `).join('')}
-    </div>
 
     <div class="form-section-label">Time</div>
     <div style="display:flex;gap:8px;margin-bottom:16px;">
@@ -5205,19 +5252,7 @@ function renderTeachingTermPanel() {
     <div class="form-section-label">Rate per hour (\u00A3)</div>
     <input type="number" class="form-input" id="ttRate" min="0" step="1" inputmode="decimal" value="${escapeAttr(String(t.rate_per_hour || ''))}" placeholder="35" oninput="updateTeachingTerm('rate_per_hour', this.value); renderTeachingTermPreview();" style="margin-bottom:16px;">
 
-    <div class="form-section-label">Term dates</div>
-    <div style="display:flex;gap:8px;margin-bottom:8px;">
-      <div style="flex:1;">
-        <div class="form-label">From</div>
-        <input type="date" class="form-input" id="ttFrom" value="${escapeAttr(t.from_date)}" oninput="updateTeachingTerm('from_date', this.value); renderTeachingTermPreview();">
-      </div>
-      <div style="flex:1;">
-        <div class="form-label">To</div>
-        <input type="date" class="form-input" id="ttTo" value="${escapeAttr(t.to_date)}" oninput="updateTeachingTerm('to_date', this.value); renderTeachingTermPreview();">
-      </div>
-    </div>
-    <div class="form-label" style="margin-top:8px;">Skip dates (optional)</div>
-    <input type="text" class="form-input" id="ttSkip" placeholder="e.g. 2026-05-25, 2026-06-01 (half term)" value="${escapeAttr(t.skip_dates)}" oninput="updateTeachingTerm('skip_dates', this.value); renderTeachingTermPreview();" style="margin-bottom:16px;">
+    ${datesBlock}
 
     <div id="ttPreview" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px;font-size:13px;color:var(--text-2);"></div>
 
@@ -5225,6 +5260,94 @@ function renderTeachingTermPanel() {
     <button class="btn-pill" id="ttSubmitBtn" onclick="submitTeachingTerm()">Create lessons</button>
   `;
   renderTeachingTermPreview();
+}
+
+// Mini month calendar with click-to-toggle day cells. Used by the
+// "Specific dates" mode of the teaching term panel.
+function renderTeachingTermMiniCalendar() {
+  const t = window._teachingTerm || {};
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const month = t.cal_month || todayIso.slice(0, 7) + '-01';
+  // cal_month is stored as YYYY-MM-01; parse in UTC so month arithmetic is stable.
+  const anchor = new Date(month + 'T00:00:00Z');
+  if (isNaN(anchor)) return '';
+  const year = anchor.getUTCFullYear();
+  const mon = anchor.getUTCMonth();
+  const monthLabel = anchor.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+  // Build 6-row grid (42 cells), starting on Monday for UK users.
+  // JS weekday: Sun=0..Sat=6. Convert to Mon=0..Sun=6 for grid offset.
+  const first = new Date(Date.UTC(year, mon, 1));
+  const firstWeekday = (first.getUTCDay() + 6) % 7; // Mon=0
+  const daysInMonth = new Date(Date.UTC(year, mon + 1, 0)).getUTCDate();
+  const selected = new Set(Array.isArray(t.selected_dates) ? t.selected_dates : []);
+
+  const dayLabels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const dayNum = i - firstWeekday + 1;
+    if (dayNum < 1 || dayNum > daysInMonth) {
+      cells.push(`<div style="padding:10px 0;"></div>`);
+      continue;
+    }
+    const iso = `${year}-${String(mon + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+    const isSelected = selected.has(iso);
+    const isToday = iso === todayIso;
+    const bg = isSelected ? 'var(--accent)' : 'transparent';
+    const color = isSelected ? '#000' : (isToday ? 'var(--accent)' : 'var(--text)');
+    const border = isToday && !isSelected ? '1px solid var(--accent)' : '1px solid transparent';
+    const fontWeight = isSelected || isToday ? '700' : '500';
+    cells.push(`
+      <button type="button"
+        onclick="toggleTeachingTermDate('${iso}')"
+        style="padding:8px 0;border-radius:8px;border:${border};background:${bg};color:${color};font-size:13px;font-weight:${fontWeight};cursor:pointer;text-align:center;min-height:34px;">
+        ${dayNum}
+      </button>
+    `);
+  }
+
+  return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <button type="button" onclick="stepTeachingTermMonth(-1)" style="background:transparent;border:none;color:var(--text-2);font-size:18px;cursor:pointer;padding:4px 10px;border-radius:6px;">&larr;</button>
+        <div style="font-size:14px;font-weight:700;color:var(--text);">${escapeHtml(monthLabel)}</div>
+        <button type="button" onclick="stepTeachingTermMonth(1)" style="background:transparent;border:none;color:var(--text-2);font-size:18px;cursor:pointer;padding:4px 10px;border-radius:6px;">&rarr;</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:4px;">
+        ${dayLabels.map((d) => `<div style="text-align:center;font-size:11px;color:var(--text-3);padding:4px 0;">${d}</div>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;">
+        ${cells.join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderTeachingTermSelectedChips() {
+  const t = window._teachingTerm || {};
+  const picked = Array.isArray(t.selected_dates) ? t.selected_dates.slice().sort() : [];
+  if (picked.length === 0) {
+    return `<div style="font-size:12px;color:var(--text-3);margin-bottom:16px;">Tap a day to select it. Tap again to unselect.</div>`;
+  }
+  const chips = picked.map((iso) => {
+    const d = new Date(iso + 'T00:00:00Z');
+    const label = isNaN(d) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    return `
+      <button type="button" onclick="toggleTeachingTermDate('${iso}')"
+        style="display:inline-flex;align-items:center;gap:6px;background:var(--accent);color:#000;border:none;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;">
+        ${escapeHtml(label)} <span style="opacity:0.7;font-weight:600;">\u2715</span>
+      </button>
+    `;
+  }).join('');
+  return `
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+      ${chips}
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:12px;color:var(--text-3);">${picked.length} date${picked.length === 1 ? '' : 's'} picked</div>
+      <button type="button" onclick="clearTeachingTermDates()" style="background:transparent;border:none;color:var(--text-3);font-size:12px;cursor:pointer;text-decoration:underline;">Clear all</button>
+    </div>
+  `;
 }
 
 function updateTeachingTerm(key, value) {
@@ -5238,11 +5361,63 @@ function setTeachingTermWeekday(v) {
   renderTeachingTermPanel();
 }
 
+function setTeachingTermMode(mode) {
+  if (!window._teachingTerm) return;
+  if (mode !== 'weekly' && mode !== 'dates') return;
+  window._teachingTerm.mode = mode;
+  renderTeachingTermPanel();
+}
+
+function toggleTeachingTermDate(iso) {
+  const t = window._teachingTerm;
+  if (!t) return;
+  if (!Array.isArray(t.selected_dates)) t.selected_dates = [];
+  const idx = t.selected_dates.indexOf(iso);
+  if (idx === -1) t.selected_dates.push(iso);
+  else t.selected_dates.splice(idx, 1);
+  renderTeachingTermPanel();
+}
+
+function clearTeachingTermDates() {
+  const t = window._teachingTerm;
+  if (!t) return;
+  t.selected_dates = [];
+  renderTeachingTermPanel();
+}
+
+function stepTeachingTermMonth(delta) {
+  const t = window._teachingTerm;
+  if (!t) return;
+  const cur = new Date((t.cal_month || new Date().toISOString().slice(0, 7) + '-01') + 'T00:00:00Z');
+  if (isNaN(cur)) return;
+  cur.setUTCMonth(cur.getUTCMonth() + delta);
+  const y = cur.getUTCFullYear();
+  const m = String(cur.getUTCMonth() + 1).padStart(2, '0');
+  t.cal_month = `${y}-${m}-01`;
+  renderTeachingTermPanel();
+}
+
 // Build the list of lesson dates the term will produce, given the current
 // inputs. Returns { dates, warnings, error }. Dates are ISO yyyy-mm-dd strings.
 function computeTeachingTermDates() {
   const t = window._teachingTerm || {};
   const warnings = [];
+  const MAX = 80;
+
+  if (t.mode === 'dates') {
+    const picked = Array.isArray(t.selected_dates) ? t.selected_dates.slice() : [];
+    if (picked.length === 0) {
+      return { dates: [], warnings, error: 'Tap at least one date on the calendar.' };
+    }
+    // Dedupe + sort so preview & payload are deterministic.
+    const uniq = Array.from(new Set(picked)).sort();
+    if (uniq.length > MAX) {
+      return { dates: uniq.slice(0, MAX), warnings: [`Capped at ${MAX} lessons. Remove some dates or split into two terms.`], error: null };
+    }
+    return { dates: uniq, warnings, error: null };
+  }
+
+  // Weekly-pattern mode (original behaviour).
   if (!t.from_date || !t.to_date) return { dates: [], warnings, error: 'Pick from and to dates.' };
   const weekday = Number(t.weekday);
   if (!(weekday >= 0 && weekday <= 6)) return { dates: [], warnings, error: 'Pick a weekday.' };
@@ -5260,7 +5435,6 @@ function computeTeachingTermDates() {
   );
 
   const dates = [];
-  const MAX = 80;
   // Walk forward from `from` to the first matching weekday.
   const cursor = new Date(from);
   while (cursor.getUTCDay() !== weekday && cursor <= to) {
@@ -5344,6 +5518,7 @@ async function submitTeachingTerm() {
 
   if (btn) { btn.textContent = 'Creating...'; btn.disabled = true; }
 
+  const isDatesMode = t.mode === 'dates';
   const payload = {
     client_name: t.client_name.trim(),
     client_email: (t.client_email || '').trim() || null,
@@ -5351,17 +5526,22 @@ async function submitTeachingTerm() {
     band_name: (t.band_name || t.client_name || '').trim(),
     venue_name: (t.venue_name || 'Lessons').trim(),
     venue_address: (t.venue_address || '').trim() || null,
-    weekday: Number(t.weekday),
     start_time: t.start_time,
     end_time: t.end_time,
     rate_per_hour: rate,
-    from_date: t.from_date,
-    to_date: t.to_date,
-    skip_dates: String(t.skip_dates || '')
+  };
+  if (isDatesMode) {
+    // Specific-dates mode: server ignores weekly fields when `dates` is present.
+    payload.dates = dates;
+  } else {
+    payload.weekday = Number(t.weekday);
+    payload.from_date = t.from_date;
+    payload.to_date = t.to_date;
+    payload.skip_dates = String(t.skip_dates || '')
       .split(/[\s,]+/)
       .map((s) => s.trim())
-      .filter(Boolean),
-  };
+      .filter(Boolean);
+  }
 
   try {
     const resp = await fetch('/api/gigs/teaching-term', {
@@ -5379,6 +5559,29 @@ async function submitTeachingTerm() {
     const result = await resp.json();
     // Refresh the gig cache so the new lessons show up everywhere.
     window._cachedGigs = null;
+
+    // If the server reports partial failures, keep the panel open so the user
+    // sees which dates didn't take rather than silently losing them. This is
+    // the fix for the "I added a bunch of dates, only some appeared" bug.
+    const failed = Array.isArray(result.failed) ? result.failed : [];
+    const requested = Number(result.requested || dates.length);
+    const count = Number(result.count || 0);
+    if (failed.length > 0) {
+      const sample = failed.slice(0, 3).map((f) => f.date).join(', ');
+      const extra = failed.length > 3 ? ` +${failed.length - 3} more` : '';
+      if (errEl) {
+        errEl.textContent = `Added ${count} of ${requested} lessons. Failed on ${sample}${extra}. Try again with just those dates.`;
+        errEl.style.display = 'block';
+      }
+      if (btn) { btn.textContent = 'Create lessons'; btn.disabled = false; }
+      // Refresh gigs cache so the ones that did land show up, but keep the
+      // panel open.
+      if (typeof renderGigsScreen === 'function') {
+        try { renderGigsScreen(); } catch (_) {}
+      }
+      return;
+    }
+
     closePanel('panel-teaching-term');
     window._teachingTerm = null;
     // Re-render whichever gigs-adjacent screen the user came from.
@@ -5392,7 +5595,7 @@ async function submitTeachingTerm() {
       try { renderCalendarScreen(); } catch (_) {}
     }
     if (typeof showToast === 'function') {
-      showToast(`${result.count || dates.length} lessons added.`);
+      showToast(`${count || dates.length} lessons added.`);
     }
   } catch (e) {
     console.error('submitTeachingTerm:', e);
