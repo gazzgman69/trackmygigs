@@ -109,9 +109,13 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       return res.status(404).json({ error: 'Thread not found' });
     }
 
+    // S12-14: cast read_by seed array explicitly. Without the ::uuid[] cast
+    // Postgres plans ARRAY[$2] as text[] and the insert into the uuid[] column
+    // fails with "column read_by is of type uuid[] but expression is of type
+    // text[]". Repros as a 500 on every send.
     const result = await db.query(
       `INSERT INTO messages (thread_id, sender_id, content, attachments, read_by)
-       VALUES ($1, $2, $3, $4, ARRAY[$2])
+       VALUES ($1, $2, $3, $4, ARRAY[$2]::uuid[])
        RETURNING *`,
       [req.params.threadId, req.user.id, content.trim(), attachments || null]
     );
