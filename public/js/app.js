@@ -441,7 +441,10 @@ function showScreen(screenName) {
   // main-nav item from inside one of those panels they expect to navigate
   // away; without this, the overlay stays on top of the new screen and the
   // nav appears broken.
-  document.querySelectorAll('.panel-overlay.open').forEach(function (p) {
+  var openOverlays = document.querySelectorAll('.panel-overlay.open');
+  console.log('[showScreen] target=' + screenName + ' openOverlays=' + openOverlays.length);
+  openOverlays.forEach(function (p) {
+    console.log('[showScreen] closing panel ' + p.id);
     closePanel(p.id);
   });
 
