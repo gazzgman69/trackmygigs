@@ -38,6 +38,25 @@ function syncGigSafely(action, userId, gig) {
   }
 }
 
+// Same fire-and-forget shape as syncGigSafely, but for blocked_dates rows so
+// manually-blocked unavailability mirrors to the user's Google Calendar as an
+// all-day "Unavailable" event. `payload` is the full row on push and the
+// google_event_id string on delete (since the row is already gone by then).
+function syncBlockedDateSafely(action, userId, payload) {
+  try {
+    if (!payload) return;
+    const fn = action === 'delete'
+      ? calendarRouter.removeBlockedDateFromGoogle
+      : calendarRouter.pushBlockedDateToGoogle;
+    if (typeof fn !== 'function') return;
+    Promise.resolve(fn(userId, payload)).catch((err) => {
+      console.error(`Blocked-date ${action} sync failed (non-fatal):`, err.message || err);
+    });
+  } catch (err) {
+    console.error('syncBlockedDateSafely error:', err);
+  }
+}
+
 router.get('/gigs', async (req, res) => {
   try {
     const result = await db.query(
@@ -949,12 +968,25 @@ router.post('/blocked-dates', async (req, res) => {
     const dateValue = mode === 'single' ? date : from;
     const pattern = mode === 'recurring' && days ? `recurring:${days.join(',')}` :
                     mode === 'range' && to ? `range:${to}` : null;
-    await db.query(
+    const inserted = await db.query(
       `INSERT INTO blocked_dates (user_id, date, reason, recurring_pattern)
        VALUES ($1, $2, $3, $4)
-       ON CONFLICT DO NOTHING`,
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
       [req.user.id, dateValue, reason || null, pattern]
     );
+    // Only mirror if a new row actually landed — ON CONFLICT DO NOTHING means
+    // duplicates are silent, and re-pushing an unchanged block to Google would
+    // just create a second identical event.
+    if (inserted.rowCount > 0 && inserted.rows[0] && inserted.rows[0].id) {
+      const rowRes = await db.query(
+        'SELECT * FROM blocked_dates WHERE id = $1 AND user_id = $2',
+        [inserted.rows[0].id, req.user.id]
+      );
+      if (rowRes.rows[0]) {
+        syncBlockedDateSafely('push', req.user.id, rowRes.rows[0]);
+      }
+    }
     res.json({ success: true });
   } catch (error) {
     console.error('Block date error:', error);
@@ -980,6 +1012,10 @@ router.post('/blocked-dates/bulk', async (req, res) => {
 
     const client = await db.getClient ? db.getClient() : null;
     let inserted = 0;
+    // Collect every newly-inserted row so we can mirror each one to Google.
+    // We rely on RETURNING * so duplicates (silent via ON CONFLICT) don't
+    // produce phantom pushes that would spawn extra all-day events.
+    const insertedRows = [];
     if (client) {
       // Prefer explicit transaction if the db adapter exposes getClient.
       try {
@@ -988,10 +1024,12 @@ router.post('/blocked-dates/bulk', async (req, res) => {
           const r = await client.query(
             `INSERT INTO blocked_dates (user_id, date, reason, recurring_pattern)
              VALUES ($1, $2, $3, NULL)
-             ON CONFLICT DO NOTHING`,
+             ON CONFLICT DO NOTHING
+             RETURNING *`,
             [req.user.id, d, reason || null]
           );
           inserted += r.rowCount || 0;
+          for (const row of r.rows) insertedRows.push(row);
         }
         await client.query('COMMIT');
       } catch (err) {
@@ -1011,10 +1049,17 @@ router.post('/blocked-dates/bulk', async (req, res) => {
       const r = await db.query(
         `INSERT INTO blocked_dates (user_id, date, reason, recurring_pattern)
          VALUES ${values.join(', ')}
-         ON CONFLICT DO NOTHING`,
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
         params
       );
       inserted = r.rowCount || 0;
+      for (const row of r.rows) insertedRows.push(row);
+    }
+
+    // Fire-and-forget: Google failures must not break bulk block responses.
+    for (const row of insertedRows) {
+      syncBlockedDateSafely('push', req.user.id, row);
     }
 
     res.json({ success: true, inserted, attempted: clean.length });
@@ -1029,11 +1074,17 @@ router.post('/blocked-dates/bulk', async (req, res) => {
 router.delete('/blocked-dates/:id', async (req, res) => {
   try {
     const r = await db.query(
-      'DELETE FROM blocked_dates WHERE id = $1 AND user_id = $2 RETURNING id',
+      'DELETE FROM blocked_dates WHERE id = $1 AND user_id = $2 RETURNING id, google_event_id',
       [req.params.id, req.user.id]
     );
     if (r.rowCount === 0) {
       return res.status(404).json({ error: 'Not found' });
+    }
+    // If this block was mirrored to Google, tear down the event too so the
+    // user's external calendar doesn't keep advertising them as busy.
+    const googleEventId = r.rows[0] && r.rows[0].google_event_id;
+    if (googleEventId) {
+      syncBlockedDateSafely('delete', req.user.id, googleEventId);
     }
     res.json({ success: true });
   } catch (error) {

@@ -566,6 +566,17 @@ router.get('/events', async (req, res) => {
         importedIds.add(g.source.slice('gcal:'.length));
       }
     }
+    // Blocked-date events are pushed to Google as "Unavailable" entries. Without
+    // this, they come back on the nudges/pins list every time the user opens
+    // the Calendar tab, even though they're the user's own blocks.
+    const blockedRows = await db.query(
+      `SELECT google_event_id FROM blocked_dates
+        WHERE user_id = $1 AND google_event_id IS NOT NULL`,
+      [req.user.id]
+    );
+    for (const b of blockedRows.rows) {
+      if (b.google_event_id) importedIds.add(b.google_event_id);
+    }
 
     const candidates = items.filter(ev => !importedIds.has(ev.id));
 
@@ -681,6 +692,17 @@ router.get('/pins', async (req, res) => {
       if (g.source && g.source.startsWith('gcal:')) {
         importedIds.add(g.source.slice('gcal:'.length));
       }
+    }
+    // Blocked-date events are pushed to Google as "Unavailable" entries. Without
+    // this, they come back on the nudges/pins list every time the user opens
+    // the Calendar tab, even though they're the user's own blocks.
+    const blockedRows = await db.query(
+      `SELECT google_event_id FROM blocked_dates
+        WHERE user_id = $1 AND google_event_id IS NOT NULL`,
+      [req.user.id]
+    );
+    for (const b of blockedRows.rows) {
+      if (b.google_event_id) importedIds.add(b.google_event_id);
     }
 
     const pins = (response.data.items || [])
@@ -1047,6 +1069,113 @@ async function removeGigFromGoogle(userId, gig) {
   }
 }
 
+// ── Blocked-date push: mirror manually-blocked days onto Google Calendar ─────
+// Builds an all-day event (or multi-day / recurring, depending on the
+// blocked_dates row's recurring_pattern) so other calendar consumers can see
+// the user is busy. Tagged with a private extendedProperty so we can skip
+// these over when pulling events back in.
+
+function _isoPlusOneDay(dateStr) {
+  const next = new Date(dateStr + 'T00:00:00');
+  next.setDate(next.getDate() + 1);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
+}
+
+function buildBlockedResource(row) {
+  const startDate = String(row.date || '').slice(0, 10);
+  const pattern = row.recurring_pattern || '';
+  const resource = {
+    summary: 'Unavailable',
+    description: row.reason
+      ? `Blocked in TrackMyGigs: ${row.reason}`
+      : 'Blocked in TrackMyGigs.',
+    transparency: 'opaque',
+    start: { date: startDate },
+    extendedProperties: { private: { tmg_source: 'blocked_date' } },
+  };
+
+  if (pattern.startsWith('range:')) {
+    const to = pattern.slice('range:'.length).slice(0, 10);
+    resource.end = { date: _isoPlusOneDay(to) };
+  } else if (pattern.startsWith('recurring:')) {
+    const dayCodes = { Mon: 'MO', Tue: 'TU', Wed: 'WE', Thu: 'TH', Fri: 'FR', Sat: 'SA', Sun: 'SU' };
+    const byday = pattern
+      .slice('recurring:'.length)
+      .split(',')
+      .map((d) => dayCodes[d.trim()])
+      .filter(Boolean)
+      .join(',');
+    resource.end = { date: _isoPlusOneDay(startDate) };
+    if (byday) resource.recurrence = [`RRULE:FREQ=WEEKLY;BYDAY=${byday}`];
+  } else {
+    resource.end = { date: _isoPlusOneDay(startDate) };
+  }
+
+  return resource;
+}
+
+async function pushBlockedDateToGoogle(userId, row) {
+  try {
+    if (!row || !row.id) return null;
+    const handle = await getGoogleAuth(userId);
+    if (!handle) return null;
+    const { auth, calendarId } = handle;
+
+    const calendar = google.calendar({ version: 'v3', auth });
+    const resource = buildBlockedResource(row);
+
+    if (row.google_event_id) {
+      const resp = await calendar.events.update({
+        calendarId,
+        eventId: row.google_event_id,
+        requestBody: resource,
+      });
+      return resp.data.id || row.google_event_id;
+    }
+    const resp = await calendar.events.insert({
+      calendarId,
+      requestBody: resource,
+    });
+    const newId = resp.data.id;
+    if (newId) {
+      await db.query(
+        'UPDATE blocked_dates SET google_event_id = $1 WHERE id = $2 AND user_id = $3',
+        [newId, row.id, userId]
+      );
+    }
+    return newId;
+  } catch (err) {
+    // Event deleted on Google's side: wipe local id so next push re-creates
+    if (err && (err.code === 404 || err.code === 410)) {
+      try {
+        await db.query(
+          'UPDATE blocked_dates SET google_event_id = NULL WHERE id = $1 AND user_id = $2',
+          [row.id, userId]
+        );
+      } catch (_) {}
+    }
+    console.error('pushBlockedDateToGoogle error:', err.message || err);
+    return null;
+  }
+}
+
+async function removeBlockedDateFromGoogle(userId, eventId) {
+  try {
+    if (!eventId) return false;
+    const handle = await getGoogleAuth(userId);
+    if (!handle) return false;
+    const { auth, calendarId } = handle;
+    const calendar = google.calendar({ version: 'v3', auth });
+    await calendar.events.delete({ calendarId, eventId });
+    return true;
+  } catch (err) {
+    if (err && (err.code === 404 || err.code === 410)) return true;
+    console.error('removeBlockedDateFromGoogle error:', err.message || err);
+    return false;
+  }
+}
+
 // Explicit client-triggered sync: push a single gig (create or update)
 router.post('/push/:gigId', async (req, res) => {
   try {
@@ -1360,3 +1489,5 @@ module.exports = router;
 module.exports.pushGigToGoogle = pushGigToGoogle;
 module.exports.removeGigFromGoogle = removeGigFromGoogle;
 module.exports.pullFromGoogle = pullFromGoogle;
+module.exports.pushBlockedDateToGoogle = pushBlockedDateToGoogle;
+module.exports.removeBlockedDateFromGoogle = removeBlockedDateFromGoogle;

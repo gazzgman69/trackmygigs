@@ -228,6 +228,11 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS epk_audio_url TEXT`);
     // Two-way Google Calendar sync: store the Google event id for each pushed gig
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255)`);
+    // Mirror manually-blocked dates onto the user's Google Calendar as all-day
+    // "Busy" events so other apps (Doodle, Calendly, their partner) see the
+    // block. google_event_id links each blocked_dates row to its Google event
+    // so updates and deletes stay in sync.
+    await db.query(`ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255)`);
     // Inbound sync: incremental syncToken from Google, plus last-pull timestamp for throttling
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sync_token TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_last_pull_at TIMESTAMP`);
