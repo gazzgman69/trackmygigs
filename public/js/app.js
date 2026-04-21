@@ -6219,7 +6219,7 @@ async function openMyAvailabilityPanel() {
         .avail-cell:active { transform: scale(.92); }
         .avail-cell.free { background:var(--card); border:1px solid var(--border); color:var(--text); }
         .avail-cell.blocked { background:var(--danger); color:#fff; border:1px solid var(--danger); }
-        .avail-cell.booked { background:var(--danger); color:#fff; border:1px solid var(--danger); cursor:not-allowed; }
+        .avail-cell.booked { background:var(--info-dim); color:var(--info); border:1px solid var(--info); cursor:not-allowed; }
         .avail-cell.past { opacity:.3; cursor:not-allowed; }
         .avail-empty { aspect-ratio:1; }
       </style>
@@ -6237,7 +6237,8 @@ async function openMyAvailabilityPanel() {
 
         <div class="avail-legend">
           <span><span class="avail-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
-          <span><span class="avail-dot" style="background:var(--danger);"></span>Unavailable</span>
+          <span><span class="avail-dot" style="background:var(--info);"></span>Gig</span>
+          <span><span class="avail-dot" style="background:var(--danger);"></span>Blocked</span>
         </div>
 
         <div id="myAvailMonths"></div>
