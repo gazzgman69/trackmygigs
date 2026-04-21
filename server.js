@@ -137,6 +137,85 @@ function handleReload(req, res) {
 app.get('/api/admin/reload', handleReload);
 app.post('/api/admin/reload', handleReload);
 
+// One-off cleanup endpoint for [SEC-TEST] harness data on the live helium DB.
+// The multi-tenant audit test creates 10 sec-test-*@trackmygigs.test users
+// plus their gigs, contacts, threads, messages and offers; the test's own
+// cleanup() can only delete rows reachable via the REST API, which leaves the
+// user rows themselves (and FK-cascading dependent rows) behind. This endpoint
+// drops everything owned by those accounts in one transaction. Gated by
+// RELOAD_SECRET because it runs raw deletes against live data.
+async function handleCleanupSecTest(req, res) {
+  const expected = process.env.RELOAD_SECRET;
+  if (!expected) {
+    return res.status(503).json({ error: 'RELOAD_SECRET not configured' });
+  }
+  const provided = req.query.key || req.body?.key;
+  if (provided !== expected) {
+    return res.status(401).json({ error: 'Invalid reload key' });
+  }
+  const pattern = 'sec-test-%@trackmygigs.test';
+  const db = require('./db');
+  const counts = {};
+  try {
+    await db.query('BEGIN');
+
+    // Find the victim user ids first so every follow-on DELETE can use them.
+    const ids = await db.query(
+      `SELECT id FROM users WHERE email LIKE $1`, [pattern]
+    );
+    const userIds = ids.rows.map((r) => r.id);
+    counts.users_matched = userIds.length;
+
+    if (userIds.length === 0) {
+      await db.query('COMMIT');
+      return res.json({ ok: true, counts, note: 'no sec-test users present' });
+    }
+
+    // Tables that reference a user column directly. We don't rely on ON
+    // DELETE CASCADE because the schema was grown ad-hoc and some FKs were
+    // added without CASCADE. Order matters only where there are self-FKs;
+    // none of these tables have them.
+    const deletes = [
+      ['messages',            `DELETE FROM messages WHERE sender_id = ANY($1::uuid[]) OR thread_id IN (SELECT id FROM threads WHERE owner_id = ANY($1::uuid[]) OR ARRAY(SELECT unnest(participant_ids)) && $1::uuid[])`],
+      ['thread_reads',        `DELETE FROM thread_reads WHERE user_id = ANY($1::uuid[])`],
+      ['threads',             `DELETE FROM threads WHERE owner_id = ANY($1::uuid[]) OR ARRAY(SELECT unnest(participant_ids)) && $1::uuid[]`],
+      ['offers',              `DELETE FROM offers WHERE sender_id = ANY($1::uuid[]) OR recipient_id = ANY($1::uuid[])`],
+      ['contacts',            `DELETE FROM contacts WHERE owner_id = ANY($1::uuid[]) OR contact_user_id = ANY($1::uuid[])`],
+      ['invoices',            `DELETE FROM invoices WHERE user_id = ANY($1::uuid[])`],
+      ['receipts',            `DELETE FROM receipts WHERE user_id = ANY($1::uuid[])`],
+      ['blocked_dates',       `DELETE FROM blocked_dates WHERE user_id = ANY($1::uuid[])`],
+      ['songs',               `DELETE FROM songs WHERE user_id = ANY($1::uuid[])`],
+      ['setlists',            `DELETE FROM setlists WHERE user_id = ANY($1::uuid[])`],
+      ['user_documents',      `DELETE FROM user_documents WHERE user_id = ANY($1::uuid[])`],
+      ['nudge_feedback',      `DELETE FROM nudge_feedback WHERE user_id::text = ANY($2::text[])`],
+      ['gigs',                `DELETE FROM gigs WHERE user_id = ANY($1::uuid[])`],
+      ['sessions',            `DELETE FROM sessions WHERE user_id = ANY($1::uuid[])`],
+      ['users',               `DELETE FROM users WHERE id = ANY($1::uuid[])`],
+    ];
+
+    const userIdsAsText = userIds.map((u) => String(u));
+    for (const [name, sql] of deletes) {
+      try {
+        const r = await db.query(sql, [userIds, userIdsAsText]);
+        counts[name] = r.rowCount;
+      } catch (tableErr) {
+        // Table or column may not exist on every deploy; record the miss
+        // and keep going so one missing table doesn't strand the rest.
+        counts[name] = `skipped: ${tableErr.message}`;
+      }
+    }
+
+    await db.query('COMMIT');
+    res.json({ ok: true, counts });
+  } catch (err) {
+    try { await db.query('ROLLBACK'); } catch (_) {}
+    console.error('[cleanup-sec-test] failed:', err);
+    res.status(500).json({ error: 'cleanup failed', detail: err.message });
+  }
+}
+app.get('/api/admin/cleanup-sec-test', handleCleanupSecTest);
+app.post('/api/admin/cleanup-sec-test', handleCleanupSecTest);
+
 app.use('/api/ai', aiRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/calendar', calendarRoutes);
@@ -363,6 +442,17 @@ async function runMigrations() {
     )`);
     await db.query(`CREATE INDEX IF NOT EXISTS user_documents_user_idx ON user_documents (user_id)`);
     await db.query(`CREATE INDEX IF NOT EXISTS user_documents_expiry_idx ON user_documents (user_id, expiry_date) WHERE expiry_date IS NOT NULL`);
+    // Distance filter (roadmap Phase VI). users.home_postcode already exists;
+    // we only add the resolved lat/lng and the travel radius. Gigs get a
+    // venue_postcode plus resolved lat/lng so broadcast send can filter on
+    // distance without a postcodes.io round-trip per recipient. travel radius
+    // default of 50 miles matches the current roadmap slider default.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS home_lat DOUBLE PRECISION`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS home_lng DOUBLE PRECISION`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS travel_radius_miles INTEGER DEFAULT 50`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS venue_postcode VARCHAR(16)`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS venue_lat DOUBLE PRECISION`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS venue_lng DOUBLE PRECISION`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);

@@ -2,6 +2,8 @@ const express = require('express');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const calendarRouter = require('./calendar');
+const { lookupPostcode, normalise: normalisePostcode } = require('../lib/postcodes');
+const { haversineMiles } = require('../lib/geo');
 
 const router = express.Router();
 
@@ -117,6 +119,7 @@ router.post('/gigs', async (req, res) => {
       client_email,
       client_phone,
       rate_per_hour,
+      venue_postcode,
     } = req.body;
 
     // Teaching: if the client didn't include an explicit fee but did include
@@ -126,9 +129,30 @@ router.post('/gigs', async (req, res) => {
       ? deriveTeachingFee({ fee, rate_per_hour, start_time, end_time })
       : fee;
 
+    // Distance filter: resolve venue_postcode to lat/lng if supplied. Unlike
+    // the profile PATCH, we DON'T reject the save when the postcode is bogus
+    // — the user might be typing an international venue or a rural "what3words
+    // only" address. Bad postcode just leaves venue_lat/lng null, which means
+    // broadcast distance filtering falls open for that gig. Good postcode gets
+    // cached so broadcast doesn't re-geocode on every send.
+    let gigPostcode = null;
+    let venueLat = null;
+    let venueLng = null;
+    if (venue_postcode && String(venue_postcode).trim() !== '') {
+      const n = normalisePostcode(venue_postcode);
+      if (n) {
+        gigPostcode = n;
+        const loc = await lookupPostcode(n);
+        if (loc) {
+          venueLat = loc.lat;
+          venueLng = loc.lng;
+        }
+      }
+    }
+
     const result = await db.query(
-      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, day_of_contact, mileage_miles, client_name, client_email, client_phone, rate_per_hour)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, day_of_contact, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode, venue_lat, venue_lng)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
        RETURNING *`,
       [
         req.user.id,
@@ -152,6 +176,9 @@ router.post('/gigs', async (req, res) => {
         client_email || null,
         client_phone || null,
         rate_per_hour || null,
+        gigPostcode,
+        venueLat,
+        venueLng,
       ]
     );
 
@@ -180,7 +207,7 @@ router.get('/gigs/:id', async (req, res) => {
 
 router.patch('/gigs/:id', async (req, res) => {
   try {
-    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, day_of_contact, mileage_miles, client_name, client_email, client_phone, rate_per_hour } = req.body;
+    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, day_of_contact, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode } = req.body;
     // Teaching: recompute fee from rate if rate changed and fee wasn't sent
     // explicitly. We only substitute when the caller didn't pass a fee, so an
     // explicit £0 fee still wins (cancellation credits etc.).
@@ -188,6 +215,24 @@ router.patch('/gigs/:id', async (req, res) => {
     if (gig_type === 'Teaching' && (fee === undefined || fee === null || fee === '') && rate_per_hour) {
       effectiveFee = deriveTeachingFee({ fee, rate_per_hour, start_time, end_time });
     }
+
+    // Distance filter: re-geocode venue_postcode if the caller updated it.
+    // Same "fall open on bad postcode" policy as POST /gigs.
+    let gigPostcode = null;
+    let venueLat = null;
+    let venueLng = null;
+    if (venue_postcode !== undefined && venue_postcode !== null && String(venue_postcode).trim() !== '') {
+      const n = normalisePostcode(venue_postcode);
+      if (n) {
+        gigPostcode = n;
+        const loc = await lookupPostcode(n);
+        if (loc) {
+          venueLat = loc.lat;
+          venueLng = loc.lng;
+        }
+      }
+    }
+
     const result = await db.query(
       `UPDATE gigs SET
         band_name = COALESCE($1, band_name), venue_name = COALESCE($2, venue_name),
@@ -205,9 +250,12 @@ router.patch('/gigs/:id', async (req, res) => {
         client_name = COALESCE($22, client_name),
         client_email = COALESCE($23, client_email),
         client_phone = COALESCE($24, client_phone),
-        rate_per_hour = COALESCE($25, rate_per_hour)
+        rate_per_hour = COALESCE($25, rate_per_hour),
+        venue_postcode = COALESCE($26, venue_postcode),
+        venue_lat = COALESCE($27, venue_lat),
+        venue_lng = COALESCE($28, venue_lng)
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, day_of_contact || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, day_of_contact || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     const gig = result.rows[0];
@@ -626,7 +674,8 @@ router.patch('/user/profile', async (req, res) => {
     const { name, display_name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url,
             bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme,
             epk_bio, epk_photo_url, epk_video_url, epk_audio_url,
-            rate_standard, rate_premium, rate_dep, rate_deposit_pct, rate_notes } = req.body;
+            rate_standard, rate_premium, rate_dep, rate_deposit_pct, rate_notes,
+            travel_radius_miles } = req.body;
 
     // instruments comes as a comma-separated string from the client but the
     // column is TEXT[].  Convert it to a proper PG array (or null to keep
@@ -634,6 +683,36 @@ router.patch('/user/profile', async (req, res) => {
     let instrumentsArr = null;
     if (instruments) {
       instrumentsArr = instruments.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    // Distance filter (roadmap Phase VI): whenever the user supplies a
+    // home_postcode, resolve it to lat/lng via postcodes.io and store the
+    // normalised postcode alongside. If the postcode is present but invalid,
+    // return 400 so the client can show an inline error — we cannot accept a
+    // bogus postcode and then silently skip the geocode, because every
+    // broadcast would then fall open for that user.
+    let normalisedPostcode = null;
+    let homeLat = null;
+    let homeLng = null;
+    if (home_postcode !== undefined && home_postcode !== null && String(home_postcode).trim() !== '') {
+      normalisedPostcode = normalisePostcode(home_postcode);
+      if (!normalisedPostcode) {
+        return res.status(400).json({ error: 'Invalid postcode format', field: 'home_postcode' });
+      }
+      const loc = await lookupPostcode(normalisedPostcode);
+      if (!loc) {
+        return res.status(400).json({ error: 'Postcode not found', field: 'home_postcode' });
+      }
+      homeLat = loc.lat;
+      homeLng = loc.lng;
+    }
+
+    // travel_radius_miles: integer, 1..500. Anything outside the range gets
+    // clamped so the UI slider can stay liberal without blowing up the SQL.
+    let radius = null;
+    if (travel_radius_miles !== undefined && travel_radius_miles !== null && travel_radius_miles !== '') {
+      const r = parseInt(travel_radius_miles, 10);
+      if (isFinite(r)) radius = Math.max(1, Math.min(500, r));
     }
 
     const result = await db.query(
@@ -653,14 +732,17 @@ router.patch('/user/profile', async (req, res) => {
        rate_premium = COALESCE($20, rate_premium),
        rate_dep = COALESCE($21, rate_dep),
        rate_deposit_pct = COALESCE($22, rate_deposit_pct),
-       rate_notes = COALESCE($23, rate_notes)
+       rate_notes = COALESCE($23, rate_notes),
+       home_lat = COALESCE($24, home_lat),
+       home_lng = COALESCE($25, home_lng),
+       travel_radius_miles = COALESCE($26, travel_radius_miles)
        WHERE id = $8 RETURNING *`,
-      [name, phone, instrumentsArr, home_postcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
+      [name, phone, instrumentsArr, normalisedPostcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
        bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name,
        epk_bio, epk_photo_url, epk_video_url, epk_audio_url,
        rate_standard || null, rate_premium || null, rate_dep || null,
        rate_deposit_pct != null && rate_deposit_pct !== '' ? parseInt(rate_deposit_pct, 10) : null,
-       rate_notes]
+       rate_notes, homeLat, homeLng, radius]
     );
 
     res.json(result.rows[0]);
@@ -1126,6 +1208,20 @@ router.post('/dep-offers', async (req, res) => {
     const { gig_id, role, message, mode, contact_ids } = req.body;
     if (!gig_id) return res.status(400).json({ error: 'Gig is required' });
 
+    // Load the gig's venue lat/lng once so we can filter recipients by the
+    // distance each would have to travel. If the gig has no postcode on file
+    // (pre-Phase VI rows or rural gigs), venueLat/lng are null and distance
+    // filtering falls open for every recipient.
+    const gigResult = await db.query(
+      'SELECT venue_lat, venue_lng, venue_postcode FROM gigs WHERE id = $1 AND user_id = $2',
+      [gig_id, req.user.id]
+    );
+    if (gigResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Gig not found' });
+    }
+    const venueLat = gigResult.rows[0].venue_lat;
+    const venueLng = gigResult.rows[0].venue_lng;
+
     // Load candidate contacts for this user
     let contactRows = [];
     if (mode === 'pick' && Array.isArray(contact_ids) && contact_ids.length > 0) {
@@ -1157,6 +1253,12 @@ router.post('/dep-offers', async (req, res) => {
 
     let sent = 0;
     let unresolved = 0;
+    let filteredOutOfRange = 0;
+    // Rich per-contact result so pick mode can show a "3 of 5 will see this"
+    // summary modal. Broadcast ignores this payload; it only cares about
+    // sent/unresolved counts.
+    const outOfRangeContacts = [];
+
     for (const c of contactRows) {
       // Resolve to a users.id
       let recipientId = c.contact_user_id;
@@ -1191,6 +1293,45 @@ router.post('/dep-offers', async (req, res) => {
         unresolved++;
         continue;
       }
+
+      // Distance filter (roadmap Phase VI).
+      //   - Broadcast (mode === 'all'): hard filter. Contacts outside their
+      //     own stated travel radius never see the offer.
+      //   - Pick (mode === 'pick'): soft warning. We still send the offer
+      //     — the sender made a deliberate choice — but we flag it in the
+      //     response so the frontend can show a "sent with override" toast.
+      if (venueLat != null && venueLng != null) {
+        const { rows: urows } = await db.query(
+          'SELECT id, home_lat, home_lng, travel_radius_miles, display_name, name FROM users WHERE id = $1',
+          [recipientId]
+        );
+        const u = urows[0];
+        if (u && u.home_lat != null && u.home_lng != null) {
+          const dist = haversineMiles(u.home_lat, u.home_lng, venueLat, venueLng);
+          const radius = u.travel_radius_miles != null ? u.travel_radius_miles : 50;
+          if (dist != null && dist > radius) {
+            if (mode === 'all') {
+              filteredOutOfRange++;
+              outOfRangeContacts.push({
+                recipient_id: recipientId,
+                name: u.display_name || u.name || null,
+                distance_miles: Math.round(dist),
+                radius_miles: radius,
+              });
+              continue; // hard filter: do NOT insert the offer
+            }
+            // Pick mode: fall through and send, but note it on the response.
+            outOfRangeContacts.push({
+              recipient_id: recipientId,
+              name: u.display_name || u.name || null,
+              distance_miles: Math.round(dist),
+              radius_miles: radius,
+              overridden: true,
+            });
+          }
+        }
+      }
+
       await db.query(
         `INSERT INTO offers (sender_id, recipient_id, gig_id, offer_type, status, fee)
          VALUES ($1, $2, $3, 'dep', 'pending',
@@ -1200,7 +1341,14 @@ router.post('/dep-offers', async (req, res) => {
       sent++;
     }
 
-    res.json({ success: true, sent, unresolved, total: contactRows.length });
+    res.json({
+      success: true,
+      sent,
+      unresolved,
+      total: contactRows.length,
+      filtered_out_of_range: filteredOutOfRange,
+      out_of_range_contacts: outOfRangeContacts,
+    });
   } catch (error) {
     console.error('Create dep offer error:', error);
     res.status(500).json({ error: 'Failed to send dep offer' });
