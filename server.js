@@ -16,8 +16,12 @@ const aiRoutes = require('./routes/ai');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Unique ID per server start — busts browser/proxy cache for JS and CSS
-const BUILD_ID = Date.now();
+// Unique ID per server start, or per /api/admin/reload call. Busts browser
+// and service-worker caches for JS and CSS. Kept as `let` so the reload
+// endpoint can bump it without a full process restart; otherwise the browser
+// keeps serving the pre-pull `/js/app.js?v=OLD_BUILD_ID` from cache and the
+// deploy looks like it didn't land.
+let BUILD_ID = Date.now();
 
 // Read index.html once at startup and inject BUILD_ID into asset URLs
 const INDEX_HTML_PATH = path.join(__dirname, 'public', 'index.html');
@@ -102,6 +106,11 @@ function handleReload(req, res) {
     // keeps serving the old cached `indexHtml` string from startup. Refreshing
     // it here closes that gap. If anything goes wrong (file moved, perms),
     // log and continue — the pull itself still succeeded.
+    // Bump BUILD_ID so the injected `?v=...` cache-buster actually changes.
+    // Without this, the reload endpoint reinjects the SAME value that was
+    // injected at process start, browsers keep serving `/js/app.js` from
+    // cache, and the deploy looks like it silently failed.
+    BUILD_ID = Date.now();
     let indexReloaded = false;
     try {
       let fresh = fs.readFileSync(INDEX_HTML_PATH, 'utf8');
@@ -117,7 +126,8 @@ function handleReload(req, res) {
       ok: true,
       mode: force ? 'force' : 'pull',
       output: stdout.trim(),
-      indexReloaded
+      indexReloaded,
+      buildId: BUILD_ID
     });
     // nodemon will pick up server.js / route changes and restart automatically;
     // for HTML/CSS-only changes, the in-memory refresh above is what makes them
