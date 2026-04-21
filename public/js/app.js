@@ -649,13 +649,34 @@ function buildHomeHTML(content, stats) {
       </div>`;
     }
 
+    html += `</div>`;
+
+    // Next 7 days strip: 7 tap-able pills, one per day. Each pill is coloured
+    // by state (blue = gig, red = blocked, white/empty = open). Whole strip
+    // opens the Availability panel; individual pills jump to the day's detail
+    // sheet so the user can block, unblock, or add a gig from there.
+    // Data is hydrated asynchronously via hydrateNext7DaysStrip() after render.
+    const todayDate = new Date();
+    const next7Cells = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate() + i);
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const dow = ['S', 'M', 'T', 'W', 'T', 'F', 'S'][d.getDay()];
+      next7Cells.push(`
+        <div data-next7-iso="${iso}" onclick="event.stopPropagation(); if (typeof openDayActionSheet === 'function') openDayActionSheet('${iso}'); else { openPanel('panel-block'); }"
+             style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px 0;border-radius:8px;background:var(--card);border:1px solid var(--border);cursor:pointer;">
+          <div style="font-size:9px;color:var(--text-3);font-weight:600;letter-spacing:.3px;">${dow}</div>
+          <div data-next7-num style="font-size:13px;font-weight:700;color:var(--text);">${d.getDate()}</div>
+        </div>`);
+    }
     html += `
-      <div onclick="openPanel('panel-my-availability'); openMyAvailabilityPanel();" style="flex:1;background:var(--accent-dim);border:1px solid rgba(240,165,0,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
-        <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📅 Calendar</div>
-        <div style="font-size:11px;font-weight:600;color:var(--accent);">Availability</div>
-        <div style="font-size:10px;color:var(--text-2);margin-top:2px;">Block dates</div>
-      </div>
-    </div>`;
+      <div onclick="openPanel('panel-block')" style="margin:0 16px 6px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;cursor:pointer;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;">📅 Next 7 days</div>
+          <div style="font-size:10px;color:var(--accent);font-weight:600;">Availability ›</div>
+        </div>
+        <div id="next7DaysStrip" style="display:flex;gap:4px;">${next7Cells.join('')}</div>
+      </div>`;
 
     // Gig messages card
     if (stats.unread_messages > 0) {
@@ -775,7 +796,72 @@ function buildHomeHTML(content, stats) {
 
     html += '</div>';
     content.innerHTML = html;
+
+    // Colour the Next 7 days strip using cached gigs + a light blocked-dates
+    // fetch. Strip still works if either source fails — cells just stay white.
+    hydrateNext7DaysStrip();
 }
+
+async function hydrateNext7DaysStrip() {
+  const strip = document.getElementById('next7DaysStrip');
+  if (!strip) return;
+  // Build the 7-day ISO set
+  const today = new Date();
+  const isos = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+    isos.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+
+  // Gigs: prefer cache, fall back to fetch.
+  let gigs = Array.isArray(window._cachedGigs) ? window._cachedGigs : null;
+  if (!gigs) {
+    try {
+      const r = await fetch('/api/gigs');
+      if (r.ok) {
+        const data = await r.json();
+        gigs = Array.isArray(data) ? data : (data.gigs || []);
+      }
+    } catch {}
+  }
+  const gigSet = new Set((gigs || []).map(g => String(g.date || '').slice(0, 10)).filter(Boolean));
+
+  // Blocked dates — fire-and-forget; if it fails, cells stay unblocked-visual.
+  let blockedSet = new Set();
+  try {
+    const r = await fetch('/api/blocked-dates');
+    if (r.ok) {
+      const rows = await r.json();
+      (Array.isArray(rows) ? rows : []).forEach(row => {
+        const dates = Array.isArray(row.expanded_dates) && row.expanded_dates.length > 0
+          ? row.expanded_dates
+          : [(row.start_date || row.date || '').slice(0, 10)];
+        dates.forEach(d => { if (d) blockedSet.add(d); });
+      });
+    }
+  } catch {}
+
+  // Paint each cell. Gigs take priority over blocks (a block should never be
+  // created on a gig day anyway, but if it is, show the gig).
+  isos.forEach(iso => {
+    const cell = strip.querySelector(`[data-next7-iso="${iso}"]`);
+    if (!cell) return;
+    if (gigSet.has(iso)) {
+      cell.style.background = 'var(--info-dim)';
+      cell.style.border = '1px solid var(--info)';
+      const num = cell.querySelector('[data-next7-num]');
+      if (num) num.style.color = 'var(--info)';
+    } else if (blockedSet.has(iso)) {
+      cell.style.background = 'var(--danger)';
+      cell.style.border = '1px solid var(--danger)';
+      const num = cell.querySelector('[data-next7-num]');
+      if (num) num.style.color = '#fff';
+      const labels = cell.querySelectorAll('div');
+      if (labels[0]) labels[0].style.color = 'rgba(255,255,255,.7)';
+    }
+  });
+}
+window.hydrateNext7DaysStrip = hydrateNext7DaysStrip;
 
 // Current gig view state
 let gigViewMode = 'week';
@@ -1926,7 +2012,7 @@ function buildCalendarView(content, gigsData, blockedData) {
     <div id="calendarMenu" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px;z-index:10;">
       <div onclick="handleCalendarAction('add-gig')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;">Add gig</div>
       <div onclick="handleCalendarAction('add-event')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Add event</div>
-      <div onclick="handleCalendarAction('block-dates')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Block dates</div>
+      <div onclick="handleCalendarAction('block-dates')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);">Availability</div>
       ${(window._googleConnected === true || (window._cachedProfile && !!window._cachedProfile.google_access_token)) ? `
         <div onclick="triggerSyncNow();toggleCalendarMenu();" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;">
           <span>&#x21BB;</span><span>Sync now</span>
@@ -5106,6 +5192,7 @@ function openPanel(id) {
   if (id === 'panel-notifications-settings') { if (typeof loadNotificationSettings === 'function') loadNotificationSettings(); }
   if (id === 'panel-dep') { if (typeof initDepPanel === 'function') initDepPanel(); }
   if (id === 'panel-teaching-term') { if (typeof initTeachingTermPanel === 'function') initTeachingTermPanel(); }
+  if (id === 'panel-block') { if (typeof openMyAvailabilityPanel === 'function') openMyAvailabilityPanel(); }
 }
 
 // ── Teaching term (bulk weekly lesson creator) ──────────────────────────────
@@ -6158,6 +6245,22 @@ async function openMyAvailabilityPanel() {
 
     body.innerHTML = html;
     _renderAvailabilityMonths();
+
+    // If the user opened this panel from a specific day (via the day action sheet's
+    // Block date button), that date is queued on window._prefillBlockDate. Auto-block
+    // it now — tapping "Block date" from a specific day is an explicit enough intent
+    // that a second tap on the calendar would be redundant. If the date is already a
+    // gig day, toggleAvailabilityDate surfaces the "edit the gig" toast; if it's
+    // already blocked, it's a no-op (user-safe: ends in the same state).
+    const prefill = window._prefillBlockDate;
+    window._prefillBlockDate = null;
+    if (prefill) {
+      const state = _myAvailState.bookedSet.has(prefill)
+        ? 'booked'
+        : (_myAvailState.blockedMap.has(prefill) ? 'blocked' : 'free');
+      if (state === 'free') toggleAvailabilityDate(prefill, 'free');
+      else if (state === 'booked') showToast('This date has a gig. Edit the gig to change it.');
+    }
   } catch (err) {
     console.error('Availability panel error:', err);
     body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load availability</div>';
@@ -11183,160 +11286,6 @@ async function saveInvoiceDraft() {
   }
 }
 window.saveInvoiceDraft = saveInvoiceDraft;
-
-// ── Block Dates Panel ─────────────────────────────────────────────────────────
-
-function setBlockMode(mode) {
-  ['single', 'range', 'recurring', 'bulk'].forEach((m) => {
-    const el = document.getElementById('block-' + m);
-    const btn = document.getElementById('bm-' + m);
-    if (el) el.style.display = m === mode ? '' : 'none';
-    if (btn) btn.classList.toggle('active', m === mode);
-  });
-  if (mode === 'bulk') initBulkBlockGrid();
-}
-window.setBlockMode = setBlockMode;
-
-function toggleDayBtn(btn) {
-  btn.classList.toggle('active');
-}
-window.toggleDayBtn = toggleDayBtn;
-
-// ── Bulk block dates grid ──────────────────────────────────────────────────
-// Lightweight mini month calendar where each date is a togglable cell.
-// State is kept in window._bulkBlockState so the user can switch months
-// without losing selection.
-let _bulkBlockMonthOffset = 0;
-if (!window._bulkBlockState) window._bulkBlockState = new Set();
-
-function initBulkBlockGrid() {
-  _bulkBlockMonthOffset = 0;
-  renderBulkBlockGrid();
-}
-
-function shiftBulkMonth(delta) {
-  _bulkBlockMonthOffset += delta;
-  renderBulkBlockGrid();
-}
-window.shiftBulkMonth = shiftBulkMonth;
-
-function renderBulkBlockGrid() {
-  const grid = document.getElementById('bulkMonthGrid');
-  const label = document.getElementById('bulkMonthLabel');
-  if (!grid || !label) return;
-
-  const now = new Date();
-  const display = new Date(now.getFullYear(), now.getMonth() + _bulkBlockMonthOffset, 1);
-  const year = display.getFullYear();
-  const month = display.getMonth();
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
-                      'July', 'August', 'September', 'October', 'November', 'December'];
-  label.textContent = monthNames[month] + ' ' + year;
-
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-  // Monday-start week: JS getDay returns 0=Sun, so shift to 6=Sun
-  const leading = (firstDay.getDay() + 6) % 7;
-  const daysInMonth = lastDay.getDate();
-
-  const headers = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
-    .map(d => `<div style="font-size:10px;color:var(--text-3);font-weight:600;text-align:center;">${d}</div>`).join('');
-  let cells = '';
-  for (let i = 0; i < leading; i++) cells += '<div></div>';
-  const todayIso = new Date().toISOString().slice(0, 10);
-  for (let d = 1; d <= daysInMonth; d++) {
-    const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const selected = window._bulkBlockState.has(iso);
-    const isToday = (iso === todayIso);
-    let style = 'padding:8px 0;border-radius:8px;font-size:12px;text-align:center;cursor:pointer;';
-    if (selected) {
-      style += 'background:var(--danger,#ef4444);color:#fff;font-weight:700;';
-    } else if (isToday) {
-      style += 'background:var(--accent-dim);color:var(--accent);font-weight:700;border:1px solid var(--accent);';
-    } else {
-      style += 'color:var(--text);background:transparent;';
-    }
-    cells += `<div data-iso="${iso}" style="${style}" onclick="toggleBulkDay('${iso}')">${d}</div>`;
-  }
-
-  grid.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;">
-      ${headers}
-      ${cells}
-    </div>
-  `;
-
-  const count = window._bulkBlockState.size;
-  const countEl = document.getElementById('bulkSelectedCount');
-  if (countEl) countEl.textContent = `${count} date${count === 1 ? '' : 's'} selected`;
-}
-
-function toggleBulkDay(iso) {
-  if (window._bulkBlockState.has(iso)) window._bulkBlockState.delete(iso);
-  else window._bulkBlockState.add(iso);
-  renderBulkBlockGrid();
-}
-window.toggleBulkDay = toggleBulkDay;
-
-async function submitBlockDate(mode) {
-  let payload = { mode };
-  if (mode === 'single') {
-    const date = document.getElementById('blockSingleDate').value;
-    if (!date) { showToast('Pick a date'); return; }
-    payload.date = date;
-    payload.reason = document.getElementById('blockSingleReason').value;
-  } else if (mode === 'range') {
-    const from = document.getElementById('blockRangeFrom').value;
-    const to = document.getElementById('blockRangeTo').value;
-    if (!from || !to) { showToast('Pick a date range'); return; }
-    payload.from = from;
-    payload.to = to;
-    payload.reason = document.getElementById('blockRangeReason').value;
-  } else if (mode === 'recurring') {
-    const days = Array.from(document.querySelectorAll('.day-btn.active')).map(b => b.textContent);
-    if (!days.length) { showToast('Select at least one day'); return; }
-    payload.days = days;
-  } else if (mode === 'bulk') {
-    const dates = Array.from(window._bulkBlockState || []);
-    if (!dates.length) { showToast('Pick at least one date'); return; }
-    const reason = (document.getElementById('blockBulkReason') || {}).value || '';
-    try {
-      let ok = 0, fail = 0;
-      for (const d of dates) {
-        const r = await fetch('/api/blocked-dates', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode: 'single', date: d, reason }),
-        });
-        if (r.ok) ok++; else fail++;
-      }
-      if (window._bulkBlockState) window._bulkBlockState.clear();
-      closePanel('panel-block');
-      if (fail === 0) showToast(`Blocked ${ok} date${ok === 1 ? '' : 's'}`);
-      else showToast(`Blocked ${ok}, failed ${fail}`);
-    } catch (e) {
-      showToast('Failed to block dates');
-    }
-    return;
-  }
-
-  try {
-    const res = await fetch('/api/blocked-dates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
-      closePanel('panel-block');
-      showToast('Date blocked');
-    } else {
-      showToast('Failed to block date');
-    }
-  } catch {
-    showToast('Failed to block date');
-  }
-}
-window.submitBlockDate = submitBlockDate;
 
 // ── Send Dep Panel ────────────────────────────────────────────────────────────
 

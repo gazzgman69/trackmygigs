@@ -545,26 +545,6 @@ body {
   margin-top: 8px;
 }
 
-/* Block dates */
-.block-mode-btn {
-  flex: 1;
-  background: var(--card);
-  color: var(--text-2);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 8px 4px;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  cursor: pointer;
-  text-align: center;
-}
-
-.block-mode-btn.active {
-  background: var(--accent);
-  color: #000;
-  border-color: var(--accent);
-}
-
 .day-btn {
   width: 40px;
   height: 40px;
