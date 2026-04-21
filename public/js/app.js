@@ -6131,7 +6131,7 @@ async function openMyAvailabilityPanel() {
         .avail-cell { aspect-ratio:1; display:flex; align-items:center; justify-content:center; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; user-select:none; transition: transform .05s ease, opacity .1s ease; }
         .avail-cell:active { transform: scale(.92); }
         .avail-cell.free { background:var(--card); border:1px solid var(--border); color:var(--text); }
-        .avail-cell.blocked { background:#6E7681; color:#fff; border:1px solid #6E7681; }
+        .avail-cell.blocked { background:var(--danger); color:#fff; border:1px solid var(--danger); }
         .avail-cell.booked { background:var(--danger); color:#fff; border:1px solid var(--danger); cursor:not-allowed; }
         .avail-cell.past { opacity:.3; cursor:not-allowed; }
         .avail-empty { aspect-ratio:1; }
@@ -6142,18 +6142,14 @@ async function openMyAvailabilityPanel() {
             Tap a free day to block it. Tap a blocked day to unblock. Gig days are locked.
           </div>
           ${slugUrl ? `
-          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;">
-            <div style="font-size:11px;color:var(--text-3);min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-              Bookers see: <span style="color:var(--accent);font-weight:600;">${slugUrl.replace(/^https?:\/\//,'')}</span>
-            </div>
-            <a href="${slugUrl}" target="_blank" rel="noopener" style="flex-shrink:0;background:transparent;border:1px solid var(--border);color:var(--text);border-radius:999px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;text-decoration:none;">Preview</a>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:11px;color:var(--text-3);">
+            Bookers see this at <span style="color:var(--accent);font-weight:600;">${slugUrl.replace(/^https?:\/\//,'')}</span>
           </div>` : ''}
         </div>
 
         <div class="avail-legend">
           <span><span class="avail-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
-          <span><span class="avail-dot" style="background:var(--danger);"></span>Gig</span>
-          <span><span class="avail-dot" style="background:#6E7681;"></span>Blocked</span>
+          <span><span class="avail-dot" style="background:var(--danger);"></span>Unavailable</span>
         </div>
 
         <div id="myAvailMonths"></div>
@@ -6290,10 +6286,9 @@ async function renderPubCalShare() {
           <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Named availability link</div>
           <div style="display:flex;gap:6px;align-items:center;">
             <input type="text" value="${slugUrl || 'Generating...'}" readonly style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:12px;color:var(--text);" id="pubCalSlugInput">
-            ${slugUrl ? `<a href="${slugUrl}" target="_blank" rel="noopener" style="background:transparent;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;text-decoration:none;">Preview</a>` : ''}
             <button onclick="shareAvailability()" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;">Share</button>
           </div>
-          <div style="font-size:11px;color:var(--text-3);margin-top:6px;">Pretty URL using your profile name. Always live (no toggle required) and shows a 12-month calendar. Preview opens what bookers see.</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:6px;">Pretty URL using your profile name. Always live (no toggle required) and shows a 12-month calendar.</div>
         </div>
 
         ${enabled && token ? `
