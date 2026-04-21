@@ -761,6 +761,9 @@
     </div>
     <div class="panel-body" id="addContactBody">
       <div style="padding:0 16px 20px;">
+        <!-- Phase IX-D: Auto-suggest chip. Populated by discoverMini() when a
+             typed email/phone matches a discoverable TrackMyGigs user. -->
+        <div id="addContactSuggestChip" style="display:none;"></div>
         <div class="form-group"><label class="fl">Name</label><input type="text" class="fi" id="contactName" placeholder="Full name" /></div>
         <div class="form-group"><label class="fl">Instruments</label><input type="text" class="fi" id="contactInstruments" placeholder="guitar, bass, vocals" /></div>
         <div class="form-group"><label class="fl">Phone</label><input type="tel" class="fi" id="contactPhone" placeholder="Phone number" /></div>

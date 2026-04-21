@@ -5205,6 +5205,7 @@ function openPanel(id) {
   if (id === 'panel-dep') { if (typeof initDepPanel === 'function') initDepPanel(); }
   if (id === 'panel-teaching-term') { if (typeof initTeachingTermPanel === 'function') initTeachingTermPanel(); }
   if (id === 'panel-block') { if (typeof openMyAvailabilityPanel === 'function') openMyAvailabilityPanel(); }
+  if (id === 'panel-add-contact') { if (typeof initAddContactPanel === 'function') initAddContactPanel(); }
 }
 
 // ── Teaching term (bulk weekly lesson creator) ──────────────────────────────
@@ -8773,11 +8774,16 @@ async function discoverAction_addContact(userId) {
   if (!u) return;
 
   try {
+    // Phase IX-D: When adding from Find Musicians, the target user id is known
+    // for certain, so auto-link. Server re-validates (discoverable, not self,
+    // not blocked) and silently drops to NULL if the check fails; the row still
+    // saves, so a stale cache never blocks the add.
     const payload = {
       name: u.display_name || u.name || 'Musician',
       instruments: Array.isArray(u.instruments) ? u.instruments : [],
       location: u.outward_postcode || '',
-      notes: `Added from Find Musicians on ${new Date().toISOString().slice(0, 10)}`
+      notes: `Added from Find Musicians on ${new Date().toISOString().slice(0, 10)}`,
+      linked_user_id: userId || null
     };
     const res = await fetch('/api/contacts', {
       method: 'POST',
@@ -9182,9 +9188,231 @@ async function confirmSendInvoice(invoiceId) {
   }
 }
 
+// ── Phase IX-D: Add Contact auto-suggest bridge ─────────────────────────────
+// When the user types an email or phone into the Add Contact form and the
+// value matches a discoverable TrackMyGigs user, we surface a chip above the
+// form: "Link to Jane on TrackMyGigs". Clicking Link pre-fills the public
+// fields (name, instruments, outward postcode) and stores linked_user_id on
+// the contact so later dep cascades know this contact IS a TMG member.
+//
+// Behaviour rules:
+//   - Debounce 500ms after input to avoid one lookup per keystroke.
+//   - Only query once a value is parseable (email has '@...' shape, phone
+//     passes E.164 normalise at the server — server returns 400 otherwise
+//     and we silently drop).
+//   - Don't re-query the same value we've already shown or dismissed.
+//   - If server returns 429 (rate-limited), silently hide chip; user can
+//     still save the contact as a plain row.
+//   - If the user clicks Dismiss, we don't surface the chip again for the
+//     same email/phone in this panel session.
+//   - On panel close or successful save, reset all state.
+
+window._addContactState = window._addContactState || {
+  linked_user_id: null,
+  linked_display_name: null,
+  last_email_q: '',
+  last_phone_q: '',
+  dismissed_email_q: '',
+  dismissed_phone_q: '',
+  email_timer: null,
+  phone_timer: null
+};
+
+function resetAddContactState() {
+  const s = window._addContactState;
+  if (s.email_timer) { clearTimeout(s.email_timer); s.email_timer = null; }
+  if (s.phone_timer) { clearTimeout(s.phone_timer); s.phone_timer = null; }
+  s.linked_user_id = null;
+  s.linked_display_name = null;
+  s.last_email_q = '';
+  s.last_phone_q = '';
+  s.dismissed_email_q = '';
+  s.dismissed_phone_q = '';
+  const chip = document.getElementById('addContactSuggestChip');
+  if (chip) { chip.style.display = 'none'; chip.innerHTML = ''; }
+}
+
+function initAddContactPanel() {
+  resetAddContactState();
+  const email = document.getElementById('contactEmail');
+  const phone = document.getElementById('contactPhone');
+  // Attach listeners idempotently: strip any prior handlers by cloning. The
+  // panel can be opened and closed many times per session so we don't want
+  // to stack duplicate debounced lookups.
+  if (email) {
+    const fresh = email.cloneNode(true);
+    email.parentNode.replaceChild(fresh, email);
+    fresh.addEventListener('input', () => scheduleDiscoverMiniLookup('email'));
+    fresh.addEventListener('blur', () => scheduleDiscoverMiniLookup('email', 0));
+  }
+  if (phone) {
+    const fresh = phone.cloneNode(true);
+    phone.parentNode.replaceChild(fresh, phone);
+    fresh.addEventListener('input', () => scheduleDiscoverMiniLookup('phone'));
+    fresh.addEventListener('blur', () => scheduleDiscoverMiniLookup('phone', 0));
+  }
+}
+window.initAddContactPanel = initAddContactPanel;
+
+function scheduleDiscoverMiniLookup(mode, delay) {
+  const s = window._addContactState;
+  const wait = (delay == null) ? 500 : delay;
+  const timerKey = mode === 'email' ? 'email_timer' : 'phone_timer';
+  if (s[timerKey]) clearTimeout(s[timerKey]);
+  s[timerKey] = setTimeout(() => runDiscoverMiniLookup(mode), wait);
+}
+
+async function runDiscoverMiniLookup(mode) {
+  const s = window._addContactState;
+  const el = document.getElementById(mode === 'email' ? 'contactEmail' : 'contactPhone');
+  if (!el) return;
+  const raw = (el.value || '').trim();
+  if (!raw) return;
+
+  // Cheap client-side guard: email must include '@' and a dot; phone must
+  // have 7+ digits. Server rejects invalid values anyway, but skipping them
+  // saves one rate-limited lookup per keystroke while the user is still
+  // typing.
+  if (mode === 'email') {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(raw)) return;
+  } else {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length < 7) return;
+  }
+
+  // De-dupe: don't re-query the last value we already looked up, and don't
+  // re-query a value the user has explicitly dismissed.
+  const lastKey = mode === 'email' ? 'last_email_q' : 'last_phone_q';
+  const dismissKey = mode === 'email' ? 'dismissed_email_q' : 'dismissed_phone_q';
+  if (s[lastKey] === raw) return;
+  if (s[dismissKey] === raw) return;
+  s[lastKey] = raw;
+
+  try {
+    const url = `/api/discover-mini?mode=${mode}&q=${encodeURIComponent(raw)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      // 400 = invalid, 429 = rate limited, 401 = session expired. All silent.
+      return;
+    }
+    const data = await res.json();
+    if (!data || !data.match) return;
+    renderAddContactChip(data.match, mode, raw);
+  } catch (err) {
+    // Network errors: silent. Chip is a convenience, not a required feature.
+    console.warn('[discover-mini] lookup failed:', err && err.message);
+  }
+}
+
+function renderAddContactChip(match, mode, originQuery) {
+  const chip = document.getElementById('addContactSuggestChip');
+  if (!chip) return;
+  const name = match.display_name || 'TrackMyGigs user';
+  const instruments = Array.isArray(match.instruments) && match.instruments.length > 0
+    ? match.instruments.join(', ')
+    : '';
+  const postcode = match.outward_postcode || '';
+  const initial = (name[0] || '?').toUpperCase();
+  const avatar = match.photo_url
+    ? `<img src="${escapeAttr(match.photo_url)}" alt="" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;" />`
+    : `<div style="width:40px;height:40px;border-radius:50%;background:var(--accent);color:#000;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;flex-shrink:0;">${escapeHtml(initial)}</div>`;
+  const detailLine = [instruments, postcode].filter(Boolean).join(' \u00b7 ');
+
+  // Stash the payload on window for the button handlers; we can't pass
+  // objects through inline onclick attributes.
+  window._addContactPendingMatch = {
+    id: match.id,
+    display_name: name,
+    instruments: Array.isArray(match.instruments) ? match.instruments : [],
+    outward_postcode: postcode,
+    photo_url: match.photo_url || null,
+    origin_mode: mode,
+    origin_query: originQuery
+  };
+
+  chip.style.display = 'block';
+  chip.innerHTML = `
+    <div style="background:var(--card);border:1px solid var(--accent);border-radius:12px;padding:12px 14px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        ${avatar}
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:1px;font-weight:700;">On TrackMyGigs</div>
+          <div style="font-size:14px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(name)}</div>
+          ${detailLine ? `<div style="font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(detailLine)}</div>` : ''}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button onclick="addContactLinkClick()" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">Link & pre-fill</button>
+        <button onclick="addContactDismissChip()" style="background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;font-size:13px;cursor:pointer;">Dismiss</button>
+      </div>
+    </div>`;
+}
+
+function addContactLinkClick() {
+  const m = window._addContactPendingMatch;
+  if (!m) return;
+  const s = window._addContactState;
+
+  // Pre-fill only blank fields so we never overwrite what the user already
+  // typed. Instruments is special: only pre-fill if the field is empty,
+  // don't merge into an existing list.
+  const nameEl = document.getElementById('contactName');
+  if (nameEl && !nameEl.value.trim()) nameEl.value = m.display_name || '';
+  const instrEl = document.getElementById('contactInstruments');
+  if (instrEl && !instrEl.value.trim() && Array.isArray(m.instruments) && m.instruments.length) {
+    instrEl.value = m.instruments.join(', ');
+  }
+  const locEl = document.getElementById('contactLocation');
+  if (locEl && !locEl.value.trim() && m.outward_postcode) locEl.value = m.outward_postcode;
+
+  s.linked_user_id = m.id;
+  s.linked_display_name = m.display_name;
+
+  // Collapse the chip to a "Linked" confirmation strip.
+  const chip = document.getElementById('addContactSuggestChip');
+  if (chip) {
+    chip.innerHTML = `
+      <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.4);border-radius:10px;padding:10px 12px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div style="font-size:12px;color:var(--text);">
+          <span style="color:#10b981;font-weight:700;">\u2713</span>
+          Linked to <strong>${escapeHtml(m.display_name || 'TrackMyGigs user')}</strong>
+        </div>
+        <button onclick="addContactUnlink()" style="background:transparent;border:none;color:var(--text-3);font-size:11px;text-decoration:underline;cursor:pointer;padding:4px;">Unlink</button>
+      </div>`;
+  }
+}
+window.addContactLinkClick = addContactLinkClick;
+
+function addContactDismissChip() {
+  const s = window._addContactState;
+  const m = window._addContactPendingMatch;
+  if (m && m.origin_mode === 'email') s.dismissed_email_q = m.origin_query;
+  if (m && m.origin_mode === 'phone') s.dismissed_phone_q = m.origin_query;
+  window._addContactPendingMatch = null;
+  const chip = document.getElementById('addContactSuggestChip');
+  if (chip) { chip.style.display = 'none'; chip.innerHTML = ''; }
+}
+window.addContactDismissChip = addContactDismissChip;
+
+function addContactUnlink() {
+  const s = window._addContactState;
+  s.linked_user_id = null;
+  s.linked_display_name = null;
+  // Clear the dismissed caches so an unlink can re-surface the chip when
+  // the user resaves the email/phone in the same panel session.
+  s.dismissed_email_q = '';
+  s.dismissed_phone_q = '';
+  s.last_email_q = '';
+  s.last_phone_q = '';
+  const chip = document.getElementById('addContactSuggestChip');
+  if (chip) { chip.style.display = 'none'; chip.innerHTML = ''; }
+}
+window.addContactUnlink = addContactUnlink;
+
 async function saveNewContact() {
   const name = (document.getElementById('contactName')||{}).value || '';
   if (!name.trim()) { if (typeof showToast === 'function') showToast('Name is required'); return; }
+  const s = window._addContactState || {};
   const payload = {
     name: name.trim(),
     instruments: ((document.getElementById('contactInstruments')||{}).value || '').split(',').map(s => s.trim()).filter(Boolean),
@@ -9192,7 +9420,8 @@ async function saveNewContact() {
     email: ((document.getElementById('contactEmail')||{}).value || '').trim() || null,
     location: ((document.getElementById('contactLocation')||{}).value || '').trim() || null,
     notes: ((document.getElementById('contactNotes')||{}).value || '').trim() || null,
-    is_favourite: !!(document.getElementById('contactFavourite') || {}).checked
+    is_favourite: !!(document.getElementById('contactFavourite') || {}).checked,
+    linked_user_id: s.linked_user_id || null
   };
   try {
     const res = await fetch('/api/contacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -9200,6 +9429,7 @@ async function saveNewContact() {
     // Reset fields
     ['contactName','contactInstruments','contactPhone','contactEmail','contactLocation','contactNotes'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     const fav = document.getElementById('contactFavourite'); if (fav) fav.checked = false;
+    resetAddContactState();
     if (typeof showToast === 'function') showToast('Contact saved');
     closePanel('panel-add-contact');
     if (typeof openNetworkPanel === 'function') openNetworkPanel();

@@ -2101,13 +2101,42 @@ router.get('/contacts/:id', async (req, res) => {
 
 router.post('/contacts', async (req, res) => {
   try {
-    const { name, email, phone, instruments, notes, location, is_favourite } = req.body;
+    const { name, email, phone, instruments, notes, location, is_favourite, linked_user_id } = req.body;
     const instrumentsArr = toTextArray(instruments);
+
+    // Phase IX-D: linked_user_id may arrive from the Add Contact "Link" chip.
+    // Don't trust the client — re-verify the target is (a) a real user, (b)
+    // discoverable, (c) not the actor themselves, and (d) not on either side
+    // of a block relation. If any check fails, drop the link and still save
+    // the contact as a plain (unlinked) row so the user's typed fields aren't
+    // lost. Never surface the specific reason (decision 10: no leak).
+    let verifiedLinkedId = null;
+    if (linked_user_id && typeof linked_user_id === 'string') {
+      if (linked_user_id === req.user.id) {
+        // Self-link attempt; silently drop.
+      } else {
+        try {
+          const check = await db.query(
+            `SELECT u.id FROM users u
+               WHERE u.id = $1
+                 AND u.discoverable = TRUE
+                 AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $2 AND b.blocked_id = u.id)
+                 AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $2)
+               LIMIT 1`,
+            [linked_user_id, req.user.id]
+          );
+          if (check.rows.length === 1) verifiedLinkedId = linked_user_id;
+        } catch (linkErr) {
+          console.error('[contacts] link validation error (non-fatal):', linkErr && linkErr.message);
+        }
+      }
+    }
+
     const result = await db.query(
-      `INSERT INTO contacts (owner_id, name, email, phone, instruments, notes, location, is_favourite)
-       VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8)
+      `INSERT INTO contacts (owner_id, name, email, phone, instruments, notes, location, is_favourite, linked_user_id)
+       VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8, $9)
        RETURNING *`,
-      [req.user.id, name, email || null, phone || null, instrumentsArr, notes || null, location || null, !!is_favourite]
+      [req.user.id, name, email || null, phone || null, instrumentsArr, notes || null, location || null, !!is_favourite, verifiedLinkedId]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -3645,6 +3674,110 @@ router.get('/discover', async (req, res) => {
     return res.status(400).json({ error: 'unreachable_mode' });
   } catch (err) {
     console.error('[discover] error:', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// =============================================================================
+// Phase IX-D: GET /api/discover-mini — slim preview lookup for the Add Contact
+// auto-suggest bridge.
+//
+// Modes: 'email' or 'phone' only. Returns either a single preview object
+// (not a full card) or null when there is no match. The caller uses this to
+// render a "Link to X on TrackMyGigs" chip above the Add Contact form.
+//
+// Differences vs /api/discover:
+//   - No subqueries for gigs_count / offers_involved. A chip doesn't need
+//     trust badges; that's the Find Musicians screen's job.
+//   - Returns { match: {...} } or { match: null }, not a results array.
+//   - Same rate-limit bucket (email+phone combined, 20/hr) as /api/discover.
+//     A chip lookup is a discovery event, same abuse surface, so one bucket.
+//   - Writes the same discovery_lookups audit row (mode='email'|'phone').
+//
+// Block filtering and discoverable filtering identical to /api/discover so
+// an undiscoverable or blocked user never surfaces a chip.
+// =============================================================================
+
+router.get('/discover-mini', async (req, res) => {
+  try {
+    const actorId = req.user.id;
+    const modeRaw = String(req.query.mode || '').toLowerCase();
+    if (modeRaw !== 'email' && modeRaw !== 'phone') {
+      return res.status(400).json({ error: 'invalid_mode', valid: ['email', 'phone'] });
+    }
+
+    const actorRows = await db.query(
+      `SELECT id, email FROM users WHERE id = $1 LIMIT 1`,
+      [actorId]
+    );
+    const actor = actorRows.rows[0];
+    if (!actor) return res.status(401).json({ error: 'unknown_actor' });
+
+    // Shared email+phone rate bucket. Same limit as /api/discover — a chip
+    // lookup is still a discovery lookup, just with a lighter response.
+    const recent = await countRecentLookups(actorId, ['email', 'phone']);
+    if (recent.length >= DISCOVER_LIMIT_EMAIL_PHONE_PER_HOUR) {
+      return respondRateLimited(res, recent, DISCOVER_LIMIT_EMAIL_PHONE_PER_HOUR);
+    }
+
+    let normalisedQuery = null;
+    let whereClause = '';
+    let whereParam = null;
+
+    if (modeRaw === 'email') {
+      const q = String(req.query.q || '').trim().toLowerCase();
+      if (!q || !q.includes('@')) {
+        return res.status(400).json({ error: 'invalid_email' });
+      }
+      if (q === String(actor.email || '').toLowerCase()) {
+        await logLookup(actorId, 'email', q);
+        return res.json({ match: null, self_lookup: true });
+      }
+      normalisedQuery = q;
+      whereClause = `LOWER(u.email) = $2`;
+      whereParam = q;
+    } else {
+      const raw = String(req.query.q || '').trim();
+      const normalised = normaliseE164(raw);
+      if (!normalised) {
+        return res.status(400).json({ error: 'invalid_phone' });
+      }
+      normalisedQuery = normalised;
+      whereClause = `u.phone_normalized = $2`;
+      whereParam = normalised;
+    }
+
+    // Slim SELECT: id, name, instruments, photo_url, home_postcode only. No
+    // subqueries, no trust badges — a chip doesn't need them.
+    const rows = await db.query(
+      `SELECT u.id, u.name, u.instruments, u.photo_url, u.home_postcode
+         FROM users u
+         WHERE u.discoverable = TRUE
+           AND u.id <> $1
+           AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $1)
+           AND ${whereClause}
+         LIMIT 1`,
+      [actorId, whereParam]
+    );
+
+    await logLookup(actorId, modeRaw, normalisedQuery);
+
+    if (rows.rows.length === 0) {
+      return res.json({ match: null });
+    }
+    const r = rows.rows[0];
+    return res.json({
+      match: {
+        id: r.id,
+        display_name: r.name || 'TrackMyGigs user',
+        instruments: Array.isArray(r.instruments) ? r.instruments.slice(0, 3) : [],
+        photo_url: r.photo_url || null,
+        outward_postcode: outwardOnly(r.home_postcode)
+      }
+    });
+  } catch (err) {
+    console.error('[discover-mini] error:', err);
     return res.status(500).json({ error: 'server_error' });
   }
 });

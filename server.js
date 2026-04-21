@@ -544,6 +544,15 @@ async function runMigrations() {
     } catch (backfillErr) {
       console.error('Phase IX-A backfill error (non-fatal):', backfillErr.message);
     }
+    // Phase IX-D: Add Contact auto-suggest bridge. When the Add Contact form
+    // detects a typed email/phone matches a discoverable TrackMyGigs user,
+    // clicking "Link" stores linked_user_id on the contact row. This is the
+    // durable join that lets later flows (dep cascade, chat) map a network
+    // contact to a real TMG account without re-matching by email+phone.
+    // ON DELETE SET NULL: if the linked user deletes their account, the
+    // contact row survives as an unlinked entry.
+    await db.query(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS linked_user_id UUID REFERENCES users(id) ON DELETE SET NULL`);
+    await db.query(`CREATE INDEX IF NOT EXISTS contacts_linked_user_idx ON contacts (linked_user_id) WHERE linked_user_id IS NOT NULL`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);
