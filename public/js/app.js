@@ -8603,7 +8603,7 @@ function renderFindTab() {
 
   tabBody.innerHTML = `
     <div style="padding:0 16px 10px;">
-      <input type="text" class="fi" placeholder="${placeholder}" id="discoverQuery"
+      <input type="text" class="form-input" placeholder="${placeholder}" id="discoverQuery"
              value="${escapeHtml(st.query)}"
              oninput="onDiscoverQueryInput(event)"
              onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitDiscoverSearch(); }"
@@ -8943,10 +8943,11 @@ window.discoverAction_addContact = discoverAction_addContact;
 
 function discoverAction_sendDep(userId) {
   closeDiscoverSheet();
-  // Stash the discovered user's id for the dep picker to pre-select.
+  // Stash the discovered user's id for the dep picker to pre-select once a gig
+  // is chosen. initDepPanel consumes this alongside _depPrefillContactId.
   window._depPrefillDiscoveredUserId = userId;
   closePanel('panel-network');
-  if (typeof openPanel === 'function') openPanel('panel-send-dep');
+  if (typeof openDepPicker === 'function') openDepPicker();
 }
 window.discoverAction_sendDep = discoverAction_sendDep;
 
@@ -9985,6 +9986,7 @@ function sendDepOffer(contactId) {
   closePanel('panel-contact-detail');
   openDepPicker();
 }
+window.sendDepOffer = sendDepOffer;
 
 async function messageContact(contactId) {
   try {
@@ -12282,6 +12284,35 @@ async function initDepPanel() {
       }
     } catch (e) {
       console.error('Dep prefill error:', e);
+    }
+  }
+
+  // Consume discovered-user prefill if the user arrived here from the Find
+  // Musicians kebab sheet. We look the discovered user up by linked_user_id in
+  // the existing contacts list (Phase IX-D auto-links on Add to Contacts).
+  // If no matching contact exists yet, we drop the prefill silently and let the
+  // user search manually so the panel still opens cleanly.
+  if (window._depPrefillDiscoveredUserId) {
+    const prefillUserId = window._depPrefillDiscoveredUserId;
+    window._depPrefillDiscoveredUserId = null;
+    try {
+      let contacts = window._cachedContacts || [];
+      if (!contacts.length) {
+        const r = await fetch('/api/contacts');
+        if (r.ok) contacts = await r.json();
+        window._cachedContacts = contacts;
+      }
+      const contact = contacts.find(c => c.linked_user_id === prefillUserId);
+      if (contact) {
+        setDepMode('pick');
+        window._depSelectedContacts.add(contact.id);
+        if (searchEl) {
+          searchEl.value = contact.name || '';
+          if (typeof searchEl.oninput === 'function') await searchEl.oninput();
+        }
+      }
+    } catch (e) {
+      console.error('Dep discovered-user prefill error:', e);
     }
   }
 }
