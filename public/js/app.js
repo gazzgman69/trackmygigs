@@ -442,9 +442,7 @@ function showScreen(screenName) {
   // away; without this, the overlay stays on top of the new screen and the
   // nav appears broken.
   var openOverlays = document.querySelectorAll('.panel-overlay.open');
-  console.log('[showScreen] target=' + screenName + ' openOverlays=' + openOverlays.length);
   openOverlays.forEach(function (p) {
-    console.log('[showScreen] closing panel ' + p.id);
     closePanel(p.id);
   });
 
