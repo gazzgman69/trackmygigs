@@ -3,9 +3,19 @@ const { Pool } = require('pg');
 // Prefer DATABASE_URL if set (legacy external Neon via Secrets).
 // Otherwise pg reads PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE
 // from env automatically, which is what Replit's integrated binding provides.
-const pool = process.env.DATABASE_URL
-  ? new Pool({ connectionString: process.env.DATABASE_URL })
-  : new Pool();
+// Explicit `ssl` config in both branches silences pg-connection-string's
+// SSL-mode deprecation warning at boot.
+let pool;
+if (process.env.DATABASE_URL) {
+  // External cloud DB (Neon-style) - require SSL without strict cert validation
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+} else {
+  // Replit integrated binding on internal network - SSL not required
+  pool = new Pool({ ssl: false });
+}
 
 pool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);
