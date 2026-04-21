@@ -3856,6 +3856,42 @@ function buildProfileHTML(content, profile) {
           <div style="font-size:10px;color:var(--text-2);">Earned</div>
         </div>
       </div>
+      ${(() => {
+        // Phase IX-E: Directory profile summary. Only render if user has
+        // engaged with the feature (discoverable flag set, bio written, or
+        // genres chosen) so the panel doesn't shout at users who haven't
+        // touched it yet.
+        const discoverable = profile.discoverable !== false;
+        const bioSet = !!(profile.bio && profile.bio.trim());
+        const genresSet = Array.isArray(profile.genres) && profile.genres.length > 0;
+        const photoSet = !!(profile.photo_url && profile.photo_url.trim());
+        const anyTouched = bioSet || genresSet || photoSet || profile.discoverable === false;
+        if (!anyTouched && discoverable) {
+          // Quiet encouragement: one line, nudging the user to the editor.
+          return `<div onclick="editProfile()" style="margin:0 16px 12px;padding:10px 12px;background:var(--card);border:1px dashed var(--border);border-radius:var(--rs);cursor:pointer;display:flex;align-items:center;gap:10px;">
+            <span style="font-size:18px;">🔍</span>
+            <div style="flex:1;min-width:0;font-size:12px;color:var(--text-2);">Add a bio and genres to fill out your Find Musicians card</div>
+            <span style="color:var(--accent);font-size:14px;">›</span>
+          </div>`;
+        }
+        const chip = discoverable
+          ? '<span style="display:inline-block;background:var(--success-dim);color:var(--success);padding:3px 8px;border-radius:10px;font-size:10px;font-weight:600;">Listed</span>'
+          : '<span style="display:inline-block;background:var(--border);color:var(--text-2);padding:3px 8px;border-radius:10px;font-size:10px;font-weight:600;">Hidden</span>';
+        const bioLine = bioSet
+          ? `<div style="font-size:11px;color:var(--text-2);line-height:1.4;margin-top:4px;">${escapeHtml(profile.bio)}</div>`
+          : '';
+        const genreLine = genresSet
+          ? `<div style="font-size:10px;color:var(--text-3);margin-top:6px;">${profile.genres.slice(0,6).map(g => escapeHtml(g)).join(' · ')}</div>`
+          : '';
+        return `<div onclick="editProfile()" style="margin:0 16px 12px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);cursor:pointer;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <div style="font-size:12px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:1px;">Directory profile</div>
+            ${chip}
+          </div>
+          ${bioLine}
+          ${genreLine}
+        </div>`;
+      })()}
       <div style="padding:0 16px;margin-bottom:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;cursor:pointer;" onclick="shareAvailability()">
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:20px;">🔗</span>
@@ -7869,6 +7905,84 @@ async function saveEditGig(gigId) {
 
 // openPanel / closePanel defined earlier (line ~1969) — removed duplicate here
 
+// Phase IX-E: Directory profile section in the Edit Profile panel. Pulled out
+// into its own helper because it has a lot of state (discoverable toggle, bio
+// counter, photo URL, genres chip grid) and inlining it made editProfile()
+// hard to scan.
+function buildDirectoryProfileEditor(profile) {
+  const discoverable = profile.discoverable !== false; // default TRUE if never set
+  const bioText = profile.bio || '';
+  const bioLen = bioText.length;
+  const photoUrl = profile.photo_url || '';
+  const selectedGenres = Array.isArray(profile.genres) ? profile.genres.filter(Boolean) : [];
+  const genreSeeds = [
+    'Vocals', 'Guitar', 'Bass', 'Keys', 'Piano', 'Drums',
+    'Saxophone', 'Trumpet', 'Trombone', 'Violin', 'Cello',
+    'DJ', 'Percussion', 'Flute', 'Clarinet'
+  ];
+
+  const chipHTML = genreSeeds.map(g => {
+    const isOn = selectedGenres.some(sel => sel.toLowerCase() === g.toLowerCase());
+    return `<button type="button" data-genre="${escapeHtml(g)}" data-on="${isOn ? '1' : '0'}" onclick="toggleGenreChip(this)" style="background:${isOn ? 'var(--accent-dim)' : 'var(--card)'};color:${isOn ? 'var(--accent)' : 'var(--text-2)'};border:1px solid ${isOn ? 'var(--accent)' : 'var(--border)'};border-radius:999px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;">${escapeHtml(g)}</button>`;
+  }).join('');
+
+  return `
+    <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Directory Profile</div>
+    <div style="margin-bottom:14px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">
+      <div style="display:flex;align-items:flex-start;gap:12px;">
+        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
+          <input id="editDiscoverable" type="checkbox" ${discoverable ? 'checked' : ''} style="opacity:0;width:0;height:0;" onchange="this.parentElement.querySelector('.tmg-toggle-dot').style.transform = this.checked ? 'translateX(20px)' : 'translateX(0)'; this.parentElement.style.background = this.checked ? 'var(--accent)' : 'var(--border)';" />
+          <span style="position:absolute;inset:0;background:${discoverable ? 'var(--accent)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
+          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${discoverable ? 'translateX(20px)' : 'translateX(0)'};"></span>
+        </label>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Appear in Find Musicians</div>
+          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">Lets other TrackMyGigs users discover you by name, instrument or location. Your email and phone stay private and are only matched for Add Contact lookups you control.</div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span>Short bio</span>
+        <span id="editBioCount" style="color:${bioLen > 280 ? 'var(--danger)' : 'var(--text-3)'};font-weight:500;text-transform:none;letter-spacing:0;">${bioLen}/280</span>
+      </label>
+      <textarea id="editBio" rows="3" maxlength="280" placeholder="One or two lines about you. Shown on your directory card." oninput="const c=document.getElementById('editBioCount'); if(c){c.textContent=this.value.length+'/280'; c.style.color=this.value.length>280?'var(--danger)':'var(--text-3)';}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;min-height:60px;font-family:inherit;">${escapeHtml(bioText)}</textarea>
+    </div>
+    <div style="margin-bottom:14px;">
+      <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Profile photo URL</label>
+      <input id="editPhotoUrl" type="url" value="${escapeHtml(photoUrl)}" placeholder="https://..." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+      <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Paste a link to a headshot. Used on your directory card (and your EPK if you haven't set a separate EPK photo).</div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Genres &amp; tags</label>
+      <div id="editGenresGrid" style="display:flex;flex-wrap:wrap;gap:6px;">${chipHTML}</div>
+      <div style="font-size:10px;color:var(--text-3);margin-top:6px;">Tap up to 8 that describe your sound. Shown on your directory card.</div>
+    </div>
+  `;
+}
+
+// Toggle a genre chip on/off. Kept simple: flips data-on and restyles the chip.
+// Save wiring reads data-on from each chip, so no separate state array needed.
+function toggleGenreChip(btn) {
+  if (!btn) return;
+  const isOn = btn.getAttribute('data-on') === '1';
+  // Cap at 8 selected. Count current on-chips first so we can block the 9th.
+  if (!isOn) {
+    const grid = document.getElementById('editGenresGrid');
+    const onCount = grid ? grid.querySelectorAll('[data-on="1"]').length : 0;
+    if (onCount >= 8) {
+      showToast && showToast('Up to 8 genres');
+      return;
+    }
+  }
+  const next = !isOn;
+  btn.setAttribute('data-on', next ? '1' : '0');
+  btn.style.background = next ? 'var(--accent-dim)' : 'var(--card)';
+  btn.style.color = next ? 'var(--accent)' : 'var(--text-2)';
+  btn.style.borderColor = next ? 'var(--accent)' : 'var(--border)';
+}
+window.toggleGenreChip = toggleGenreChip;
+
 function editProfile() {
   const profile = window._cachedProfile || window._currentUser || {};
   const body = document.getElementById('editProfileBody');
@@ -7902,6 +8016,7 @@ function editProfile() {
         <input id="editInstruments" type="text" value="${escapeHtml(instrumentsStr)}" placeholder="Guitar, Vocals, Keys" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Comma separated</div>
       </div>
+      ${buildDirectoryProfileEditor(profile)}
       <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Home Postcode</label>
         <input id="editHomePostcode" type="text" value="${escapeHtml(profile.home_postcode || '')}" placeholder="e.g. CF10 1AA" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;" />
@@ -7981,24 +8096,47 @@ async function saveProfile() {
 
   const instruments = instrumentsRaw ? instrumentsRaw.split(',').map(s => s.trim()).filter(Boolean).join(', ') : '';
 
+  // Phase IX-E: Directory profile fields. Only read them if the fields are
+  // present (the panel may be rendering a legacy build without them, though
+  // after this commit every build should have them).
+  const discoverableEl = document.getElementById('editDiscoverable');
+  const discoverable = discoverableEl ? !!discoverableEl.checked : undefined;
+  const bioEl = document.getElementById('editBio');
+  const bio = bioEl ? bioEl.value : undefined;
+  const photoUrlEl = document.getElementById('editPhotoUrl');
+  const photoUrl = photoUrlEl ? photoUrlEl.value.trim() : undefined;
+  let genres;
+  const genresGrid = document.getElementById('editGenresGrid');
+  if (genresGrid) {
+    genres = Array.from(genresGrid.querySelectorAll('[data-on="1"]'))
+      .map(el => el.getAttribute('data-genre'))
+      .filter(Boolean);
+  }
+
   try {
+    const payload = {
+      name: name !== undefined ? name : null,
+      display_name: displayName || null,
+      phone: phone || null,
+      instruments: instruments || null,
+      home_postcode: homePostcode || null,
+      travel_radius_miles: travelRadius,
+      google_review_url: googleReviewUrl || null,
+      facebook_review_url: facebookReviewUrl || null,
+      bank_details: bankDetails || null,
+      invoice_prefix: invoicePrefix || null,
+      invoice_next_number: invoiceNextNum,
+      invoice_format: invoiceFormat,
+    };
+    if (discoverable !== undefined) payload.discoverable = discoverable;
+    if (bio !== undefined) payload.bio = bio;
+    if (photoUrl !== undefined) payload.photo_url = photoUrl;
+    if (genres !== undefined) payload.genres = genres;
+
     const res = await fetch('/api/user/profile', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: name !== undefined ? name : null,
-        display_name: displayName || null,
-        phone: phone || null,
-        instruments: instruments || null,
-        home_postcode: homePostcode || null,
-        travel_radius_miles: travelRadius,
-        google_review_url: googleReviewUrl || null,
-        facebook_review_url: facebookReviewUrl || null,
-        bank_details: bankDetails || null,
-        invoice_prefix: invoicePrefix || null,
-        invoice_next_number: invoiceNextNum,
-        invoice_format: invoiceFormat,
-      })
+      body: JSON.stringify(payload)
     });
 
     if (!res.ok) throw new Error('Save failed');

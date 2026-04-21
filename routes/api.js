@@ -677,7 +677,8 @@ router.patch('/user/profile', async (req, res) => {
             bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme,
             epk_bio, epk_photo_url, epk_video_url, epk_audio_url,
             rate_standard, rate_premium, rate_dep, rate_deposit_pct, rate_notes,
-            travel_radius_miles } = req.body;
+            travel_radius_miles,
+            discoverable, bio, photo_url, genres } = req.body;
 
     // instruments comes as a comma-separated string from the client but the
     // column is TEXT[].  Convert it to a proper PG array (or null to keep
@@ -685,6 +686,62 @@ router.patch('/user/profile', async (req, res) => {
     let instrumentsArr = null;
     if (instruments) {
       instrumentsArr = instruments.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    // Phase IX-E: Directory profile fields.
+    // discoverable is a boolean so it can't ride the COALESCE trick (false would
+    // be treated as "keep existing"). Use a CASE guarded by a provided-flag,
+    // same pattern as phone_normalized above.
+    let discoverableProvided = false;
+    let discoverableValue = null;
+    if (discoverable !== undefined) {
+      discoverableProvided = true;
+      discoverableValue = !!discoverable;
+    }
+
+    // bio: 280-char cap (matches Find Musicians card display). Trim whitespace,
+    // collapse empties to NULL so the directory doesn't show a blank card.
+    let bioValue = null;
+    let bioProvided = false;
+    if (bio !== undefined) {
+      bioProvided = true;
+      const trimmed = String(bio || '').trim();
+      bioValue = trimmed ? trimmed.slice(0, 280) : null;
+    }
+
+    // photo_url: only accept http/https. Reject data: and javascript: URIs so a
+    // compromised client can't smuggle an XSS payload into a directory card.
+    let photoUrlValue = null;
+    let photoUrlProvided = false;
+    if (photo_url !== undefined) {
+      photoUrlProvided = true;
+      const trimmed = String(photo_url || '').trim();
+      if (!trimmed) {
+        photoUrlValue = null;
+      } else if (/^https?:\/\//i.test(trimmed)) {
+        photoUrlValue = trimmed.slice(0, 500);
+      } else {
+        return res.status(400).json({ error: 'Photo URL must start with http:// or https://', field: 'photo_url' });
+      }
+    }
+
+    // genres: accept array or comma-separated string. Cap each tag at 40 chars
+    // and the whole list at 8 entries so one user can't bloat the index.
+    let genresArr = null;
+    if (genres !== undefined) {
+      let list = [];
+      if (Array.isArray(genres)) {
+        list = genres;
+      } else if (typeof genres === 'string') {
+        list = genres.split(',');
+      }
+      genresArr = list
+        .map(s => String(s || '').trim())
+        .filter(Boolean)
+        .map(s => s.slice(0, 40))
+        .slice(0, 8);
+      // Empty array is meaningful (user cleared their genres); keep it as []
+      // rather than NULL so the next COALESCE doesn't resurrect old values.
     }
 
     // Distance filter (roadmap Phase VI): whenever the user supplies a
@@ -750,7 +807,11 @@ router.patch('/user/profile', async (req, res) => {
        home_lat = COALESCE($24, home_lat),
        home_lng = COALESCE($25, home_lng),
        travel_radius_miles = COALESCE($26, travel_radius_miles),
-       phone_normalized = CASE WHEN $27::boolean THEN $28 ELSE phone_normalized END
+       phone_normalized = CASE WHEN $27::boolean THEN $28 ELSE phone_normalized END,
+       discoverable = CASE WHEN $29::boolean THEN $30::boolean ELSE discoverable END,
+       bio = CASE WHEN $31::boolean THEN $32 ELSE bio END,
+       photo_url = CASE WHEN $33::boolean THEN $34 ELSE photo_url END,
+       genres = CASE WHEN $35::boolean THEN $36::text[] ELSE genres END
        WHERE id = $8 RETURNING *`,
       [name, phone, instrumentsArr, normalisedPostcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
        bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name,
@@ -758,7 +819,11 @@ router.patch('/user/profile', async (req, res) => {
        rate_standard || null, rate_premium || null, rate_dep || null,
        rate_deposit_pct != null && rate_deposit_pct !== '' ? parseInt(rate_deposit_pct, 10) : null,
        rate_notes, homeLat, homeLng, radius,
-       phoneNormalizedProvided, phoneNormalized]
+       phoneNormalizedProvided, phoneNormalized,
+       discoverableProvided, discoverableValue,
+       bioProvided, bioValue,
+       photoUrlProvided, photoUrlValue,
+       genresArr !== null, genresArr]
     );
 
     res.json(result.rows[0]);
