@@ -3834,7 +3834,7 @@ function buildProfileHTML(content, profile) {
           ${profile.name && profile.name !== displayName ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:4px;">Act: ${escapeHtml(profile.name)}</div>` : ''}
           <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(Array.isArray(profile.instruments) ? profile.instruments.join(', ') : (profile.instruments || 'No instruments listed'))}</div>
           <div style="font-size:12px;color:var(--text-2);">📍 ${escapeHtml(profile.location || profile.home_postcode || 'Location not set')}</div>
-          ${profile.home_postcode ? `<div style="font-size:10px;color:var(--text-3);margin-top:2px;">Home: ${escapeHtml(profile.home_postcode)}</div>` : '<div style="font-size:10px;color:var(--warning);margin-top:2px;">Add home postcode for mileage tracking</div>'}
+          ${profile.home_postcode ? `<div style="font-size:10px;color:var(--text-3);margin-top:2px;">Home: ${escapeHtml(profile.home_postcode)} · Travel radius: ${profile.travel_radius_miles != null ? profile.travel_radius_miles : 50} mi</div>` : '<div style="font-size:10px;color:var(--warning);margin-top:2px;">Add home postcode for mileage tracking</div>'}
           ${profile.available_to_dep ? `<span style="display:inline-block;background:var(--success-dim);color:var(--success);padding:4px 10px;border-radius:12px;font-size:10px;font-weight:600;margin-top:6px;">Available to dep</span>` : ''}
         </div>
       </div>
@@ -7903,7 +7903,15 @@ function editProfile() {
       <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Home Postcode</label>
         <input id="editHomePostcode" type="text" value="${escapeHtml(profile.home_postcode || '')}" placeholder="e.g. CF10 1AA" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;" />
-        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Used to calculate mileage to gig venues</div>
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Used to calculate mileage to gig venues and filter dep offers by distance</div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span>Travel Radius</span>
+          <span id="editTravelRadiusValue" style="color:var(--accent);font-weight:700;">${profile.travel_radius_miles != null ? profile.travel_radius_miles : 50} mi</span>
+        </label>
+        <input id="editTravelRadius" type="range" min="1" max="500" step="1" value="${profile.travel_radius_miles != null ? profile.travel_radius_miles : 50}" oninput="document.getElementById('editTravelRadiusValue').textContent = this.value + ' mi'" style="width:100%;accent-color:var(--accent);" />
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">How far you'll travel for a gig. Broadcast dep offers beyond this distance are silently filtered out. Direct pick-dep offers still reach you but are flagged as outside your radius.</div>
       </div>
       <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Review Links</div>
       <div style="margin-bottom:14px;">
@@ -7960,6 +7968,8 @@ async function saveProfile() {
   const phone = document.getElementById('editPhone')?.value?.trim();
   const instrumentsRaw = document.getElementById('editInstruments')?.value?.trim();
   const homePostcode = document.getElementById('editHomePostcode')?.value?.trim().toUpperCase();
+  const travelRadiusRaw = document.getElementById('editTravelRadius')?.value;
+  const travelRadius = travelRadiusRaw != null && travelRadiusRaw !== '' ? parseInt(travelRadiusRaw, 10) : null;
   const googleReviewUrl = document.getElementById('editGoogleReview')?.value?.trim();
   const facebookReviewUrl = document.getElementById('editFacebookReview')?.value?.trim();
   const bankDetails = document.getElementById('editBankDetails')?.value?.trim();
@@ -7979,6 +7989,7 @@ async function saveProfile() {
         phone: phone || null,
         instruments: instruments || null,
         home_postcode: homePostcode || null,
+        travel_radius_miles: travelRadius,
         google_review_url: googleReviewUrl || null,
         facebook_review_url: facebookReviewUrl || null,
         bank_details: bankDetails || null,
@@ -11436,15 +11447,36 @@ async function submitDepOffer() {
       closePanel('panel-dep');
       const sent = data.sent || 0;
       const unresolved = data.unresolved || 0;
-      if (sent > 0 && unresolved > 0) {
-        showToast(`Sent to ${sent}, ${unresolved} without a TrackMyGigs account`);
+      const filteredOOR = data.filtered_out_of_range || 0;
+      const oorList = Array.isArray(data.out_of_range_contacts) ? data.out_of_range_contacts : [];
+      const overridden = oorList.filter(c => c.overridden);
+
+      // Build the result message. Priority: tell the user what actually
+      // happened, including any distance-filter outcomes.
+      let msg;
+      if (mode === 'all' && filteredOOR > 0) {
+        // Broadcast: show X of Y sent, Z filtered by distance.
+        const total = sent + filteredOOR;
+        msg = `Sent to ${sent} of ${total} (${filteredOOR} filtered by distance)`;
+      } else if (mode === 'pick' && overridden.length > 0) {
+        // Pick: delivered anyway, but warn that some are outside their radius.
+        const first = overridden[0];
+        const name = first.name || 'that contact';
+        if (overridden.length === 1) {
+          msg = `Sent. ${name} is ${first.distance_miles} mi outside their ${first.radius_miles} mi radius`;
+        } else {
+          msg = `Sent to ${sent}. ${overridden.length} contacts are outside their travel radius`;
+        }
+      } else if (sent > 0 && unresolved > 0) {
+        msg = `Sent to ${sent}, ${unresolved} without a TrackMyGigs account`;
       } else if (sent > 0) {
-        showToast(`Dep offer sent to ${sent} ${sent === 1 ? 'person' : 'people'}`);
+        msg = `Dep offer sent to ${sent} ${sent === 1 ? 'person' : 'people'}`;
       } else if (unresolved > 0) {
-        showToast(`${unresolved} contacts are not on TrackMyGigs yet`);
+        msg = `${unresolved} contacts are not on TrackMyGigs yet`;
       } else {
-        showToast('Dep offer sent!');
+        msg = 'Dep offer sent!';
       }
+      showToast(msg);
     } else {
       showToast(data.error || 'Failed to send dep offer');
     }
