@@ -8344,7 +8344,49 @@ async function openNetworkPanel() {
   const body = document.getElementById('networkBody');
   if (!body) return;
 
-  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading contacts...</div>';
+  // Keep previously-selected tab across panel re-opens within the same
+  // session. Default to Find on first open.
+  if (!window._netTab) window._netTab = 'find';
+
+  body.innerHTML = `
+    <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+      <button onclick="closePanel('panel-network')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">&#8249;</button>
+      <div style="font-size:16px;font-weight:700;color:var(--text);">My Network</div>
+      <button onclick="openPanel('panel-add-contact')" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
+    </div>
+    <div class="net-tabs">
+      <button class="net-tab ${window._netTab === 'find' ? 'ac' : ''}" onclick="switchNetTab('find')">Find musicians</button>
+      <button class="net-tab ${window._netTab === 'contacts' ? 'ac' : ''}" onclick="switchNetTab('contacts')">My contacts</button>
+    </div>
+    <div id="netTabBody"></div>`;
+
+  if (window._netTab === 'find') {
+    renderFindTab();
+  } else {
+    renderContactsTab();
+  }
+}
+
+function switchNetTab(tab) {
+  window._netTab = tab;
+  // Re-render only the tab-body + header tabs, not the whole panel.
+  document.querySelectorAll('.net-tab').forEach((btn, i) => {
+    const isActive = (i === 0 && tab === 'find') || (i === 1 && tab === 'contacts');
+    btn.classList.toggle('ac', isActive);
+  });
+  if (tab === 'find') {
+    renderFindTab();
+  } else {
+    renderContactsTab();
+  }
+}
+window.switchNetTab = switchNetTab;
+
+// ── My contacts tab (legacy behaviour moved out of openNetworkPanel) ──
+async function renderContactsTab() {
+  const tabBody = document.getElementById('netTabBody');
+  if (!tabBody) return;
+  tabBody.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading contacts...</div>';
 
   try {
     const res = await fetch('/api/contacts');
@@ -8353,12 +8395,7 @@ async function openNetworkPanel() {
     window._cachedContacts = contacts;
     window._contactFilterType = 'all';
 
-    let html = `
-      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('panel-network')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">&#8249;</button>
-        <div style="font-size:16px;font-weight:700;color:var(--text);">My Network</div>
-        <button onclick="openPanel('panel-add-contact')" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
-      </div>
+    tabBody.innerHTML = `
       <div style="padding:0 16px 8px;">
         <input type="text" class="fi" placeholder="Search contacts..." id="contactSearch" oninput="filterContacts()" />
       </div>
@@ -8368,14 +8405,485 @@ async function openNetworkPanel() {
         <button class="filter-badge" onclick="filterContactsByType('instrument')">By instrument</button>
       </div>
       <div id="contactsList" style="padding:0 16px;"></div>`;
-
-    body.innerHTML = html;
     renderContactsList();
   } catch (err) {
     console.error('Network panel error:', err);
-    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load contacts</div>';
+    tabBody.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load contacts</div>';
   }
 }
+
+// ── Find musicians tab (Phase IX-C) ───────────────────────────────────
+
+// Controlled seed list for instrument filter chips. Matches common
+// TrackMyGigs instruments. Not exhaustive — freeform instruments on a
+// user's profile are still searchable via the server (&& overlap).
+const DISCOVER_INSTRUMENT_SEEDS = [
+  'Vocals', 'Guitar', 'Bass', 'Keys', 'Piano', 'Drums',
+  'Saxophone', 'Trumpet', 'Trombone', 'Violin', 'Cello',
+  'DJ', 'Percussion', 'Flute', 'Clarinet'
+];
+
+function getDiscoverStickyInstruments() {
+  try {
+    const raw = localStorage.getItem('tmg_discover_instruments');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function setDiscoverStickyInstruments(list) {
+  try {
+    localStorage.setItem('tmg_discover_instruments', JSON.stringify(list || []));
+  } catch (_) {}
+}
+
+function renderFindTab() {
+  const tabBody = document.getElementById('netTabBody');
+  if (!tabBody) return;
+
+  // Lazy-init per-panel state (survives tab toggles within a session).
+  if (!window._discoverState) {
+    window._discoverState = {
+      mode: 'name',        // 'name' | 'email' | 'phone'
+      query: '',
+      instruments: getDiscoverStickyInstruments(),
+      lastSubmit: ''
+    };
+  }
+  const st = window._discoverState;
+
+  const placeholder = st.mode === 'name'
+    ? 'Search by name...'
+    : st.mode === 'email'
+      ? 'Exact email match'
+      : 'Phone number (UK or E.164)';
+
+  tabBody.innerHTML = `
+    <div style="padding:0 16px 10px;">
+      <input type="text" class="fi" placeholder="${placeholder}" id="discoverQuery"
+             value="${escapeHtml(st.query)}"
+             oninput="onDiscoverQueryInput(event)"
+             onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitDiscoverSearch(); }"
+             autocomplete="off" />
+    </div>
+    <div class="disc-modes">
+      <button class="disc-mode ${st.mode === 'name' ? 'ac' : ''}"  onclick="setDiscoverMode('name')">Name</button>
+      <button class="disc-mode ${st.mode === 'email' ? 'ac' : ''}" onclick="setDiscoverMode('email')">Email</button>
+      <button class="disc-mode ${st.mode === 'phone' ? 'ac' : ''}" onclick="setDiscoverMode('phone')">Phone</button>
+    </div>
+    <div class="disc-chips" id="discoverChips">${renderDiscoverChips()}</div>
+    <div id="discoverResults"></div>`;
+
+  // Empty on first render = show empty-state rails; otherwise re-run last search
+  // so tab round-trips remember where you were.
+  if (st.query.trim()) {
+    submitDiscoverSearch();
+  } else {
+    renderDiscoverEmptyState();
+  }
+}
+
+function renderDiscoverChips() {
+  const st = window._discoverState;
+  const active = new Set(st.instruments || []);
+  const anyActive = active.size === 0;
+  let html = `<button class="filter-badge ${anyActive ? 'ac' : ''}" onclick="clearDiscoverChips()">Any</button>`;
+  for (const instr of DISCOVER_INSTRUMENT_SEEDS) {
+    const on = active.has(instr);
+    html += `<button class="filter-badge ${on ? 'ac' : ''}" onclick="toggleDiscoverChip('${escapeAttr(instr)}')">${escapeHtml(instr)}</button>`;
+  }
+  return html;
+}
+
+function setDiscoverMode(mode) {
+  const st = window._discoverState;
+  st.mode = mode;
+  // Re-render the tab so placeholder updates.
+  renderFindTab();
+}
+window.setDiscoverMode = setDiscoverMode;
+
+function onDiscoverQueryInput(ev) {
+  const st = window._discoverState;
+  st.query = (ev && ev.target && ev.target.value) || '';
+  // Debounce name mode; email/phone wait for Enter/submit.
+  if (st.mode === 'name') {
+    clearTimeout(window._discoverDebounce);
+    window._discoverDebounce = setTimeout(() => {
+      if ((st.query || '').trim().length >= 2) submitDiscoverSearch();
+      else renderDiscoverEmptyState();
+    }, 350);
+  }
+}
+window.onDiscoverQueryInput = onDiscoverQueryInput;
+
+function toggleDiscoverChip(instr) {
+  const st = window._discoverState;
+  const set = new Set(st.instruments || []);
+  if (set.has(instr)) set.delete(instr); else set.add(instr);
+  st.instruments = Array.from(set);
+  setDiscoverStickyInstruments(st.instruments);
+  // Re-render chips in place.
+  const chips = document.getElementById('discoverChips');
+  if (chips) chips.innerHTML = renderDiscoverChips();
+  // Re-run whatever view is active so filter takes effect.
+  if ((st.query || '').trim()) submitDiscoverSearch();
+  else renderDiscoverEmptyState();
+}
+window.toggleDiscoverChip = toggleDiscoverChip;
+
+function clearDiscoverChips() {
+  const st = window._discoverState;
+  st.instruments = [];
+  setDiscoverStickyInstruments([]);
+  const chips = document.getElementById('discoverChips');
+  if (chips) chips.innerHTML = renderDiscoverChips();
+  if ((st.query || '').trim()) submitDiscoverSearch();
+  else renderDiscoverEmptyState();
+}
+window.clearDiscoverChips = clearDiscoverChips;
+
+async function submitDiscoverSearch() {
+  const st = window._discoverState;
+  const q = (st.query || '').trim();
+  const results = document.getElementById('discoverResults');
+  if (!results) return;
+
+  if (!q) {
+    renderDiscoverEmptyState();
+    return;
+  }
+  if (q.length < 2 && st.mode === 'name') {
+    results.innerHTML = '<div class="disc-empty">Keep typing — at least 2 characters.</div>';
+    return;
+  }
+
+  results.innerHTML = '<div class="disc-loading">Searching...</div>';
+  st.lastSubmit = q;
+
+  const params = new URLSearchParams();
+  params.set('mode', st.mode);
+  params.set('q', q);
+  if (st.instruments && st.instruments.length) {
+    params.set('instruments', st.instruments.join(','));
+  }
+
+  try {
+    const res = await fetch('/api/discover?' + params.toString());
+    if (res.status === 429) {
+      const retry = res.headers.get('Retry-After') || '';
+      results.innerHTML = `<div class="disc-empty">You've hit the hourly lookup limit. Try again ${retry ? 'in ' + retry + ' seconds' : 'shortly'}.</div>`;
+      return;
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      results.innerHTML = `<div class="disc-empty">${escapeHtml(body.error || 'Search failed')}</div>`;
+      return;
+    }
+    const data = await res.json();
+    // self-lookup on email mode
+    if (data && data.self_lookup) {
+      results.innerHTML = `<div class="disc-empty">That's your own email address.</div>`;
+      return;
+    }
+    const list = Array.isArray(data) ? data : (Array.isArray(data.results) ? data.results : []);
+    if (!list.length) {
+      const label = st.mode === 'name' ? 'No musicians match that name.' : 'No one on TrackMyGigs matches that exactly.';
+      results.innerHTML = `<div class="disc-empty">${label}</div>`;
+      return;
+    }
+    results.innerHTML = list.map(renderDiscoverCard).join('');
+  } catch (err) {
+    console.error('Discover search error:', err);
+    results.innerHTML = '<div class="disc-empty">Search failed. Check your connection and try again.</div>';
+  }
+}
+window.submitDiscoverSearch = submitDiscoverSearch;
+
+async function renderDiscoverEmptyState() {
+  const results = document.getElementById('discoverResults');
+  if (!results) return;
+  const st = window._discoverState;
+  results.innerHTML = '<div class="disc-loading">Loading suggestions...</div>';
+
+  const instrumentsQs = (st.instruments && st.instruments.length)
+    ? '&instruments=' + encodeURIComponent(st.instruments.join(','))
+    : '';
+
+  try {
+    const [nearbyRes, instrRes] = await Promise.all([
+      fetch('/api/discover?mode=nearby' + instrumentsQs),
+      fetch('/api/discover?mode=instrument_match' + instrumentsQs)
+    ]);
+
+    const nearby = nearbyRes.ok ? await nearbyRes.json() : { results: [] };
+    const instr  = instrRes.ok  ? await instrRes.json()  : { results: [] };
+
+    const nearbyList = Array.isArray(nearby) ? nearby : (Array.isArray(nearby.results) ? nearby.results : []);
+    const instrList  = Array.isArray(instr)  ? instr  : (Array.isArray(instr.results)  ? instr.results  : []);
+
+    const nearbyHint = nearby && nearby.hint ? nearby.hint : '';
+    const instrHint  = instr  && instr.hint  ? instr.hint  : '';
+
+    let html = '';
+
+    html += `<div class="disc-rail-label">Musicians near you</div>`;
+    if (nearbyList.length) {
+      html += nearbyList.map(renderDiscoverCard).join('');
+    } else {
+      html += `<div class="disc-empty">${escapeHtml(nearbyHint || 'Nobody nearby yet. Try widening your travel radius in Profile.')}</div>`;
+    }
+
+    html += `<div class="disc-rail-label">Plays your instrument</div>`;
+    if (instrList.length) {
+      html += instrList.map(renderDiscoverCard).join('');
+    } else {
+      html += `<div class="disc-empty">${escapeHtml(instrHint || 'Nobody matching your instruments yet.')}</div>`;
+    }
+
+    results.innerHTML = html;
+  } catch (err) {
+    console.error('Discover empty-state error:', err);
+    results.innerHTML = '<div class="disc-empty">Couldn\'t load suggestions. Pull to refresh.</div>';
+  }
+}
+
+function renderDiscoverCard(u) {
+  if (!u || !u.id) return '';
+  window._discoverCardCache = window._discoverCardCache || {};
+  window._discoverCardCache[u.id] = u;
+
+  const name = u.display_name || u.name || 'Musician';
+  const initial = (name || 'U')[0].toUpperCase();
+  const photo = u.photo_url
+    ? `<img src="${escapeAttr(u.photo_url)}" alt="" onerror="this.style.display='none'; this.parentElement.textContent='${escapeAttr(initial)}'" />`
+    : escapeHtml(initial);
+
+  const instruments = Array.isArray(u.instruments) ? u.instruments.slice(0, 3) : [];
+  const genres = Array.isArray(u.genres) ? u.genres.slice(0, 5) : [];
+  const metaParts = [];
+  if (instruments.length) metaParts.push(instruments.join(', '));
+  if (genres.length) metaParts.push(genres.join(' / '));
+  const meta = metaParts.join(' · ');
+
+  const outward = u.outward_postcode || '';
+  const radius = (u.travel_radius_miles != null) ? `${u.travel_radius_miles} mi` : '';
+  const dist = (u.distance_miles != null) ? `${Math.round(u.distance_miles)} mi away` : '';
+  const geoBits = [outward, radius && `travels ${radius}`, dist].filter(Boolean).join(' · ');
+
+  const premium = (u.premium || u.is_premium) ? `<span class="disc-premium-dot" title="Premium"></span>` : '';
+  const badges = renderTrustBadges(u);
+
+  const bio = (u.bio || '').trim();
+  const bioBlock = bio
+    ? `<div class="disc-bio-preview" onclick="toggleDiscoverBio('${escapeAttr(u.id)}', event)" data-bio-id="${escapeAttr(u.id)}">${escapeHtml(bio.length > 100 ? bio.slice(0, 97) + '…' : bio)}</div>
+       <div class="disc-bio-full" id="discBioFull-${escapeAttr(u.id)}" style="display:none;">${escapeHtml(bio)}</div>`
+    : '';
+
+  return `
+    <div class="disc-card" data-user-id="${escapeAttr(u.id)}">
+      <div class="disc-avatar">${photo}</div>
+      <div class="disc-main">
+        <div class="disc-name-row">
+          <div class="disc-name">${escapeHtml(name)}</div>
+          ${premium}
+        </div>
+        ${meta ? `<div class="disc-meta">${escapeHtml(meta)}</div>` : ''}
+        ${geoBits ? `<div class="disc-geo">${escapeHtml(geoBits)}</div>` : ''}
+        ${badges}
+        ${bioBlock}
+      </div>
+      <button class="disc-kebab" aria-label="More actions" onclick="openDiscoverKebab('${escapeAttr(u.id)}')">⋯</button>
+    </div>`;
+}
+
+function renderTrustBadges(u) {
+  if (!u) return '';
+  // Phase IX-B returns badges nested under `badges`; tolerate flat shape too.
+  const b = (u.badges && typeof u.badges === 'object') ? u.badges : u;
+  const items = [];
+
+  if (b.email_verified) {
+    items.push(`<span class="disc-badge verified" title="Email verified">✓ Verified</span>`);
+  }
+  if (b.joined_year) {
+    items.push(`<span class="disc-badge">Joined ${escapeHtml(String(b.joined_year))}</span>`);
+  }
+  if (b.gigs_bucket) {
+    const map = { '0': 'No gigs logged', '1-9': '1–9 gigs', '10-49': '10–49 gigs', '50-199': '50–199 gigs', '200+': '200+ gigs' };
+    const label = map[b.gigs_bucket] || b.gigs_bucket;
+    items.push(`<span class="disc-badge">${escapeHtml(label)}</span>`);
+  }
+  // Server already nulls out acceptance_pct when < 5 samples (decision 8).
+  if (b.acceptance_pct != null) {
+    items.push(`<span class="disc-badge">${Number(b.acceptance_pct)}% accept</span>`);
+  }
+  if (!items.length) return '';
+  return `<div class="disc-badges">${items.slice(0, 4).join('')}</div>`;
+}
+
+function toggleDiscoverBio(userId, ev) {
+  if (ev) ev.stopPropagation();
+  const full = document.getElementById('discBioFull-' + userId);
+  if (!full) return;
+  full.style.display = full.style.display === 'none' ? 'block' : 'none';
+}
+window.toggleDiscoverBio = toggleDiscoverBio;
+
+// ── Discover kebab bottom-sheet ────────────────────────────────────────
+
+function openDiscoverKebab(userId) {
+  const u = (window._discoverCardCache || {})[userId];
+  if (!u) {
+    showToast('Could not load actions');
+    return;
+  }
+  closeDiscoverSheet();
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.id = 'discoverSheet';
+  overlay.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title">${escapeHtml(u.display_name || u.name || 'Musician')}</div>
+      <button class="sheet-btn" onclick="discoverAction_addContact('${escapeAttr(userId)}')">Add to contacts</button>
+      <button class="sheet-btn" onclick="discoverAction_sendDep('${escapeAttr(userId)}')">Send dep offer</button>
+      <button class="sheet-btn danger" onclick="discoverAction_report('${escapeAttr(userId)}')">Report</button>
+      <button class="sheet-btn danger" onclick="discoverAction_block('${escapeAttr(userId)}')">Block</button>
+      <button class="sheet-btn" style="margin-top:10px;text-align:center;" onclick="closeDiscoverSheet()">Cancel</button>
+    </div>`;
+  overlay.onclick = (e) => { if (e.target === overlay) closeDiscoverSheet(); };
+  document.body.appendChild(overlay);
+}
+window.openDiscoverKebab = openDiscoverKebab;
+
+function closeDiscoverSheet() {
+  const el = document.getElementById('discoverSheet');
+  if (el) el.remove();
+}
+window.closeDiscoverSheet = closeDiscoverSheet;
+
+async function discoverAction_addContact(userId) {
+  const u = (window._discoverCardCache || {})[userId];
+  closeDiscoverSheet();
+  if (!u) return;
+
+  try {
+    const payload = {
+      name: u.display_name || u.name || 'Musician',
+      instruments: Array.isArray(u.instruments) ? u.instruments : [],
+      location: u.outward_postcode || '',
+      notes: `Added from Find Musicians on ${new Date().toISOString().slice(0, 10)}`
+    };
+    const res = await fetch('/api/contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      showToast('Added to contacts');
+    } else {
+      const body = await res.json().catch(() => ({}));
+      showToast(body.error || 'Could not add contact');
+    }
+  } catch (err) {
+    console.error('Add discovered contact error:', err);
+    showToast('Could not add contact');
+  }
+}
+window.discoverAction_addContact = discoverAction_addContact;
+
+function discoverAction_sendDep(userId) {
+  closeDiscoverSheet();
+  // Stash the discovered user's id for the dep picker to pre-select.
+  window._depPrefillDiscoveredUserId = userId;
+  closePanel('panel-network');
+  if (typeof openPanel === 'function') openPanel('panel-send-dep');
+}
+window.discoverAction_sendDep = discoverAction_sendDep;
+
+async function discoverAction_block(userId) {
+  closeDiscoverSheet();
+  const u = (window._discoverCardCache || {})[userId];
+  const name = u ? (u.display_name || u.name || 'this musician') : 'this musician';
+  const ok = await showConfirm(`Block ${name}? You won't see each other in search and dep-offers between you will be blocked.`, {
+    title: 'Block musician',
+    confirmLabel: 'Block',
+    danger: true
+  });
+  if (!ok) return;
+
+  try {
+    const res = await fetch('/api/user-blocks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ blocked_id: userId })
+    });
+    if (res.ok) {
+      showToast('Blocked');
+      // Remove card from current view.
+      const card = document.querySelector(`.disc-card[data-user-id="${userId}"]`);
+      if (card) card.remove();
+    } else {
+      const body = await res.json().catch(() => ({}));
+      showToast(body.error || 'Could not block');
+    }
+  } catch (err) {
+    console.error('Block error:', err);
+    showToast('Could not block');
+  }
+}
+window.discoverAction_block = discoverAction_block;
+
+function discoverAction_report(userId) {
+  closeDiscoverSheet();
+  const u = (window._discoverCardCache || {})[userId];
+  const name = u ? (u.display_name || u.name || 'this musician') : 'this musician';
+
+  closeDiscoverSheet();
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.id = 'discoverSheet';
+  overlay.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title">Report ${escapeHtml(name)}</div>
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:10px;line-height:1.4;">Reports are reviewed by the TrackMyGigs team. Abuse of the report tool may result in your own account being restricted.</div>
+      <button class="sheet-btn" onclick="submitDiscoverReport('${escapeAttr(userId)}','spam')">Spam or unwanted contact</button>
+      <button class="sheet-btn" onclick="submitDiscoverReport('${escapeAttr(userId)}','impersonation')">Impersonation</button>
+      <button class="sheet-btn" onclick="submitDiscoverReport('${escapeAttr(userId)}','harassment')">Harassment or abuse</button>
+      <button class="sheet-btn" onclick="submitDiscoverReport('${escapeAttr(userId)}','fake')">Fake profile</button>
+      <button class="sheet-btn" onclick="submitDiscoverReport('${escapeAttr(userId)}','other')">Something else</button>
+      <button class="sheet-btn" style="margin-top:10px;text-align:center;" onclick="closeDiscoverSheet()">Cancel</button>
+    </div>`;
+  overlay.onclick = (e) => { if (e.target === overlay) closeDiscoverSheet(); };
+  document.body.appendChild(overlay);
+}
+window.discoverAction_report = discoverAction_report;
+
+async function submitDiscoverReport(userId, category) {
+  closeDiscoverSheet();
+  try {
+    const res = await fetch('/api/user-reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_id: userId, reason_category: category, reason_text: '' })
+    });
+    if (res.ok) {
+      showToast('Report submitted. Thanks.');
+    } else {
+      const body = await res.json().catch(() => ({}));
+      showToast(body.error || 'Could not submit report');
+    }
+  } catch (err) {
+    console.error('Report error:', err);
+    showToast('Could not submit report');
+  }
+}
+window.submitDiscoverReport = submitDiscoverReport;
 
 async function openContactDetail(contactId) {
   const body = document.getElementById('contactDetailBody');
