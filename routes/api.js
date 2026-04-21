@@ -975,6 +975,10 @@ router.post('/blocked-dates', async (req, res) => {
        RETURNING id`,
       [req.user.id, dateValue, reason || null, pattern]
     );
+    // Diagnostic: on ?debug=1, run the push synchronously and surface the
+    // result so we can see WHY Google sync isn't working in production.
+    const debug = req.query.debug === '1';
+    let debugInfo = null;
     // Only mirror if a new row actually landed — ON CONFLICT DO NOTHING means
     // duplicates are silent, and re-pushing an unchanged block to Google would
     // just create a second identical event.
@@ -984,9 +988,27 @@ router.post('/blocked-dates', async (req, res) => {
         [inserted.rows[0].id, req.user.id]
       );
       if (rowRes.rows[0]) {
-        syncBlockedDateSafely('push', req.user.id, rowRes.rows[0]);
+        if (debug) {
+          try {
+            const fn = calendarRouter.pushBlockedDateToGoogle;
+            debugInfo = {
+              fnType: typeof fn,
+              hasRow: true,
+              rowKeys: Object.keys(rowRes.rows[0]),
+            };
+            if (typeof fn === 'function') {
+              const result = await fn(req.user.id, rowRes.rows[0]);
+              debugInfo.pushResult = result;
+            }
+          } catch (e) {
+            debugInfo = { error: String(e && (e.message || e)), stack: e && e.stack };
+          }
+        } else {
+          syncBlockedDateSafely('push', req.user.id, rowRes.rows[0]);
+        }
       }
     }
+    if (debug) return res.json({ success: true, debug: debugInfo, inserted: inserted.rowCount });
     res.json({ success: true });
   } catch (error) {
     console.error('Block date error:', error);
