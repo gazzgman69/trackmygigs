@@ -6142,8 +6142,9 @@ async function openMyAvailabilityPanel() {
             Tap a free day to block it. Tap a blocked day to unblock. Gig days are locked.
           </div>
           ${slugUrl ? `
-          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:11px;color:var(--text-3);">
-            Bookers see this at <span style="color:var(--accent);font-weight:600;">${slugUrl.replace(/^https?:\/\//,'')}</span>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <span style="font-size:11px;color:var(--text-3);">Share your availability with bookers</span>
+            <button onclick="shareAvailability()" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;">Share link</button>
           </div>` : ''}
         </div>
 
