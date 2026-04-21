@@ -171,32 +171,39 @@ async function handleCleanupSecTest(req, res) {
       return res.json({ ok: true, counts, note: 'no sec-test users present' });
     }
 
-    // Tables that reference a user column directly. We don't rely on ON
-    // DELETE CASCADE because the schema was grown ad-hoc and some FKs were
-    // added without CASCADE. Order matters only where there are self-FKs;
-    // none of these tables have them.
+    // Tables that reference a user column directly. Every query takes a
+    // single $1 = userIds::uuid[] param so the bind shape matches. Most
+    // users-FK tables CASCADE on user delete, but we do explicit deletes
+    // first so any weird NOT NULL constraint on related rows can't block
+    // the transaction. nudge_feedback is excluded entirely because its
+    // user_id column is INTEGER (legacy schema mismatch with users.id UUID)
+    // and sec-test rows there are disposable anyway.
     const deletes = [
-      ['messages',            `DELETE FROM messages WHERE sender_id = ANY($1::uuid[]) OR thread_id IN (SELECT id FROM threads WHERE owner_id = ANY($1::uuid[]) OR ARRAY(SELECT unnest(participant_ids)) && $1::uuid[])`],
-      ['thread_reads',        `DELETE FROM thread_reads WHERE user_id = ANY($1::uuid[])`],
-      ['threads',             `DELETE FROM threads WHERE owner_id = ANY($1::uuid[]) OR ARRAY(SELECT unnest(participant_ids)) && $1::uuid[]`],
+      // Non-gig threads first: no FK to users, only a UUID[] participant
+      // array, so CASCADE can't reach them. Cascades messages on its way.
+      ['threads_non_gig',     `DELETE FROM threads WHERE gig_id IS NULL AND participant_ids && $1::uuid[]`],
+      // Orphan messages (shouldn't exist after the thread sweep, but belt
+      // and braces: any message whose sender is about to vanish).
+      ['messages_orphan',     `DELETE FROM messages WHERE sender_id = ANY($1::uuid[])`],
       ['offers',              `DELETE FROM offers WHERE sender_id = ANY($1::uuid[]) OR recipient_id = ANY($1::uuid[])`],
-      ['contacts',            `DELETE FROM contacts WHERE owner_id = ANY($1::uuid[]) OR contact_user_id = ANY($1::uuid[])`],
+      ['contacts',            `DELETE FROM contacts WHERE owner_id = ANY($1::uuid[])`],
       ['invoices',            `DELETE FROM invoices WHERE user_id = ANY($1::uuid[])`],
       ['receipts',            `DELETE FROM receipts WHERE user_id = ANY($1::uuid[])`],
       ['blocked_dates',       `DELETE FROM blocked_dates WHERE user_id = ANY($1::uuid[])`],
       ['songs',               `DELETE FROM songs WHERE user_id = ANY($1::uuid[])`],
       ['setlists',            `DELETE FROM setlists WHERE user_id = ANY($1::uuid[])`],
       ['user_documents',      `DELETE FROM user_documents WHERE user_id = ANY($1::uuid[])`],
-      ['nudge_feedback',      `DELETE FROM nudge_feedback WHERE user_id::text = ANY($2::text[])`],
+      // Gigs cascade: offers (gig_id), threads (gig_id), and through those
+      // messages. Deletes any gig-linked chat rows left after the earlier
+      // sweeps.
       ['gigs',                `DELETE FROM gigs WHERE user_id = ANY($1::uuid[])`],
       ['sessions',            `DELETE FROM sessions WHERE user_id = ANY($1::uuid[])`],
       ['users',               `DELETE FROM users WHERE id = ANY($1::uuid[])`],
     ];
 
-    const userIdsAsText = userIds.map((u) => String(u));
     for (const [name, sql] of deletes) {
       try {
-        const r = await db.query(sql, [userIds, userIdsAsText]);
+        const r = await db.query(sql, [userIds]);
         counts[name] = r.rowCount;
       } catch (tableErr) {
         // Table or column may not exist on every deploy; record the miss
