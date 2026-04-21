@@ -1,3 +1,10 @@
+// Replit's helium binding sets PGSSLMODE=require in env. pg-connection-string
+// parses that on pg module init and emits a deprecation warning even if we
+// pass `ssl: false` to Pool. Clear it before `pg` loads for the helium path.
+if (!process.env.DATABASE_URL && process.env.PGSSLMODE) {
+  delete process.env.PGSSLMODE;
+}
+
 const { Pool } = require('pg');
 
 // Prefer DATABASE_URL if set (legacy external Neon via Secrets).
