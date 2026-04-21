@@ -975,80 +975,17 @@ router.post('/blocked-dates', async (req, res) => {
        RETURNING id`,
       [req.user.id, dateValue, reason || null, pattern]
     );
-    // Diagnostic: on ?debug=1, run the push synchronously and surface the
-    // result so we can see WHY Google sync isn't working in production.
-    const debug = req.query.debug === '1';
-    let debugInfo = null;
-    // Only mirror if a new row actually landed — ON CONFLICT DO NOTHING means
-    // duplicates are silent, and re-pushing an unchanged block to Google would
-    // just create a second identical event.
+    // Mirror to Google only if a new row actually landed — ON CONFLICT DO NOTHING
+    // is silent, and re-pushing an unchanged block would create duplicate events.
     if (inserted.rowCount > 0 && inserted.rows[0] && inserted.rows[0].id) {
       const rowRes = await db.query(
         'SELECT * FROM blocked_dates WHERE id = $1 AND user_id = $2',
         [inserted.rows[0].id, req.user.id]
       );
       if (rowRes.rows[0]) {
-        if (debug) {
-          // Inline the push so every failure mode surfaces to the response.
-          try {
-            const { google } = require('googleapis');
-            const userRes = await db.query(
-              `SELECT google_access_token, google_refresh_token, google_token_expires_at,
-                      google_selected_calendar
-                 FROM users WHERE id = $1`,
-              [req.user.id]
-            );
-            const u = userRes.rows[0];
-            debugInfo = { hasUser: !!u, hasAccessToken: !!(u && u.google_access_token) };
-            if (u && u.google_access_token) {
-              const client = new google.auth.OAuth2(
-                process.env.GOOGLE_CLIENT_ID,
-                process.env.GOOGLE_CLIENT_SECRET,
-                (process.env.APP_URL || 'https://trackmygigs.app') + '/auth/google/callback'
-              );
-              client.setCredentials({
-                access_token: u.google_access_token,
-                refresh_token: u.google_refresh_token,
-                expiry_date: u.google_token_expires_at ? new Date(u.google_token_expires_at).getTime() : null,
-              });
-              const calendarId = u.google_selected_calendar || 'primary';
-              const calendar = google.calendar({ version: 'v3', auth: client });
-              const row = rowRes.rows[0];
-              const startDate = String(row.date).slice(0, 10);
-              const resource = {
-                summary: 'Unavailable',
-                description: 'Blocked in TrackMyGigs.',
-                transparency: 'opaque',
-                start: { date: startDate },
-                end: { date: (() => {
-                  const n = new Date(startDate + 'T00:00:00');
-                  n.setDate(n.getDate() + 1);
-                  return n.toISOString().slice(0, 10);
-                })() },
-                extendedProperties: { private: { tmg_source: 'blocked_date' } },
-              };
-              debugInfo.resource = resource;
-              debugInfo.calendarId = calendarId;
-              try {
-                const resp = await calendar.events.insert({ calendarId, requestBody: resource });
-                debugInfo.insertOk = true;
-                debugInfo.eventId = resp.data.id;
-              } catch (insertErr) {
-                debugInfo.insertError = String(insertErr && (insertErr.message || insertErr));
-                debugInfo.insertCode = insertErr && insertErr.code;
-                debugInfo.insertErrors = insertErr && insertErr.errors;
-                debugInfo.insertResponseData = insertErr && insertErr.response && insertErr.response.data;
-              }
-            }
-          } catch (e) {
-            debugInfo = { error: String(e && (e.message || e)), stack: e && e.stack };
-          }
-        } else {
-          syncBlockedDateSafely('push', req.user.id, rowRes.rows[0]);
-        }
+        syncBlockedDateSafely('push', req.user.id, rowRes.rows[0]);
       }
     }
-    if (debug) return res.json({ success: true, debug: debugInfo, inserted: inserted.rowCount });
     res.json({ success: true });
   } catch (error) {
     console.error('Block date error:', error);
