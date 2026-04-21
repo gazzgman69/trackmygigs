@@ -4,6 +4,7 @@ const authMiddleware = require('../middleware/auth');
 const calendarRouter = require('./calendar');
 const { lookupPostcode, normalise: normalisePostcode } = require('../lib/postcodes');
 const { haversineMiles } = require('../lib/geo');
+const { normaliseE164 } = require('../lib/phone');
 
 const router = express.Router();
 
@@ -715,6 +716,18 @@ router.patch('/user/profile', async (req, res) => {
       if (isFinite(r)) radius = Math.max(1, Math.min(500, r));
     }
 
+    // Phase IX-A: whenever the user edits their phone number, derive the
+    // E.164 canonical and store it in phone_normalized so the Phase IX-B
+    // directory phone-mode lookup (exact match) finds the row regardless of
+    // how it was typed. An unparseable phone clears phone_normalized to NULL
+    // rather than leaving a stale canonical pointing at an old number.
+    let phoneNormalized = null;
+    let phoneNormalizedProvided = false;
+    if (phone !== undefined) {
+      phoneNormalizedProvided = true;
+      phoneNormalized = phone ? normaliseE164(phone) : null;
+    }
+
     const result = await db.query(
       `UPDATE users SET name = COALESCE($1, name),
        display_name = COALESCE($14, display_name),
@@ -735,14 +748,16 @@ router.patch('/user/profile', async (req, res) => {
        rate_notes = COALESCE($23, rate_notes),
        home_lat = COALESCE($24, home_lat),
        home_lng = COALESCE($25, home_lng),
-       travel_radius_miles = COALESCE($26, travel_radius_miles)
+       travel_radius_miles = COALESCE($26, travel_radius_miles),
+       phone_normalized = CASE WHEN $27::boolean THEN $28 ELSE phone_normalized END
        WHERE id = $8 RETURNING *`,
       [name, phone, instrumentsArr, normalisedPostcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
        bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name,
        epk_bio, epk_photo_url, epk_video_url, epk_audio_url,
        rate_standard || null, rate_premium || null, rate_dep || null,
        rate_deposit_pct != null && rate_deposit_pct !== '' ? parseInt(rate_deposit_pct, 10) : null,
-       rate_notes, homeLat, homeLng, radius]
+       rate_notes, homeLat, homeLng, radius,
+       phoneNormalizedProvided, phoneNormalized]
     );
 
     res.json(result.rows[0]);

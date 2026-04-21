@@ -460,6 +460,90 @@ async function runMigrations() {
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS venue_postcode VARCHAR(16)`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS venue_lat DOUBLE PRECISION`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS venue_lng DOUBLE PRECISION`);
+    // Phase IX-A: Find Musicians directory foundations.
+    //
+    // users.discoverable: default TRUE so every new account is findable in the
+    // directory unless they opt out in Profile Settings. Decision 1, locked.
+    // users.phone_normalized: E.164 canonical of users.phone so exact-match
+    // lookups work regardless of how the user typed their number. Backfilled
+    // further down. users.bio / photo_url / genres: profile richness for
+    // directory result cards (decisions 5 and 6). 280-char cap on bio is
+    // enforced in the API, not the column, so schema does not need to change
+    // later if we raise the limit.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS discoverable BOOLEAN DEFAULT TRUE`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_normalized TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS genres TEXT[]`);
+    // Partial indexes: directory queries are always scoped by discoverable =
+    // TRUE, so the index only needs to cover those rows. Phone lookup is an
+    // exact-match equality query on phone_normalized, so a simple btree is
+    // the right shape.
+    await db.query(`CREATE INDEX IF NOT EXISTS users_discoverable_idx ON users (discoverable) WHERE discoverable = TRUE`);
+    await db.query(`CREATE INDEX IF NOT EXISTS users_phone_normalized_idx ON users (phone_normalized) WHERE phone_normalized IS NOT NULL`);
+    // user_blocks: symmetric block relation. A block row from A to B hides B
+    // from A's directory results, hides A from B's results, and hard-fails
+    // any dep-offer between the two with a generic error (decision 10).
+    await db.query(`CREATE TABLE IF NOT EXISTS user_blocks (
+      blocker_id UUID NOT NULL,
+      blocked_id UUID NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      PRIMARY KEY (blocker_id, blocked_id)
+    )`);
+    await db.query(`CREATE INDEX IF NOT EXISTS user_blocks_blocked_idx ON user_blocks (blocked_id)`);
+    // user_reports: free-form abuse reports from the directory. reason_category
+    // is one of a small enum (spam, impersonation, harassment, fake, other);
+    // reason_text is the free-text explanation. resolved_at is NULL until an
+    // admin clears the report. No FK to users because we want reports to
+    // outlive soft-deletes of the reported account for audit purposes.
+    await db.query(`CREATE TABLE IF NOT EXISTS user_reports (
+      id SERIAL PRIMARY KEY,
+      reporter_id UUID NOT NULL,
+      target_id UUID NOT NULL,
+      reason_category VARCHAR(32) NOT NULL,
+      reason_text TEXT,
+      created_at TIMESTAMP DEFAULT NOW(),
+      resolved_at TIMESTAMP
+    )`);
+    await db.query(`CREATE INDEX IF NOT EXISTS user_reports_target_idx ON user_reports (target_id)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS user_reports_open_idx ON user_reports (created_at DESC) WHERE resolved_at IS NULL`);
+    // discovery_lookups: audit log plus the data source for rate limiting
+    // (decision 12: 30 name lookups/hr, 20 email+phone combined/hr). query_hash
+    // is a SHA-256 of the raw query term so the audit log does not store PII
+    // in the clear; the hash is still enough to identify duplicate lookups
+    // during abuse review.
+    await db.query(`CREATE TABLE IF NOT EXISTS discovery_lookups (
+      id SERIAL PRIMARY KEY,
+      actor_id UUID NOT NULL,
+      mode VARCHAR(16) NOT NULL,
+      query_hash VARCHAR(64),
+      created_at TIMESTAMP DEFAULT NOW()
+    )`);
+    await db.query(`CREATE INDEX IF NOT EXISTS discovery_lookups_actor_time_idx ON discovery_lookups (actor_id, created_at DESC)`);
+    // Phase IX-A backfill: populate phone_normalized for every existing row
+    // that has a phone but no normalised form yet. The WHERE clause makes the
+    // migration idempotent on subsequent restarts.
+    try {
+      const { normaliseE164 } = require('./lib/phone');
+      const backfill = await db.query(
+        `SELECT id, phone FROM users WHERE phone IS NOT NULL AND phone <> '' AND phone_normalized IS NULL`
+      );
+      let filled = 0, unparsed = 0;
+      for (const row of backfill.rows) {
+        const e164 = normaliseE164(row.phone);
+        if (e164) {
+          await db.query(`UPDATE users SET phone_normalized = $1 WHERE id = $2`, [e164, row.id]);
+          filled++;
+        } else {
+          unparsed++;
+        }
+      }
+      if (backfill.rows.length) {
+        console.log(`Phase IX-A phone backfill: ${filled} normalised, ${unparsed} unparseable (left as NULL)`);
+      }
+    } catch (backfillErr) {
+      console.error('Phase IX-A backfill error (non-fatal):', backfillErr.message);
+    }
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);
