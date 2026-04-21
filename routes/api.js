@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const calendarRouter = require('./calendar');
@@ -3295,6 +3296,423 @@ router.get('/print/finance', async (req, res) => {
   } catch (err) {
     console.error('Print finance error:', err);
     res.status(500).send('Failed to build print page');
+  }
+});
+
+// =============================================================================
+// Phase IX-B: GET /api/discover — Find Musicians directory.
+//
+// Modes:
+//   name             fuzzy match on users.name, geo-ranked by distance from
+//                    the searcher's home_lat/home_lng
+//   email            exact (case-insensitive) match on users.email
+//   phone            exact match on users.phone_normalized after E.164 parse
+//   nearby           empty-state rail: discoverable users within 30 mi of the
+//                    searcher's home
+//   instrument_match empty-state rail: discoverable users whose instruments
+//                    array overlaps the searcher's primary instruments
+//
+// Every mode applies:
+//   - u.discoverable = TRUE
+//   - u.id != actor.id
+//   - NOT EXISTS user_blocks (actor blocks target)
+//   - NOT EXISTS user_blocks (target blocks actor)  // decision 10: no leak
+//
+// Rate limits (decision 12):
+//   - 30 name lookups / hour
+//   - 20 email+phone lookups / hour (shared bucket)
+// Over limit => 429 with Retry-After in seconds until the oldest counted
+// lookup falls out of the window.
+//
+// Every successful call writes a discovery_lookups row with a SHA-256 hash of
+// the normalised query so rate limiting and forensic review never store the
+// raw email / phone / name.
+//
+// Response never includes email, phone, home_lat, home_lng, or full postcode
+// (decision 5: outward code only).
+// =============================================================================
+
+const DISCOVER_LIMIT_NAME_PER_HOUR = 30;
+const DISCOVER_LIMIT_EMAIL_PHONE_PER_HOUR = 20;
+const DISCOVER_WINDOW_MS = 60 * 60 * 1000;
+const DISCOVER_NEARBY_RADIUS_MILES = 30;
+const DISCOVER_PAGE_SIZE = 25;
+
+function sha256(s) {
+  return crypto.createHash('sha256').update(String(s)).digest('hex');
+}
+
+function outwardOnly(postcode) {
+  if (!postcode) return null;
+  const normalised = normalisePostcode(postcode);
+  if (!normalised) return null;
+  return normalised.split(' ')[0];
+}
+
+function gigsBucket(n) {
+  const c = Number(n) || 0;
+  if (c === 0) return '0';
+  if (c < 10) return '1-9';
+  if (c < 50) return '10-49';
+  if (c < 200) return '50-199';
+  return '200+';
+}
+
+// Map a raw row from the SELECT to the public card shape. Intentionally drops
+// email, phone, phone_normalized, home_lat, home_lng, full postcode.
+function toCardRow(row, actorLat, actorLng) {
+  let distanceMiles = null;
+  if (actorLat != null && actorLng != null && row.home_lat != null && row.home_lng != null) {
+    const d = haversineMiles(Number(actorLat), Number(actorLng), Number(row.home_lat), Number(row.home_lng));
+    if (isFinite(d)) distanceMiles = Math.round(d * 10) / 10;
+  }
+
+  const offersInvolved = Number(row.offers_involved) || 0;
+  const offersAccepted = Number(row.offers_accepted) || 0;
+  const acceptancePct = offersInvolved >= 5 ? Math.round((offersAccepted / offersInvolved) * 100) : null;
+
+  return {
+    id: row.id,
+    display_name: row.name || 'Unnamed musician',
+    instruments: Array.isArray(row.instruments) ? row.instruments.slice(0, 3) : [],
+    genres: Array.isArray(row.genres) ? row.genres.slice(0, 5) : [],
+    bio: row.bio || null,
+    photo_url: row.photo_url || null,
+    outward_postcode: outwardOnly(row.home_postcode),
+    travel_radius_miles: row.travel_radius_miles != null ? Number(row.travel_radius_miles) : null,
+    premium: row.subscription_tier === 'premium',
+    badges: {
+      email_verified: !!row.email_verified,
+      joined_year: row.created_at ? new Date(row.created_at).getUTCFullYear() : null,
+      gigs_bucket: gigsBucket(row.gigs_count),
+      acceptance_pct: acceptancePct
+    },
+    distance_miles: distanceMiles
+  };
+}
+
+// Central row selector. Returns the common SELECT + joins used by every mode.
+// The caller appends a mode-specific WHERE clause and ORDER/LIMIT.
+//
+// Parameter numbering: $1 = actor_id. Caller extends with its own params.
+const DISCOVER_SELECT = `
+  SELECT
+    u.id,
+    u.name,
+    u.instruments,
+    u.genres,
+    u.bio,
+    u.photo_url,
+    u.home_postcode,
+    u.home_lat,
+    u.home_lng,
+    u.travel_radius_miles,
+    u.subscription_tier,
+    u.created_at,
+    (u.google_id IS NOT NULL) AS email_verified,
+    (SELECT COUNT(*)::int FROM gigs g WHERE g.user_id = u.id) AS gigs_count,
+    (SELECT COUNT(*)::int FROM offers o
+       WHERE (o.sender_id = u.id OR o.recipient_id = u.id)) AS offers_involved,
+    (SELECT COUNT(*)::int FROM offers o
+       WHERE (o.sender_id = u.id OR o.recipient_id = u.id)
+         AND o.status = 'accepted') AS offers_accepted
+  FROM users u
+  WHERE u.discoverable = TRUE
+    AND u.id <> $1
+    AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_id = u.id)
+    AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $1)
+`;
+
+async function countRecentLookups(actorId, modes) {
+  const rows = await db.query(
+    `SELECT created_at FROM discovery_lookups
+       WHERE actor_id = $1 AND mode = ANY($2::text[]) AND created_at > NOW() - INTERVAL '1 hour'
+       ORDER BY created_at ASC`,
+    [actorId, modes]
+  );
+  return rows.rows;
+}
+
+async function logLookup(actorId, mode, normalisedQuery) {
+  try {
+    await db.query(
+      `INSERT INTO discovery_lookups (actor_id, mode, query_hash) VALUES ($1, $2, $3)`,
+      [actorId, mode, sha256(normalisedQuery || '')]
+    );
+  } catch (err) {
+    // Audit failure is non-fatal; log and move on so a temporary DB hiccup
+    // cannot wedge the search endpoint.
+    console.error('[discover] audit log insert failed:', err && err.message);
+  }
+}
+
+// Return 429 payload + set Retry-After header, calculated from the oldest
+// in-window lookup so the client gets a real countdown, not a flat 3600.
+function respondRateLimited(res, rows, limit) {
+  const oldest = rows[0]; // ORDER BY created_at ASC
+  let retryAfter = 60;
+  if (oldest && oldest.created_at) {
+    const ageMs = Date.now() - new Date(oldest.created_at).getTime();
+    retryAfter = Math.max(1, Math.ceil((DISCOVER_WINDOW_MS - ageMs) / 1000));
+  }
+  res.set('Retry-After', String(retryAfter));
+  return res.status(429).json({
+    error: 'rate_limited',
+    message: 'Too many searches in the last hour. Try again soon.',
+    limit,
+    retry_after_seconds: retryAfter
+  });
+}
+
+router.get('/discover', async (req, res) => {
+  try {
+    const actorId = req.user.id;
+    const modeRaw = String(req.query.mode || '').toLowerCase();
+    const validModes = ['name', 'email', 'phone', 'nearby', 'instrument_match'];
+    if (!validModes.includes(modeRaw)) {
+      return res.status(400).json({ error: 'invalid_mode', valid: validModes });
+    }
+
+    // Fetch actor profile for self-checks, geo ranking, and empty-state rails.
+    const actorRows = await db.query(
+      `SELECT id, email, home_lat, home_lng, instruments FROM users WHERE id = $1 LIMIT 1`,
+      [actorId]
+    );
+    const actor = actorRows.rows[0];
+    if (!actor) return res.status(401).json({ error: 'unknown_actor' });
+
+    // Rate-limit check up front. name has its own 30/hr bucket; email + phone
+    // share a 20/hr bucket (decision 12). nearby and instrument_match have no
+    // dedicated cap but still write audit rows.
+    let rateBucket = null;
+    let rateLimit = 0;
+    if (modeRaw === 'name') {
+      rateBucket = ['name'];
+      rateLimit = DISCOVER_LIMIT_NAME_PER_HOUR;
+    } else if (modeRaw === 'email' || modeRaw === 'phone') {
+      rateBucket = ['email', 'phone'];
+      rateLimit = DISCOVER_LIMIT_EMAIL_PHONE_PER_HOUR;
+    }
+    if (rateBucket) {
+      const recent = await countRecentLookups(actorId, rateBucket);
+      if (recent.length >= rateLimit) {
+        return respondRateLimited(res, recent, rateLimit);
+      }
+    }
+
+    // Dispatch per mode.
+    if (modeRaw === 'email') {
+      const q = String(req.query.q || '').trim().toLowerCase();
+      if (!q || !q.includes('@')) {
+        return res.status(400).json({ error: 'invalid_email' });
+      }
+      if (q === String(actor.email || '').toLowerCase()) {
+        await logLookup(actorId, 'email', q);
+        return res.json({
+          mode: 'email',
+          results: [],
+          total: 0,
+          self_lookup: true,
+          message: "That's your own email."
+        });
+      }
+      const rows = await db.query(
+        DISCOVER_SELECT + ` AND LOWER(u.email) = $2 LIMIT 1`,
+        [actorId, q]
+      );
+      await logLookup(actorId, 'email', q);
+      return res.json({
+        mode: 'email',
+        results: rows.rows.map(r => toCardRow(r, actor.home_lat, actor.home_lng)),
+        total: rows.rows.length
+      });
+    }
+
+    if (modeRaw === 'phone') {
+      const raw = String(req.query.q || '').trim();
+      const normalised = normaliseE164(raw);
+      if (!normalised) {
+        return res.status(400).json({ error: 'invalid_phone', message: 'Enter a valid UK or international number.' });
+      }
+      const rows = await db.query(
+        DISCOVER_SELECT + ` AND u.phone_normalized = $2 LIMIT 1`,
+        [actorId, normalised]
+      );
+      await logLookup(actorId, 'phone', normalised);
+      return res.json({
+        mode: 'phone',
+        results: rows.rows.map(r => toCardRow(r, actor.home_lat, actor.home_lng)),
+        total: rows.rows.length
+      });
+    }
+
+    if (modeRaw === 'name') {
+      const q = String(req.query.q || '').trim();
+      if (q.length < 2) {
+        return res.status(400).json({ error: 'query_too_short', message: 'Enter at least 2 characters.' });
+      }
+      // Optional instrument filter (decision 7).
+      const instrumentsRaw = String(req.query.instruments || '').trim();
+      const instruments = instrumentsRaw ? instrumentsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+      let sql = DISCOVER_SELECT + ` AND u.name ILIKE $2`;
+      const params = [actorId, `%${q}%`];
+      if (instruments.length > 0) {
+        params.push(instruments);
+        sql += ` AND u.instruments && $${params.length}::text[]`;
+      }
+      // Cap at a reasonable set; we sort by distance in JS afterwards.
+      sql += ` LIMIT 100`;
+
+      const rows = await db.query(sql, params);
+      const cards = rows.rows.map(r => toCardRow(r, actor.home_lat, actor.home_lng));
+
+      // Geo-rank: closer first, nulls last (searcher with no postcode).
+      cards.sort((a, b) => {
+        if (a.distance_miles == null && b.distance_miles == null) return 0;
+        if (a.distance_miles == null) return 1;
+        if (b.distance_miles == null) return -1;
+        return a.distance_miles - b.distance_miles;
+      });
+
+      await logLookup(actorId, 'name', q.toLowerCase());
+      return res.json({
+        mode: 'name',
+        results: cards.slice(0, DISCOVER_PAGE_SIZE),
+        total: cards.length
+      });
+    }
+
+    if (modeRaw === 'nearby') {
+      if (actor.home_lat == null || actor.home_lng == null) {
+        return res.json({
+          mode: 'nearby',
+          results: [],
+          total: 0,
+          hint: 'Add your home postcode in Profile Settings to see musicians near you.'
+        });
+      }
+      // Pull discoverable users with coords; filter to 30 mi in JS. Small user
+      // base for MVP, can upgrade to a PostGIS GIST box filter later.
+      const rows = await db.query(
+        DISCOVER_SELECT + ` AND u.home_lat IS NOT NULL AND u.home_lng IS NOT NULL LIMIT 500`,
+        [actorId]
+      );
+      const cards = rows.rows
+        .map(r => toCardRow(r, actor.home_lat, actor.home_lng))
+        .filter(c => c.distance_miles != null && c.distance_miles <= DISCOVER_NEARBY_RADIUS_MILES)
+        .sort((a, b) => a.distance_miles - b.distance_miles);
+
+      await logLookup(actorId, 'nearby', 'rail');
+      return res.json({
+        mode: 'nearby',
+        results: cards.slice(0, DISCOVER_PAGE_SIZE),
+        total: cards.length
+      });
+    }
+
+    if (modeRaw === 'instrument_match') {
+      const actorInstruments = Array.isArray(actor.instruments) ? actor.instruments : [];
+      if (actorInstruments.length === 0) {
+        return res.json({
+          mode: 'instrument_match',
+          results: [],
+          total: 0,
+          hint: 'Add your primary instruments in Profile Settings to see musicians who play what you play.'
+        });
+      }
+      const rows = await db.query(
+        DISCOVER_SELECT + ` AND u.instruments && $2::text[] LIMIT 200`,
+        [actorId, actorInstruments]
+      );
+      const cards = rows.rows
+        .map(r => toCardRow(r, actor.home_lat, actor.home_lng))
+        .sort((a, b) => {
+          if (a.distance_miles == null && b.distance_miles == null) return 0;
+          if (a.distance_miles == null) return 1;
+          if (b.distance_miles == null) return -1;
+          return a.distance_miles - b.distance_miles;
+        });
+
+      await logLookup(actorId, 'instrument_match', actorInstruments.slice().sort().join(','));
+      return res.json({
+        mode: 'instrument_match',
+        results: cards.slice(0, DISCOVER_PAGE_SIZE),
+        total: cards.length
+      });
+    }
+
+    return res.status(400).json({ error: 'unreachable_mode' });
+  } catch (err) {
+    console.error('[discover] error:', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// =============================================================================
+// POST /api/user-blocks — add a block, symmetric effect (decision 10).
+// POST /api/user-reports — file a report.
+// These are minimal writes needed for the IX-C card kebab menu; full UI
+// lands with IX-C/IX-E.
+// =============================================================================
+
+router.post('/user-blocks', async (req, res) => {
+  try {
+    const { blocked_id } = req.body || {};
+    if (!blocked_id || typeof blocked_id !== 'string') {
+      return res.status(400).json({ error: 'blocked_id required' });
+    }
+    if (blocked_id === req.user.id) {
+      return res.status(400).json({ error: 'cannot_block_self' });
+    }
+    await db.query(
+      `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)
+         ON CONFLICT (blocker_id, blocked_id) DO NOTHING`,
+      [req.user.id, blocked_id]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[user-blocks] error:', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+router.delete('/user-blocks/:blocked_id', async (req, res) => {
+  try {
+    await db.query(
+      `DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2`,
+      [req.user.id, req.params.blocked_id]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[user-blocks] delete error:', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+router.post('/user-reports', async (req, res) => {
+  try {
+    const { target_id, reason_category, reason_text } = req.body || {};
+    const validCategories = ['spam', 'impersonation', 'harassment', 'fake', 'other'];
+    if (!target_id || typeof target_id !== 'string') {
+      return res.status(400).json({ error: 'target_id required' });
+    }
+    if (target_id === req.user.id) {
+      return res.status(400).json({ error: 'cannot_report_self' });
+    }
+    if (!validCategories.includes(reason_category)) {
+      return res.status(400).json({ error: 'invalid_reason_category', valid: validCategories });
+    }
+    const text = (reason_text || '').toString().slice(0, 1000);
+    await db.query(
+      `INSERT INTO user_reports (reporter_id, target_id, reason_category, reason_text)
+         VALUES ($1, $2, $3, $4)`,
+      [req.user.id, target_id, reason_category, text]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[user-reports] error:', err);
+    return res.status(500).json({ error: 'server_error' });
   }
 });
 
