@@ -160,7 +160,9 @@ async function findUserBySlug(slug) {
 }
 
 // ── Public availability calendar ────────────────────────────────────────────
-// /share/:slug — shows the next ~3 months with busy/free/blocked dates
+// /share/:slug — shows the next 12 months with busy/free/blocked dates.
+// Bookers often plan 6+ months out (weddings, corporate, festivals), so a
+// 3-month window was cutting off the exact forward view they need.
 router.get('/share/:slug', async (req, res) => {
   try {
     const user = await findUserBySlug(req.params.slug);
@@ -171,16 +173,17 @@ router.get('/share/:slug', async (req, res) => {
 
     const displayName = user.display_name || user.name || 'Artist';
 
-    // Pull next 120 days of gigs and blocked dates
+    // Pull next 400 days of gigs and blocked dates (~13 months, to cover any
+    // partial month at the end of the 12-month window).
     const [gigsR, blockedR] = await Promise.all([
       db.query(
         `SELECT date FROM gigs
-         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '120 days'`,
+         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '400 days'`,
         [user.id]
       ),
       db.query(
         `SELECT date FROM blocked_dates
-         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '120 days'`,
+         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '400 days'`,
         [user.id]
       ).catch(() => ({ rows: [] })),
     ]);
@@ -188,9 +191,10 @@ router.get('/share/:slug', async (req, res) => {
     const bookedSet = new Set(gigsR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
     const blockedSet = new Set(blockedR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
 
-    // Build 3 months of calendar HTML (Mon-first)
+    // Build 12 months of calendar HTML (Mon-first). Headings are sticky-ish —
+    // the month label sits above its grid so a long scroll still reads cleanly.
     const today = new Date();
-    const monthsHtml = [0, 1, 2].map(offset => {
+    const monthsHtml = Array.from({ length: 12 }, (_, i) => i).map(offset => {
       const first = new Date(today.getFullYear(), today.getMonth() + offset, 1);
       const monthLabel = first.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
       const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
@@ -214,7 +218,7 @@ router.get('/share/:slug', async (req, res) => {
     const body = `
       <div class="avatar">${esc((displayName[0] || 'M').toUpperCase())}</div>
       <h1 style="text-align:center;">${esc(displayName)}</h1>
-      <p class="sub" style="text-align:center;">Availability for the next 3 months</p>
+      <p class="sub" style="text-align:center;">Availability for the next 12 months</p>
       <div class="legend">
         <span><span class="legend-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
         <span><span class="legend-dot" style="background:var(--danger);"></span>Booked</span>
@@ -237,7 +241,7 @@ router.get('/share/:slug', async (req, res) => {
       </div>`;
 
     res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} Availability`, body, {
-      description: `Check ${displayName}'s live availability for the next 3 months and enquire about a date.`,
+      description: `Check ${displayName}'s live availability for the next 12 months and enquire about a date.`,
       image: user.epk_photo_url || user.avatar_url || '',
       url: absoluteUrl(req),
       type: 'profile',
@@ -455,12 +459,12 @@ router.get('/cal/:token', async (req, res) => {
     const [gigsR, blockedR] = await Promise.all([
       db.query(
         `SELECT date FROM gigs
-         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '120 days'`,
+         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '400 days'`,
         [user.id]
       ),
       db.query(
         `SELECT date FROM blocked_dates
-         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '120 days'`,
+         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '400 days'`,
         [user.id]
       ).catch(() => ({ rows: [] })),
     ]);
@@ -469,7 +473,7 @@ router.get('/cal/:token', async (req, res) => {
     const blockedSet = new Set(blockedR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
 
     const today = new Date();
-    const monthsHtml = [0, 1, 2].map(offset => {
+    const monthsHtml = Array.from({ length: 12 }, (_, i) => i).map(offset => {
       const first = new Date(today.getFullYear(), today.getMonth() + offset, 1);
       const monthLabel = first.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
       const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
@@ -495,7 +499,7 @@ router.get('/cal/:token', async (req, res) => {
     const body = `
       <div class="avatar">${esc((displayName[0] || 'M').toUpperCase())}</div>
       <h1 style="text-align:center;">${esc(displayName)}</h1>
-      <p class="sub" style="text-align:center;">Availability for the next 3 months</p>
+      <p class="sub" style="text-align:center;">Availability for the next 12 months</p>
       <div class="legend">
         <span><span class="legend-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
         <span><span class="legend-dot" style="background:var(--danger);"></span>Booked</span>

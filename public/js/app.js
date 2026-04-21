@@ -650,10 +650,10 @@ function buildHomeHTML(content, stats) {
     }
 
     html += `
-      <div onclick="showScreen('calendar')" style="flex:1;background:var(--accent-dim);border:1px solid rgba(240,165,0,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
+      <div onclick="openPanel('panel-my-availability'); openMyAvailabilityPanel();" style="flex:1;background:var(--accent-dim);border:1px solid rgba(240,165,0,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
         <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📅 Calendar</div>
         <div style="font-size:11px;font-weight:600;color:var(--accent);">Availability</div>
-        <div style="font-size:10px;color:var(--text-2);margin-top:2px;">Update now</div>
+        <div style="font-size:10px;color:var(--text-2);margin-top:2px;">Block dates</div>
       </div>
     </div>`;
 
@@ -6078,6 +6078,180 @@ window.saveDocument = saveDocument;
 window.deleteDocument = deleteDocument;
 window.refreshDocsExpiryDot = refreshDocsExpiryDot;
 
+// ── My Availability Panel ───────────────────────────────────────────────────
+// Full-screen 12-month tap-to-toggle availability grid, rendered in the same
+// visual language as the public /share/:slug page. Tapping a free day blocks
+// it, tapping a manually-blocked day unblocks it, tapping a gig day surfaces
+// a toast (gig-owned dates can only be changed by editing the gig itself).
+const _myAvailState = { blockedMap: new Map(), bookedSet: new Set(), ownerSet: new Set() };
+
+async function openMyAvailabilityPanel() {
+  const body = document.getElementById('myAvailabilityBody');
+  if (!body) return;
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading availability...</div>';
+
+  try {
+    // Fire in parallel: gigs (for booked dates), blocked rows, and slug (for URL hint).
+    const [gigsRes, blockedRes, slug] = await Promise.all([
+      fetch('/api/gigs').then(r => r.ok ? r.json() : []).catch(() => []),
+      fetch('/api/blocked-dates').then(r => r.ok ? r.json() : []).catch(() => []),
+      _ensurePublicSlug(),
+    ]);
+
+    const gigs = Array.isArray(gigsRes) ? gigsRes : (gigsRes.gigs || []);
+    const blocked = Array.isArray(blockedRes) ? blockedRes : [];
+
+    // Map of dateStr → { id, expanded_dates_len } so unblock knows which row
+    // to delete and whether it's part of a recurring/range pattern.
+    const blockedMap = new Map();
+    blocked.forEach(row => {
+      const dates = Array.isArray(row.expanded_dates) && row.expanded_dates.length > 0
+        ? row.expanded_dates
+        : [(row.start_date || row.date || '').slice(0, 10)];
+      dates.forEach(d => {
+        if (d) blockedMap.set(d, { id: row.id, size: dates.length });
+      });
+    });
+
+    const bookedSet = new Set(gigs.map(g => String(g.date || '').slice(0, 10)).filter(Boolean));
+    _myAvailState.blockedMap = blockedMap;
+    _myAvailState.bookedSet = bookedSet;
+
+    const origin = window.location.origin;
+    const slugUrl = slug ? `${origin}/share/${slug}` : '';
+
+    let html = `
+      <style>
+        .avail-legend { display:flex; gap:16px; font-size:11px; color:var(--text-2); justify-content:center; margin:4px 0 12px; flex-wrap:wrap; }
+        .avail-legend span { display:flex; align-items:center; gap:6px; }
+        .avail-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+        .avail-month-label { font-size:13px; font-weight:700; color:var(--text); margin:18px 4px 8px; letter-spacing:.3px; }
+        .avail-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; }
+        .avail-hd { font-size:10px; font-weight:600; color:var(--text-3); text-align:center; text-transform:uppercase; letter-spacing:.5px; padding:4px 0; }
+        .avail-cell { aspect-ratio:1; display:flex; align-items:center; justify-content:center; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; user-select:none; transition: transform .05s ease, opacity .1s ease; }
+        .avail-cell:active { transform: scale(.92); }
+        .avail-cell.free { background:var(--card); border:1px solid var(--border); color:var(--text); }
+        .avail-cell.blocked { background:#6E7681; color:#fff; border:1px solid #6E7681; }
+        .avail-cell.booked { background:var(--danger); color:#fff; border:1px solid var(--danger); cursor:not-allowed; }
+        .avail-cell.past { opacity:.3; cursor:not-allowed; }
+        .avail-empty { aspect-ratio:1; }
+      </style>
+      <div style="padding:14px 16px 80px;">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-2);line-height:1.5;">
+            Tap a free day to block it. Tap a blocked day to unblock. Gig days are locked.
+          </div>
+          ${slugUrl ? `
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:11px;color:var(--text-3);">
+            Bookers see this at <span style="color:var(--accent);font-weight:600;">${slugUrl.replace(/^https?:\/\//,'')}</span>
+          </div>` : ''}
+        </div>
+
+        <div class="avail-legend">
+          <span><span class="avail-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
+          <span><span class="avail-dot" style="background:var(--danger);"></span>Gig</span>
+          <span><span class="avail-dot" style="background:#6E7681;"></span>Blocked</span>
+        </div>
+
+        <div id="myAvailMonths"></div>
+      </div>`;
+
+    body.innerHTML = html;
+    _renderAvailabilityMonths();
+  } catch (err) {
+    console.error('Availability panel error:', err);
+    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load availability</div>';
+  }
+}
+
+function _renderAvailabilityMonths() {
+  const container = document.getElementById('myAvailMonths');
+  if (!container) return;
+  const today = new Date();
+  const startYear = today.getFullYear();
+  const startMonth = today.getMonth();
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+  let html = '';
+  for (let offset = 0; offset < 12; offset++) {
+    const first = new Date(startYear, startMonth + offset, 1);
+    const monthLabel = first.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    const firstDow = (first.getDay() + 6) % 7; // Mon-first
+
+    let cells = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => `<div class="avail-hd">${d}</div>`).join('');
+    for (let i = 0; i < firstDow; i++) cells += `<div class="avail-empty"></div>`;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const isPast = dateStr < todayIso;
+      let cls = 'free';
+      let state = 'free';
+      if (_myAvailState.bookedSet.has(dateStr)) { cls = 'booked'; state = 'booked'; }
+      else if (_myAvailState.blockedMap.has(dateStr)) { cls = 'blocked'; state = 'blocked'; }
+      if (isPast) cls += ' past';
+      const clickHandler = isPast ? '' : `onclick="toggleAvailabilityDate('${dateStr}','${state}')"`;
+      cells += `<div class="avail-cell ${cls}" ${clickHandler}>${d}</div>`;
+    }
+    html += `<div class="avail-month-label">${monthLabel}</div><div class="avail-grid">${cells}</div>`;
+  }
+  container.innerHTML = html;
+}
+
+async function toggleAvailabilityDate(dateStr, currentState) {
+  if (currentState === 'booked') {
+    showToast('This date has a gig. Edit the gig to change it.');
+    return;
+  }
+  try {
+    if (currentState === 'free') {
+      const res = await fetch('/api/blocked-dates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'single', date: dateStr }),
+      });
+      if (!res.ok) throw new Error('block failed');
+      // Optimistically update local state so re-render is instant.
+      _myAvailState.blockedMap.set(dateStr, { id: null, size: 1 });
+      // Refetch blocked rows in the background so the id is filled in for
+      // subsequent unblock taps without blocking the UI.
+      fetch('/api/blocked-dates').then(r => r.ok ? r.json() : []).then(rows => {
+        const m = new Map();
+        (Array.isArray(rows) ? rows : []).forEach(row => {
+          const dates = Array.isArray(row.expanded_dates) && row.expanded_dates.length > 0
+            ? row.expanded_dates
+            : [(row.start_date || row.date || '').slice(0, 10)];
+          dates.forEach(d => { if (d) m.set(d, { id: row.id, size: dates.length }); });
+        });
+        _myAvailState.blockedMap = m;
+        _renderAvailabilityMonths();
+      }).catch(() => {});
+      _renderAvailabilityMonths();
+    } else if (currentState === 'blocked') {
+      const entry = _myAvailState.blockedMap.get(dateStr);
+      if (!entry || !entry.id) {
+        showToast('Still saving — try again in a moment.');
+        return;
+      }
+      if (entry.size > 1) {
+        if (!confirm('This date is part of a recurring or range block. Unblock the whole pattern?')) return;
+      }
+      const res = await fetch(`/api/blocked-dates/${entry.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('unblock failed');
+      // Remove every date that shared this id (handles pattern rows cleanly).
+      for (const [d, v] of _myAvailState.blockedMap.entries()) {
+        if (v.id === entry.id) _myAvailState.blockedMap.delete(d);
+      }
+      _renderAvailabilityMonths();
+    }
+  } catch (err) {
+    console.error('Toggle availability error:', err);
+    showToast('Could not update — try again.');
+  }
+}
+
+window.openMyAvailabilityPanel = openMyAvailabilityPanel;
+window.toggleAvailabilityDate = toggleAvailabilityDate;
+
 // ── Public Calendar Share Panel ─────────────────────────────────────────────
 async function renderPubCalShare() {
   const body = document.getElementById('pubCalShareBody');
@@ -6115,7 +6289,7 @@ async function renderPubCalShare() {
             <input type="text" value="${slugUrl || 'Generating...'}" readonly style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:12px;color:var(--text);" id="pubCalSlugInput">
             <button onclick="shareAvailability()" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;">Share</button>
           </div>
-          <div style="font-size:11px;color:var(--text-3);margin-top:6px;">Pretty URL using your profile name. Always live (no toggle required) and shows a 3-month calendar.</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:6px;">Pretty URL using your profile name. Always live (no toggle required) and shows a 12-month calendar.</div>
         </div>
 
         ${enabled && token ? `
