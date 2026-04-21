@@ -435,6 +435,16 @@ function setupScreenHandlers() {
 }
 
 function showScreen(screenName) {
+  // Close any open overlay panels before switching screens. The bottom-row
+  // quick actions (Invoice, Block, Dep, Receipt) open .panel-keep-header
+  // overlays that leave the nav visible and clickable. When the user taps a
+  // main-nav item from inside one of those panels they expect to navigate
+  // away; without this, the overlay stays on top of the new screen and the
+  // nav appears broken.
+  document.querySelectorAll('.panel-overlay.open').forEach(function (p) {
+    closePanel(p.id);
+  });
+
   const screens = document.querySelectorAll('.app-content .screen');
   screens.forEach((s) => s.classList.remove('active'));
 
