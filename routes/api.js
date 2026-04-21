@@ -989,16 +989,56 @@ router.post('/blocked-dates', async (req, res) => {
       );
       if (rowRes.rows[0]) {
         if (debug) {
+          // Inline the push so every failure mode surfaces to the response.
           try {
-            const fn = calendarRouter.pushBlockedDateToGoogle;
-            debugInfo = {
-              fnType: typeof fn,
-              hasRow: true,
-              rowKeys: Object.keys(rowRes.rows[0]),
-            };
-            if (typeof fn === 'function') {
-              const result = await fn(req.user.id, rowRes.rows[0]);
-              debugInfo.pushResult = result;
+            const { google } = require('googleapis');
+            const userRes = await db.query(
+              `SELECT google_access_token, google_refresh_token, google_token_expires_at,
+                      google_selected_calendar
+                 FROM users WHERE id = $1`,
+              [req.user.id]
+            );
+            const u = userRes.rows[0];
+            debugInfo = { hasUser: !!u, hasAccessToken: !!(u && u.google_access_token) };
+            if (u && u.google_access_token) {
+              const client = new google.auth.OAuth2(
+                process.env.GOOGLE_CLIENT_ID,
+                process.env.GOOGLE_CLIENT_SECRET,
+                (process.env.APP_URL || 'https://trackmygigs.app') + '/auth/google/callback'
+              );
+              client.setCredentials({
+                access_token: u.google_access_token,
+                refresh_token: u.google_refresh_token,
+                expiry_date: u.google_token_expires_at ? new Date(u.google_token_expires_at).getTime() : null,
+              });
+              const calendarId = u.google_selected_calendar || 'primary';
+              const calendar = google.calendar({ version: 'v3', auth: client });
+              const row = rowRes.rows[0];
+              const startDate = String(row.date).slice(0, 10);
+              const resource = {
+                summary: 'Unavailable',
+                description: 'Blocked in TrackMyGigs.',
+                transparency: 'opaque',
+                start: { date: startDate },
+                end: { date: (() => {
+                  const n = new Date(startDate + 'T00:00:00');
+                  n.setDate(n.getDate() + 1);
+                  return n.toISOString().slice(0, 10);
+                })() },
+                extendedProperties: { private: { tmg_source: 'blocked_date' } },
+              };
+              debugInfo.resource = resource;
+              debugInfo.calendarId = calendarId;
+              try {
+                const resp = await calendar.events.insert({ calendarId, requestBody: resource });
+                debugInfo.insertOk = true;
+                debugInfo.eventId = resp.data.id;
+              } catch (insertErr) {
+                debugInfo.insertError = String(insertErr && (insertErr.message || insertErr));
+                debugInfo.insertCode = insertErr && insertErr.code;
+                debugInfo.insertErrors = insertErr && insertErr.errors;
+                debugInfo.insertResponseData = insertErr && insertErr.response && insertErr.response.data;
+              }
             }
           } catch (e) {
             debugInfo = { error: String(e && (e.message || e)), stack: e && e.stack };
