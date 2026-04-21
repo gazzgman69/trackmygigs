@@ -1075,15 +1075,27 @@ async function removeGigFromGoogle(userId, gig) {
 // the user is busy. Tagged with a private extendedProperty so we can skip
 // these over when pulling events back in.
 
+// Normalize whatever pg handed us (Date object on a DATE column, or an ISO
+// string after JSON round-trips) to a clean YYYY-MM-DD. String(dateObj) gives
+// "Wed Dec 15 2027 ..." which breaks Google's date parser, so we branch.
+function _toIsoDate(v) {
+  if (!v) return '';
+  if (v instanceof Date && !isNaN(v.getTime())) return v.toISOString().slice(0, 10);
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+}
+
 function _isoPlusOneDay(dateStr) {
-  const next = new Date(dateStr + 'T00:00:00');
-  next.setDate(next.getDate() + 1);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
+  const next = new Date(dateStr + 'T00:00:00Z');
+  if (isNaN(next.getTime())) return dateStr;
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
 }
 
 function buildBlockedResource(row) {
-  const startDate = String(row.date || '').slice(0, 10);
+  const startDate = _toIsoDate(row.date);
   const pattern = row.recurring_pattern || '';
   const resource = {
     summary: 'Unavailable',
