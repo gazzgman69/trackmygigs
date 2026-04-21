@@ -138,11 +138,42 @@ router.post('/threads', async (req, res) => {
   try {
     const { gig_id, thread_type, participant_ids } = req.body;
 
-    // Ensure current user is included
-    const allParticipants = [...new Set([req.user.id, ...(participant_ids || [])])];
+    // Normalize participants: always include caller, dedupe, strip self from
+    // "others" so the validation below is about the people being invited.
+    const incoming = Array.isArray(participant_ids) ? participant_ids : [];
+    const others = [...new Set(incoming.filter(id => id && id !== req.user.id))];
+    const allParticipants = [req.user.id, ...others];
 
-    // Check if a thread already exists for this gig + type combo
     if (gig_id) {
+      // Gig-scoped thread: caller must own the gig or be on a live offer,
+      // and every other participant must have the same association. This
+      // blocks using a valid gig UUID to pull arbitrary users into a chat.
+      const gigRow = await db.query('SELECT user_id FROM gigs WHERE id = $1', [gig_id]);
+      if (gigRow.rows.length === 0) {
+        return res.status(404).json({ error: 'Gig not found' });
+      }
+      const creatorId = gigRow.rows[0].user_id;
+      const offerRows = await db.query(
+        `SELECT DISTINCT sender_id, recipient_id FROM offers
+         WHERE gig_id = $1 AND status <> 'cancelled'`,
+        [gig_id]
+      );
+      const allowedParties = new Set();
+      if (creatorId) allowedParties.add(creatorId);
+      for (const r of offerRows.rows) {
+        if (r.sender_id) allowedParties.add(r.sender_id);
+        if (r.recipient_id) allowedParties.add(r.recipient_id);
+      }
+      if (!allowedParties.has(req.user.id)) {
+        return res.status(404).json({ error: 'Gig not found' });
+      }
+      for (const pid of others) {
+        if (!allowedParties.has(pid)) {
+          return res.status(403).json({ error: 'Participant is not associated with this gig' });
+        }
+      }
+
+      // Return an existing matching thread if one already covers this set.
       const existing = await db.query(
         `SELECT * FROM threads WHERE gig_id = $1 AND thread_type = $2
          AND participant_ids @> $3::uuid[]`,
@@ -150,6 +181,19 @@ router.post('/threads', async (req, res) => {
       );
       if (existing.rows.length > 0) {
         return res.json({ thread: existing.rows[0], existing: true });
+      }
+    } else {
+      // Non-gig thread (1-to-1 or group DM): each invitee must already be in
+      // the caller's contacts as a linked TMG user. Prevents starting private
+      // chats with strangers by guessing UUIDs.
+      for (const pid of others) {
+        const contactCheck = await db.query(
+          `SELECT 1 FROM contacts WHERE owner_id = $1 AND contact_user_id = $2 LIMIT 1`,
+          [req.user.id, pid]
+        );
+        if (contactCheck.rows.length === 0) {
+          return res.status(403).json({ error: 'Participant is not in your contacts' });
+        }
       }
     }
 
@@ -171,54 +215,67 @@ router.post('/threads', async (req, res) => {
 
 router.get('/gig/:gigId', async (req, res) => {
   try {
-    // Look for existing gig thread
+    // Look for an existing gig thread where the caller is already a participant
     let thread = await db.query(
       `SELECT * FROM threads WHERE gig_id = $1 AND thread_type = 'gig' AND $2 = ANY(participant_ids)`,
       [req.params.gigId, req.user.id]
     );
 
     if (thread.rows.length === 0) {
-      // Resolve all relevant participants for this gig:
-      //   - gig creator (typically the band leader)
-      //   - anyone on an accepted / pending offer for this gig (deps who were invited)
-      //   - the current user
+      // Authorization check: before we create or join a gig thread, the caller
+      // must either own the gig or be party to a non-cancelled offer on it.
+      // Without this guard any logged-in user could probe gig UUIDs and be
+      // silently added to the thread, exposing participants and messages.
       const gigRow = await db.query('SELECT user_id FROM gigs WHERE id = $1', [req.params.gigId]);
       if (gigRow.rows.length === 0) {
         return res.status(404).json({ error: 'Gig not found' });
       }
       const creatorId = gigRow.rows[0].user_id;
       const offerRows = await db.query(
-        `SELECT DISTINCT sender_id, recipient_id FROM offers
-         WHERE gig_id = $1 AND status IN ('accepted','pending')`,
+        `SELECT DISTINCT sender_id, recipient_id, status FROM offers
+         WHERE gig_id = $1 AND status <> 'cancelled'`,
         [req.params.gigId]
       );
-      const participantSet = new Set();
-      participantSet.add(req.user.id);
-      if (creatorId) participantSet.add(creatorId);
-      for (const r of offerRows.rows) {
-        if (r.sender_id) participantSet.add(r.sender_id);
-        if (r.recipient_id) participantSet.add(r.recipient_id);
-      }
-      const participantIds = Array.from(participantSet);
-
-      // Auto-create a thread for this gig with all resolved participants
-      thread = await db.query(
-        `INSERT INTO threads (gig_id, thread_type, participant_ids)
-         VALUES ($1, 'gig', $2::uuid[])
-         RETURNING *`,
-        [req.params.gigId, participantIds]
+      const isCreator = creatorId === req.user.id;
+      const isOfferParty = offerRows.rows.some(r =>
+        r.sender_id === req.user.id || r.recipient_id === req.user.id
       );
-    } else {
-      // Ensure the current user is listed; some legacy threads were created with
-      // only the original creator.
-      const existing = thread.rows[0];
-      if (!existing.participant_ids.includes(req.user.id)) {
-        const updated = await db.query(
+      if (!isCreator && !isOfferParty) {
+        return res.status(404).json({ error: 'Gig not found' });
+      }
+
+      // Caller is authorized. If a thread already exists for this gig, add
+      // them to the participants list. Otherwise create a new thread seeded
+      // with the creator, any live offer parties, and the caller.
+      const existingThread = await db.query(
+        `SELECT * FROM threads WHERE gig_id = $1 AND thread_type = 'gig' LIMIT 1`,
+        [req.params.gigId]
+      );
+
+      if (existingThread.rows.length > 0) {
+        thread = await db.query(
           `UPDATE threads SET participant_ids = array_append(participant_ids, $1)
            WHERE id = $2 RETURNING *`,
-          [req.user.id, existing.id]
+          [req.user.id, existingThread.rows[0].id]
         );
-        thread = updated;
+      } else {
+        const participantSet = new Set();
+        participantSet.add(req.user.id);
+        if (creatorId) participantSet.add(creatorId);
+        for (const r of offerRows.rows) {
+          if (r.status === 'accepted' || r.status === 'pending') {
+            if (r.sender_id) participantSet.add(r.sender_id);
+            if (r.recipient_id) participantSet.add(r.recipient_id);
+          }
+        }
+        const participantIds = Array.from(participantSet);
+
+        thread = await db.query(
+          `INSERT INTO threads (gig_id, thread_type, participant_ids)
+           VALUES ($1, 'gig', $2::uuid[])
+           RETURNING *`,
+          [req.params.gigId, participantIds]
+        );
       }
     }
 

@@ -539,10 +539,36 @@ router.post('/offers/:id/cancel', async (req, res) => {
     }
     const offer = offerRes.rows[0];
 
-    // Mark the original offer cancelled.
+    // Validate replacement_user_id (if provided) BEFORE mutating anything.
+    // The replacement becomes the recipient of a new offer issued under the
+    // band leader's sender_id, so without validation a cancelling dep could
+    // cause the leader to spam any user addressable by UUID. We require the
+    // replacement to be in the cancelling dep's own contacts as a linked TMG
+    // user; it must also not be the dep themselves or the original sender.
+    if (replacement_user_id) {
+      if (replacement_user_id === req.user.id) {
+        return res.status(400).json({ error: 'Cannot suggest yourself as replacement' });
+      }
+      if (replacement_user_id === offer.sender_id) {
+        return res.status(400).json({ error: 'Cannot suggest the original sender as replacement' });
+      }
+      const contactCheck = await db.query(
+        `SELECT 1 FROM contacts
+           WHERE owner_id = $1 AND contact_user_id = $2 LIMIT 1`,
+        [req.user.id, replacement_user_id]
+      );
+      if (contactCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'Replacement must be one of your contacts' });
+      }
+    }
+
+    // Mark the original offer cancelled. Repeat the recipient filter here as
+    // defense-in-depth so the UPDATE is still scoped even if the SELECT guard
+    // above is ever refactored.
     await db.query(
-      `UPDATE offers SET status = 'cancelled', responded_at = NOW() WHERE id = $1`,
-      [id]
+      `UPDATE offers SET status = 'cancelled', responded_at = NOW()
+         WHERE id = $1 AND recipient_id = $2 AND status = 'accepted'`,
+      [id, req.user.id]
     );
 
     // If a replacement was suggested, create a new pending dep offer for them.
