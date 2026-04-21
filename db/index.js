@@ -1,3 +1,18 @@
+// TEMP DIAGNOSTIC: trace the source of the pg-connection-string SSL warning.
+// Remove this block once the warning is silenced.
+process.on('warning', (w) => {
+  if (w && w.message && w.message.indexOf('SSL modes') !== -1) {
+    console.error('[SSL-TRACE] PGSSLMODE =', JSON.stringify(process.env.PGSSLMODE));
+    console.error('[SSL-TRACE] PGHOST    =', JSON.stringify(process.env.PGHOST));
+    console.error('[SSL-TRACE] PGSSLROOTCERT =', JSON.stringify(process.env.PGSSLROOTCERT));
+    console.error('[SSL-TRACE] PGSSLCERT =', JSON.stringify(process.env.PGSSLCERT));
+    console.error('[SSL-TRACE] PGSSLKEY  =', JSON.stringify(process.env.PGSSLKEY));
+    console.error('[SSL-TRACE] PGREQUIRESSL =', JSON.stringify(process.env.PGREQUIRESSL));
+    console.error('[SSL-TRACE] DATABASE_URL set?', !!process.env.DATABASE_URL);
+    console.error('[SSL-TRACE] stack:\n' + w.stack);
+  }
+});
+
 // Replit's helium binding sets PGSSLMODE=require in env. pg-connection-string
 // parses that on pg module init and emits a deprecation warning even if we
 // pass `ssl: false` to Pool. Clear it before `pg` loads for the helium path.
