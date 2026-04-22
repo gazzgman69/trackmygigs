@@ -10751,32 +10751,16 @@ async function openDepPicker() {
     const today = new Date().toISOString().slice(0, 10);
     const upcoming = (gigs || [])
       .filter(g => g.status !== 'cancelled' && (g.date || '').slice(0, 10) >= today)
-      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-      .slice(0, 10);
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
-    const gigRows = upcoming.length
-      ? upcoming.map(g => {
-          const d = new Date(g.date);
-          const dateLabel = isNaN(d) ? (g.date || '') : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-          const times = g.start_time ? `${(g.start_time || '').slice(0, 5)}${g.end_time ? '\u2013' + g.end_time.slice(0, 5) : ''}` : '';
-          const fee = g.fee ? `\u00A3${Math.round(g.fee)}` : '';
-          const bar = g.status === 'tentative' ? 'var(--warning)' : 'var(--success)';
-          return `
-            <div onclick="selectGigForDep('${g.id}')" style="padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:10px;">
-              <div style="width:3px;height:28px;border-radius:2px;background:${bar};flex-shrink:0;"></div>
-              <div style="flex:1;min-width:0;">
-                <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.band_name || g.venue_name || 'Gig')}</div>
-                <div style="font-size:10px;color:var(--text-2);">${escapeHtml(dateLabel)}${times ? ' \u00B7 ' + times : ''}${fee ? ' \u00B7 ' + fee : ''}</div>
-              </div>
-            </div>
-          `;
-        }).join('')
-      : '<div style="padding:20px;text-align:center;color:var(--text-2);font-size:12px;">No upcoming gigs yet. Create a new one below.</div>';
+    // Stash the full upcoming list so "Show more gigs" can re-render without
+    // refetching. Initial view caps at 10 for fast scan; user can expand.
+    window._depPickerAllUpcoming = upcoming;
 
     body.innerHTML = `
       <div class="form-section-label" style="margin-bottom:8px;">Choose a gig to send a dep offer for</div>
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px;">
-        ${gigRows}
+      <div id="depPickerGigList" style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px;">
+        ${renderDepPickerGigRows(upcoming, 10)}
       </div>
 
       <div style="margin-bottom:12px;">
@@ -10811,6 +10795,44 @@ async function openDepPicker() {
     console.error('openDepPicker error:', err);
     body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load gigs. Try again.</div>';
   }
+}
+
+// Renders the rows inside the dep-picker gig list. If there are more gigs
+// than `limit`, appends a "Show more gigs" link that expands to the full list.
+// Passing Infinity shows everything.
+function renderDepPickerGigRows(upcoming, limit) {
+  if (!upcoming || !upcoming.length) {
+    return '<div style="padding:20px;text-align:center;color:var(--text-2);font-size:12px;">No upcoming gigs yet. Create a new one below.</div>';
+  }
+  const visible = upcoming.slice(0, limit);
+  const rows = visible.map(g => {
+    const d = new Date(g.date);
+    const dateLabel = isNaN(d) ? (g.date || '') : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+    const times = g.start_time ? `${(g.start_time || '').slice(0, 5)}${g.end_time ? '\u2013' + g.end_time.slice(0, 5) : ''}` : '';
+    const fee = g.fee ? `\u00A3${Math.round(g.fee)}` : '';
+    const bar = g.status === 'tentative' ? 'var(--warning)' : 'var(--success)';
+    return `
+      <div onclick="selectGigForDep('${g.id}')" style="padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:10px;">
+        <div style="width:3px;height:28px;border-radius:2px;background:${bar};flex-shrink:0;"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.band_name || g.venue_name || 'Gig')}</div>
+          <div style="font-size:10px;color:var(--text-2);">${escapeHtml(dateLabel)}${times ? ' \u00B7 ' + times : ''}${fee ? ' \u00B7 ' + fee : ''}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+  const hiddenCount = upcoming.length - visible.length;
+  const moreLink = hiddenCount > 0
+    ? `<div onclick="expandDepPickerGigs()" style="padding:10px 14px;text-align:center;cursor:pointer;font-size:12px;font-weight:600;color:var(--accent);">Show ${hiddenCount} more gig${hiddenCount === 1 ? '' : 's'}</div>`
+    : '';
+  return rows + moreLink;
+}
+
+// Expands the dep-picker gig list to show every upcoming gig (no cap).
+function expandDepPickerGigs() {
+  const list = document.getElementById('depPickerGigList');
+  const all = window._depPickerAllUpcoming || [];
+  if (list) list.innerHTML = renderDepPickerGigRows(all, Infinity);
 }
 
 function showDepNewGigForm() {
