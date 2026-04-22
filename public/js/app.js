@@ -9304,15 +9304,18 @@ async function openSendInvoice(invoiceId) {
 
 async function confirmSendInvoice(invoiceId) {
   const emailEl = document.getElementById('sendInvoiceEmail');
+  const msgEl = document.getElementById('sendInvoiceMessage');
   const status = document.getElementById('sendInvoiceStatus');
   if (!emailEl || !emailEl.value.trim()) { if (status) status.textContent = 'Email is required.'; return; }
+  const toAddr = emailEl.value.trim();
+  const message = (msgEl && msgEl.value.trim()) || '';
   try {
     // Flip the invoice to 'sent' and persist the recipient email so Chase can
-    // reuse it without re-prompting. The server now auto-stamps sent_at.
+    // reuse it without re-prompting. The server auto-stamps sent_at.
     const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'sent', recipient_email: emailEl.value.trim() })
+      body: JSON.stringify({ status: 'sent', recipient_email: toAddr })
     });
     if (!res.ok) throw new Error('Send failed');
     // Invalidate and refresh the list so totals + status badges update
@@ -9321,13 +9324,66 @@ async function confirmSendInvoice(invoiceId) {
     if (typeof renderInvoicesScreen === 'function') {
       try { await renderInvoicesScreen(); } catch (_) {}
     }
-    if (status) status.textContent = 'Invoice sent.';
+    if (status) status.textContent = 'Invoice saved. Opening email...';
     if (typeof showToast === 'function') showToast('Invoice sent');
+
+    // Grab the invoice so we can build a sensible subject line.
+    let invoice = {};
+    try {
+      const invR = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`);
+      if (invR.ok) invoice = await invR.json();
+    } catch (_) {}
+    const invNum = invoice.invoice_number || `INV-${String(invoiceId).slice(0, 6)}`;
+    const subject = `Invoice ${invNum}`;
+
+    // Touch + Web Share with files: attach the PDF.
+    const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    const canShare = typeof navigator.share === 'function';
+    let shared = false;
+    if (isTouch && canShare && typeof navigator.canShare === 'function') {
+      try {
+        const pdfRes = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}/pdf`, { credentials: 'same-origin' });
+        if (pdfRes.ok) {
+          const blob = await pdfRes.blob();
+          const file = new File([blob], `Invoice_${invNum}.pdf`, { type: 'application/pdf' });
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              files: [file],
+              title: subject,
+              text: `To: ${toAddr}\n\n${message}`,
+            });
+            shared = true;
+          }
+        }
+      } catch (err) {
+        if (!(err && err.name === 'AbortError')) {
+          console.warn('Share with PDF failed, falling back:', err);
+        } else {
+          // User cancelled the share sheet; don't open mailto on top.
+          shared = true;
+        }
+      }
+    }
+
+    // Desktop / fallback: trigger PDF download and open mailto so the user
+    // drags the downloaded PDF into the email.
+    if (!shared) {
+      try {
+        const a = document.createElement('a');
+        a.href = `/api/invoices/${encodeURIComponent(invoiceId)}/pdf`;
+        a.download = `Invoice_${invNum}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 500);
+      } catch (_) {}
+      const mailto = `mailto:${encodeURIComponent(toAddr)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`;
+      window.location.href = mailto;
+    }
+
     setTimeout(() => {
       closePanel('panel-send-invoice');
-      // Re-open the detail panel so the user sees the new status chip
       openInvoiceDetail(invoiceId).catch(() => {});
-    }, 500);
+    }, 600);
   } catch (err) {
     console.error('Send invoice error:', err);
     if (status) status.textContent = 'Could not send invoice. Try again.';
@@ -10270,10 +10326,39 @@ async function deleteInvoice(invoiceId) {
 }
 window.deleteInvoice = deleteInvoice;
 
-function downloadInvoicePDF(invoiceId) {
-  // Open the server-rendered printable invoice in a new tab; it auto-triggers
-  // the browser print dialog so the user can save as PDF.
-  window.open(`/api/print/invoice/${encodeURIComponent(invoiceId)}`, '_blank');
+async function downloadInvoicePDF(invoiceId) {
+  // Fetch the server-rendered PDF and trigger a real download. Works offline
+  // of the print dialog workflow and produces a proper PDF file the user can
+  // attach to an email or text.
+  try {
+    showToast && showToast('Building PDF...');
+    const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}/pdf`, {
+      credentials: 'same-origin',
+    });
+    if (!res.ok) throw new Error(`PDF request failed (${res.status})`);
+    const blob = await res.blob();
+
+    // Try to pick up filename from Content-Disposition; fall back to a sane default.
+    const disp = res.headers.get('Content-Disposition') || '';
+    const m = /filename="?([^"]+)"?/i.exec(disp);
+    const filename = (m && m[1]) || `Invoice_${String(invoiceId).slice(0, 6)}.pdf`;
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      a.remove();
+    }, 500);
+    showToast && showToast('Invoice downloaded');
+  } catch (err) {
+    console.error('Download invoice PDF failed:', err);
+    // Fallback: open the printable HTML version so the user still gets something.
+    window.open(`/api/print/invoice/${encodeURIComponent(invoiceId)}`, '_blank');
+  }
 }
 
 async function chaseInvoicePayment(invoiceId) {

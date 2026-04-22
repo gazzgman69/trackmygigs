@@ -540,9 +540,35 @@
     });
   }
 
-  // Open the user's mail app with the chase pre-filled. Prefers Web Share API
-  // on devices that advertise it for text-only payloads, falls back to mailto.
-  // Also records the chase server-side so chase_count / last_chase_at update.
+  // Fetch the server-rendered invoice PDF as a File suitable for Web Share.
+  // Returns null if the fetch fails or the browser can't share files so the
+  // caller can fall back to mailto (text only).
+  async function fetchInvoicePdfFile(invoiceId) {
+    try {
+      const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}/pdf`, {
+        credentials: 'same-origin',
+      });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      const disp = res.headers.get('Content-Disposition') || '';
+      const m = /filename="?([^"]+)"?/i.exec(disp);
+      const filename = (m && m[1]) || `Invoice_${String(invoiceId).slice(0, 6)}.pdf`;
+      try {
+        return new File([blob], filename, { type: 'application/pdf' });
+      } catch (_) {
+        // Safari <14 / some Android builds don't construct File from Blob;
+        // fall back to returning null so we can go straight to mailto.
+        return null;
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Open the user's mail app with the chase pre-filled. Prefers Web Share
+  // with the PDF attached on touch devices that support sharing files;
+  // falls back to Web Share text-only, then mailto. Also records the chase
+  // server-side so chase_count / last_chase_at update.
   async function sendChaseEmail(invoiceId, recipientEmail, subject, body) {
     let toAddr = recipientEmail;
     if (!toAddr) {
@@ -566,13 +592,33 @@
       window._cachedInvoicesTime = 0;
     } catch (_) {}
 
-    // Web Share is the best mobile experience (picks native mail app), but
-    // most implementations only fire the share sheet for URL/text payloads
-    // and don't pre-fill mail recipient. We use it only when the browser
-    // claims file-less share support AND we're on a touch device; otherwise
-    // mailto gives a better pre-fill.
     const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
     const canShare = typeof navigator.share === 'function';
+
+    // Mobile + files supported: fetch the PDF and try to share it as a file.
+    // This is the golden path: the user picks their mail app and the invoice
+    // arrives as a real attachment.
+    if (isTouch && canShare && typeof navigator.canShare === 'function') {
+      const file = await fetchInvoicePdfFile(invoiceId);
+      if (file && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: subject,
+            text: `To: ${toAddr}\n\n${body}`,
+          });
+          toast('Share sheet opened', 'success');
+          const root = document.getElementById('aiModalRoot');
+          if (root) root.remove();
+          return;
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;
+          // fall through to non-file share / mailto
+        }
+      }
+    }
+
+    // Mobile + share but no file support: text-only share sheet.
     if (isTouch && canShare) {
       try {
         await navigator.share({ title: subject, text: `To: ${toAddr}\n\n${body}` });
@@ -581,17 +627,26 @@
         if (root) root.remove();
         return;
       } catch (err) {
-        // User cancelled or share rejected — fall through to mailto.
         if (err && err.name === 'AbortError') return;
       }
     }
 
-    // mailto: covers desktop (opens default mail client) and any mobile
-    // browser where Web Share didn't run. Most mail apps honour subject+body.
+    // Desktop / fallback: mailto. Most mail apps honour subject+body.
+    // Can't attach files from mailto, so tell the user the PDF is downloading
+    // separately and they can drag it onto the email.
+    try {
+      // Kick off a PDF download so the user has the file ready to attach.
+      const a = document.createElement('a');
+      a.href = `/api/invoices/${encodeURIComponent(invoiceId)}/pdf`;
+      a.download = `Invoice_${String(invoiceId).slice(0, 6)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 500);
+    } catch (_) {}
+
     const mailto = `mailto:${encodeURIComponent(toAddr)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     window.location.href = mailto;
-    toast('Opening email client...', 'success');
-    // Close the AI modal so the user lands back on the invoice
+    toast('Opening email + downloading PDF...', 'success');
     const root = document.getElementById('aiModalRoot');
     if (root) setTimeout(() => root.remove(), 400);
   }

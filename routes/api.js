@@ -6,6 +6,7 @@ const calendarRouter = require('./calendar');
 const { lookupPostcode, normalise: normalisePostcode } = require('../lib/postcodes');
 const { haversineMiles } = require('../lib/geo');
 const { normaliseE164 } = require('../lib/phone');
+const { renderInvoicePdfBuffer, buildInvoiceFilename } = require('../lib/invoicePdf');
 
 const router = express.Router();
 
@@ -3283,6 +3284,41 @@ router.get('/print/invoice/:id', async (req, res) => {
       .send(printPage(`Invoice ${inv.invoice_number || ''} \u00b7 TrackMyGigs`, body));
   } catch (err) {
     console.error('Print invoice error:', err);
+    res.status(500).send('Failed to build invoice PDF');
+  }
+});
+
+// Server-rendered PDF for the invoice. Used by the Download button on the
+// invoice detail screen, the initial Send flow, and the AI chase email's
+// Web Share file attachment. Mirrors the layout of /print/invoice/:id.
+router.get('/invoices/:id/pdf', async (req, res) => {
+  try {
+    const userR = await db.query(
+      `SELECT display_name, name, business_address, vat_number, bank_details
+       FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const me = userR.rows[0] || {};
+
+    const invR = await db.query(
+      `SELECT i.*, g.venue_name AS g_venue, g.date AS g_date, g.band_name AS g_band
+       FROM invoices i
+       LEFT JOIN gigs g ON i.gig_id = g.id
+       WHERE i.id = $1 AND i.user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (invR.rows.length === 0) return res.status(404).send('Invoice not found');
+    const inv = invR.rows[0];
+
+    const pdf = await renderInvoicePdfBuffer(inv, me);
+    const filename = buildInvoiceFilename(inv);
+    const disposition = req.query.inline === '1' ? 'inline' : 'attachment';
+    res.set('Content-Type', 'application/pdf')
+      .set('Content-Disposition', `${disposition}; filename="${filename}"`)
+      .set('Cache-Control', 'private, no-store')
+      .send(pdf);
+  } catch (err) {
+    console.error('Invoice PDF error:', err);
     res.status(500).send('Failed to build invoice PDF');
   }
 });
