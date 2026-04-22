@@ -3285,10 +3285,7 @@ function buildInvoicesHTML(content, invoices) {
       <div style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
         ${chipsHtml}
       </div>
-      <div id="invoicesList" style="padding:0 16px;"></div>
-      <div style="padding:0 16px;margin-top:12px;">
-        <button onclick="openStandaloneInvoice()" class="pill-g">Create standalone invoice</button>
-      </div>`;
+      <div id="invoicesList" style="padding:0 16px;"></div>`;
 
     content.innerHTML = html;
     renderInvoicesList(initialFilter);
