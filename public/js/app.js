@@ -3530,8 +3530,12 @@ function buildOffersHTML(content, offers) {
       </div>
     </div>
 
-    <div class="tbar" style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;">
+    <div class="tbar" style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;gap:0;">
       <div class="tb ac">My Offers (${pending.length})</div>
+      <div class="tb" onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="cursor:pointer;display:flex;align-items:center;gap:6px;">
+        <span>Marketplace &#x26A1;</span>
+        <span id="marketplaceMenuBadge" style="display:none;background:var(--accent);color:#000;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;min-width:18px;text-align:center;line-height:1;">0</span>
+      </div>
     </div>
 
     <!-- Global snooze toggle -->
@@ -3895,10 +3899,6 @@ function buildProfileHTML(content, profile) {
         <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Menu</div>
         <div onclick="openPanel('panel-network'); openNetworkPanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span style="color:var(--text);font-size:14px;">My Network</span>
-          <span style="color:var(--accent);font-size:16px;">›</span>
-        </div>
-        <div onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
-          <span style="color:var(--text);font-size:14px;display:flex;align-items:center;gap:8px;">Urgent gigs <span id="marketplaceMenuBadge" style="display:none;background:var(--accent);color:#000;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;min-width:18px;text-align:center;">0</span></span>
           <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
         <div onclick="openPanel('panel-repertoire'); openRepertoirePanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">

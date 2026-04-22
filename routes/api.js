@@ -4413,6 +4413,7 @@ router.get('/marketplace', async (req, res) => {
       date_from,
       date_to,
       sort,
+      q,
     } = req.query || {};
 
     // Load user defaults so filter omissions fall back to personal prefs.
@@ -4459,6 +4460,14 @@ router.get('/marketplace', async (req, res) => {
     if (date_from) { clauses.push(`mg.gig_date >= $${p++}`); params.push(date_from); }
     if (date_to)   { clauses.push(`mg.gig_date <= $${p++}`); params.push(date_to); }
 
+    // Free-text search across title + venue name (case-insensitive).
+    const qTrim = typeof q === 'string' ? q.trim() : '';
+    if (qTrim) {
+      clauses.push(`(mg.title ILIKE $${p} OR mg.venue_name ILIKE $${p})`);
+      params.push(`%${qTrim}%`);
+      p++;
+    }
+
     // Hide from users already blocked by / blocking the poster, matching the
     // directory search contract. Keeps abuse-report flows consistent across
     // surfaces.
@@ -4493,6 +4502,15 @@ router.get('/marketplace', async (req, res) => {
 
     const result = await db.query(sql, params);
     let rows = await attachDistance(result.rows, userId);
+
+    // Mark rows outside the user's travel radius so the UI can surface a
+    // "farther than your usual radius" flag when show_outside_radius is on.
+    if (u.home_lat != null && u.home_lng != null) {
+      rows = rows.map((r) => ({
+        ...r,
+        outside_radius: r.distance_miles != null && r.distance_miles > maxDistance,
+      }));
+    }
 
     if (!showOutside && u.home_lat != null && u.home_lng != null) {
       rows = rows.filter((r) => r.distance_miles == null || r.distance_miles <= maxDistance);
@@ -4699,6 +4717,7 @@ router.get('/marketplace/:id/applicants', async (req, res) => {
        FROM marketplace_applications ma
        JOIN users u ON u.id = ma.applicant_user_id
        WHERE ma.marketplace_gig_id = $1
+         AND ma.status <> 'withdrawn'
        ORDER BY
          CASE ma.status WHEN 'accepted' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
          ma.created_at ASC`,
@@ -4874,6 +4893,59 @@ router.post('/marketplace/:id/cancel', async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     console.error('[POST /marketplace/:id/cancel]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// POST /api/marketplace/:id/withdraw — applicant pulls their pending application.
+// Only valid while the application is still pending and the gig is still open:
+// once picked or filled the row is locked in as the booking record.
+router.post('/marketplace/:id/withdraw', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await db.query(
+      `UPDATE marketplace_applications
+       SET status = 'withdrawn'
+       WHERE marketplace_gig_id = $1
+         AND applicant_user_id = $2
+         AND status = 'pending'
+       RETURNING id`,
+      [id, userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'not_found_or_not_pending' });
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[POST /marketplace/:id/withdraw]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// PATCH /api/marketplace/:id/application — applicant edits the note on their
+// pending application. Locked once the application is picked or the gig fills.
+router.patch('/marketplace/:id/application', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const { note } = req.body || {};
+    const clean = note == null ? null : String(note).slice(0, 1000);
+    const result = await db.query(
+      `UPDATE marketplace_applications
+       SET note = $3
+       WHERE marketplace_gig_id = $1
+         AND applicant_user_id = $2
+         AND status = 'pending'
+       RETURNING id, note`,
+      [id, userId, clean]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'not_found_or_not_pending' });
+    }
+    return res.json({ ok: true, note: result.rows[0].note });
+  } catch (err) {
+    console.error('[PATCH /marketplace/:id/application]', err);
     return res.status(500).json({ error: 'server_error' });
   }
 });

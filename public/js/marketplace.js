@@ -51,6 +51,9 @@
     instruments: [],         // active filter chips
     minFeePence: null,       // number or null (Paid tab only)
     sort: 'soonest',
+    q: '',                   // free-text search (title + venue)
+    dateRange: 'any',        // 'any' | 'week' | 'month'
+    showOutside: false,      // include posts beyond my travel radius
     paid: null,              // last fetched list for Paid
     free: null,              // last fetched list for Free
     myPosts: null,
@@ -230,9 +233,25 @@
         <span style="font-size:11px;color:var(--text-2);">Paid gigs must meet £30 floor.</span>
       </div>` : `<div style="padding:4px 0;font-size:11px;color:var(--text-3);">Showing legitimate free posts only (charity, open mic, showcases, favours).</div>`;
 
+    function dateChip(val, label) {
+      const on = state.dateRange === val;
+      return `<button onclick="_mktSetDateRange('${escAttr(val)}')" style="padding:5px 11px;background:${on?'var(--accent)':'var(--card)'};color:${on?'#000':'var(--text)'};border:1px solid ${on?'var(--accent)':'var(--border)'};border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">${esc(label)}</button>`;
+    }
+
+    const outsideOn = state.showOutside;
+    const outsideBtn = `<button onclick="_mktToggleOutside()" style="padding:5px 11px;background:${outsideOn?'var(--accent)':'var(--card)'};color:${outsideOn?'#000':'var(--text)'};border:1px solid ${outsideOn?'var(--accent)':'var(--border)'};border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">${outsideOn?'&#x2713; ':''}Show all (inc. outside radius)</button>`;
+
     return `<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <input type="search" id="mktSearch" value="${escAttr(state.q)}" placeholder="Search title or venue" oninput="_mktSetQuery(this.value)" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px;" />
+        ${state.q ? `<button onclick="_mktSetQuery('');document.getElementById('mktSearch').value='';" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--text-2);font-size:12px;cursor:pointer;">Clear</button>` : ''}
+      </div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">${chips}</div>
       ${feeRow}
+      <div style="display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;border-top:1px solid var(--border);">
+        ${dateChip('any','Any date')}${dateChip('week','This week')}${dateChip('month','This month')}
+        ${outsideBtn}
+      </div>
       <div style="display:flex;align-items:center;gap:8px;padding-top:6px;border-top:1px solid var(--border);">
         <span style="font-size:11px;color:var(--text-2);">Sort</span>
         <select onchange="_mktSetSort(this.value)" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12px;">${sortOpts}</select>
@@ -255,6 +274,8 @@
     const modeBadge = `<span style="font-size:10px;color:var(--text-2);padding:2px 6px;border:1px solid var(--border);border-radius:4px;">${esc(gig.mode === 'fcfs' ? 'FCFS' : 'Pick')}</span>`;
     const applicantBadge = gig.mode === 'pick' && gig.applicant_count > 0
       ? `<span style="font-size:10px;color:var(--accent);padding:2px 6px;border:1px solid var(--accent);border-radius:4px;">${gig.applicant_count} applicant${gig.applicant_count===1?'':'s'}</span>` : '';
+    const outsideBadge = gig.outside_radius
+      ? `<span style="font-size:10px;color:var(--text-2);padding:2px 6px;border:1px dashed var(--text-2);border-radius:4px;">Beyond radius</span>` : '';
 
     return `<div onclick="_mktOpenDetail(${gig.id})" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;cursor:pointer;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
@@ -266,8 +287,8 @@
         </div>
         <div style="text-align:right;flex-shrink:0;">${feeLine}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
-        ${modeBadge}${applicantBadge}
+      <div style="display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);flex-wrap:wrap;">
+        ${modeBadge}${applicantBadge}${outsideBadge}
         <span style="flex:1;"></span>
         <span style="font-size:10px;color:var(--text-3);">${esc(fmtRelative(gig.created_at))}</span>
       </div>
@@ -368,7 +389,8 @@
     const body = document.getElementById('marketplaceDetailBody');
     if (body) body.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>`;
     try {
-      const gig = await api('/api/marketplace/' + encodeURIComponent(id));
+      const r = await api('/api/marketplace/' + encodeURIComponent(id));
+      const gig = (r && r.gig) ? r.gig : r;
       renderDetail(gig);
     } catch (e) {
       if (body) body.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-2);">Couldn't load gig: ${esc(e.message || 'error')}</div>`;
@@ -378,6 +400,10 @@
   async function renderDetail(gig) {
     const body = document.getElementById('marketplaceDetailBody');
     if (!body) return;
+
+    // Stash the currently rendered detail so handlers (Edit note, applicant
+    // preview) can read it without another round-trip.
+    state.detail = gig;
 
     const me = window._cachedProfile || {};
     const myId = me.id || me.user_id;
@@ -452,23 +478,35 @@
   }
 
   function renderApplicantActions(gig) {
-    if (gig.status === 'filled') {
+    if (gig.status === 'filled' && !gig.my_application) {
       return `<div style="margin-top:20px;padding:14px;background:var(--card);border:1px solid var(--border);border-radius:12px;text-align:center;">
         <div style="font-size:13px;color:var(--text-2);">This gig has been filled. Check similar open gigs on Browse.</div>
       </div>`;
     }
-    if (gig.status !== 'open') {
+    if (gig.status !== 'open' && !gig.my_application) {
       return `<div style="margin-top:20px;padding:14px;background:var(--card);border:1px solid var(--border);border-radius:12px;text-align:center;">
         <div style="font-size:13px;color:var(--text-2);">This post is no longer active (${esc(gig.status)}).</div>
       </div>`;
     }
 
     // Already applied?
-    if (gig.my_application_status) {
-      const s = gig.my_application_status;
-      const label = s === 'pending' ? 'Your application is in.' : s === 'accepted' ? 'You got this one 🎉' : 'Not selected this time.';
+    const myApp = gig.my_application;
+    if (myApp) {
+      const s = myApp.status;
+      const label = s === 'pending' ? 'Your application is in.'
+        : s === 'accepted' ? 'You got this one \u{1F389}'
+        : s === 'withdrawn' ? 'You withdrew this application.'
+        : 'Not selected this time.';
+      const noteBlock = myApp.note ? `<div style="font-size:12px;color:var(--text-2);margin-top:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;text-align:left;white-space:pre-wrap;">${esc(myApp.note)}</div>` : '';
+      const manageRow = (s === 'pending' && gig.status === 'open')
+        ? `<div style="display:flex;gap:8px;margin-top:12px;justify-content:center;flex-wrap:wrap;">
+             <button onclick="_mktEditNote(${gig.id})" style="background:none;border:1px solid var(--border);color:var(--text);border-radius:16px;padding:6px 14px;font-size:12px;cursor:pointer;">Edit note</button>
+             <button onclick="_mktWithdraw(${gig.id})" style="background:none;border:1px solid var(--danger,#f85149);color:var(--danger,#f85149);border-radius:16px;padding:6px 14px;font-size:12px;cursor:pointer;">Withdraw</button>
+           </div>` : '';
       return `<div style="margin-top:20px;padding:14px;background:var(--card);border:1px solid var(--accent);border-radius:12px;text-align:center;">
         <div style="font-size:14px;color:var(--text);font-weight:600;">${esc(label)}</div>
+        ${noteBlock}
+        ${manageRow}
       </div>`;
     }
 
@@ -515,6 +553,9 @@
         host.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-2);font-size:12px;background:var(--card);border:1px solid var(--border);border-radius:10px;">No applicants yet. Share this gig around.</div>`;
         return;
       }
+      // Stash the list so the profile-preview modal can look up the full
+      // applicant object without a second fetch.
+      state.applicants = list;
       host.innerHTML = list.map(a => applicantRow(gigId, a)).join('');
     } catch (e) {
       host.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-2);font-size:12px;">Couldn't load applicants.</div>`;
@@ -522,26 +563,80 @@
   }
 
   function applicantRow(gigId, a) {
-    const avatar = a.avatar_url
-      ? `<img src="${escAttr(a.avatar_url)}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;" />`
+    const photo = a.photo_url || a.avatar_url;
+    const avatar = photo
+      ? `<img src="${escAttr(photo)}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;" />`
       : `<div style="width:40px;height:40px;border-radius:50%;background:var(--accent);color:#000;display:flex;align-items:center;justify-content:center;font-weight:700;">${esc((a.name||'?')[0])}</div>`;
     const instrs = Array.isArray(a.instruments) && a.instruments.length
       ? `<div style="font-size:11px;color:var(--text-2);margin-top:2px;">${a.instruments.map(i=>esc(i)).join(' · ')}</div>` : '';
     const note = a.note ? `<div style="font-size:12px;color:var(--text);margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;white-space:pre-wrap;">${esc(a.note)}</div>` : '';
     const dist = a.distance_miles != null ? ` · ${esc(fmtDistance(a.distance_miles))}` : '';
+    const newBadge = a.is_new_to_tmg
+      ? `<span style="margin-left:6px;padding:1px 6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">New</span>` : '';
+    const applicantId = String(a.user_id || a.applicant_user_id || '');
     return `<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:8px;">
       <div style="display:flex;align-items:center;gap:10px;">
         ${avatar}
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;color:var(--text);font-weight:600;">${esc(a.name || 'TrackMyGigs user')}</div>
+        <div style="flex:1;min-width:0;cursor:pointer;" onclick="_mktShowApplicant('${escAttr(applicantId)}')">
+          <div style="font-size:13px;color:var(--text);font-weight:600;text-decoration:underline;text-decoration-color:var(--text-3);text-underline-offset:2px;">${esc(a.name || 'TrackMyGigs user')}${newBadge}</div>
           ${instrs}
-          <div style="font-size:10px;color:var(--text-3);">Applied ${esc(fmtRelative(a.created_at))}${dist}</div>
+          <div style="font-size:10px;color:var(--text-3);">Applied ${esc(fmtRelative(a.applied_at || a.created_at))}${dist}</div>
         </div>
-        <button onclick="_mktPick(${gigId}, '${escAttr(a.applicant_user_id)}')" style="background:var(--accent);color:#000;border:none;border-radius:16px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;">Pick</button>
+        <button onclick="_mktPick(${gigId}, '${escAttr(applicantId)}')" style="background:var(--accent);color:#000;border:none;border-radius:16px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;">Pick</button>
       </div>
       ${note}
     </div>`;
   }
+
+  // Profile-preview modal: uses the applicant data already fetched by
+  // loadApplicants. No second round-trip so this is instant.
+  window._mktShowApplicant = function (applicantId) {
+    const list = state.applicants || [];
+    const a = list.find(x => String(x.user_id || x.applicant_user_id) === String(applicantId));
+    if (!a) return;
+    const photo = a.photo_url || a.avatar_url;
+    const avatar = photo
+      ? `<img src="${escAttr(photo)}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;" />`
+      : `<div style="width:72px;height:72px;border-radius:50%;background:var(--accent);color:#000;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:28px;">${esc((a.name||'?')[0])}</div>`;
+    const instrs = Array.isArray(a.instruments) && a.instruments.length
+      ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">${a.instruments.map(i=>`<span style="padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;font-size:11px;color:var(--text);">${esc(i)}</span>`).join('')}</div>` : '';
+    const gigsDone = a.gigs_completed == null ? 0 : parseInt(a.gigs_completed, 10);
+    const statBlocks = `<div style="display:flex;gap:8px;margin-top:14px;">
+      <div style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;text-align:center;">
+        <div style="font-size:18px;font-weight:800;color:var(--text);">${gigsDone}</div>
+        <div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">Gigs logged</div>
+      </div>
+      ${a.distance_miles != null ? `<div style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;text-align:center;">
+        <div style="font-size:18px;font-weight:800;color:var(--text);">${esc(fmtDistance(a.distance_miles))}</div>
+        <div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">From venue</div>
+      </div>` : ''}
+    </div>`;
+    const bioBlock = a.bio
+      ? `<div style="margin-top:14px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.5;">${esc(a.bio)}</div>`
+      : `<div style="margin-top:14px;padding:10px 12px;background:var(--bg);border:1px dashed var(--border);border-radius:10px;font-size:12px;color:var(--text-2);">No bio yet.</div>`;
+    const newNote = a.is_new_to_tmg
+      ? `<div style="margin-top:10px;font-size:11px;color:var(--text-2);">\u26A0 New to TrackMyGigs — no gig history yet.</div>` : '';
+
+    const modal = document.createElement('div');
+    modal.id = 'mktApplicantModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+    modal.onclick = function (e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;max-width:360px;width:100%;max-height:85vh;overflow:auto;">
+      <div style="display:flex;align-items:center;gap:14px;">
+        ${avatar}
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:18px;font-weight:700;color:var(--text);">${esc(a.name || 'TrackMyGigs user')}</div>
+          ${a.is_new_to_tmg ? `<div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">New to TrackMyGigs</div>` : ''}
+        </div>
+        <button onclick="document.getElementById('mktApplicantModal').remove()" style="background:none;border:none;color:var(--text-2);font-size:22px;cursor:pointer;line-height:1;">&times;</button>
+      </div>
+      ${instrs}
+      ${statBlocks}
+      ${bioBlock}
+      ${newNote}
+    </div>`;
+    document.body.appendChild(modal);
+  };
 
   // ---------- COMPOSE -----------------------------------------------------
 
@@ -733,6 +828,23 @@
     render();
   };
   window._mktReload = function () { loadBrowse(true); };
+  window._mktSetQuery = function (val) {
+    state.q = (val || '').trim();
+    clearTimeout(window._mktQDeb);
+    // Debounce so each keystroke doesn't hit the API.
+    window._mktQDeb = setTimeout(() => { loadBrowse(true); }, 300);
+  };
+  window._mktSetDateRange = function (val) {
+    if (state.dateRange === val) val = 'any';
+    state.dateRange = val;
+    loadBrowse(true);
+    render();
+  };
+  window._mktToggleOutside = function () {
+    state.showOutside = !state.showOutside;
+    loadBrowse(true);
+    render();
+  };
 
   window._mktApply = async function (gigId) {
     const noteEl = document.getElementById('mktApplyNote');
@@ -748,11 +860,46 @@
         toast('Application sent.');
       }
       // Refresh detail view
-      const gig = await api('/api/marketplace/' + encodeURIComponent(gigId));
-      renderDetail(gig);
+      const r2 = await api('/api/marketplace/' + encodeURIComponent(gigId));
+      renderDetail((r2 && r2.gig) ? r2.gig : r2);
       refreshMarketplaceBadge();
     } catch (e) {
       toast(e.message || 'Couldn\u2019t apply.');
+    }
+  };
+
+  window._mktWithdraw = async function (gigId) {
+    if (!confirm('Withdraw your application? You can re-apply while the post is still open.')) return;
+    try {
+      await api('/api/marketplace/' + encodeURIComponent(gigId) + '/withdraw', { method: 'POST' });
+      toast('Application withdrawn.');
+      const r2 = await api('/api/marketplace/' + encodeURIComponent(gigId));
+      renderDetail((r2 && r2.gig) ? r2.gig : r2);
+      refreshMarketplaceBadge();
+      // My Applications list reads status live, so refresh it too.
+      if (state.view === 'applications') {
+        loadMyApplications().then(() => render());
+      }
+    } catch (e) {
+      toast(e.message || 'Couldn\u2019t withdraw.');
+    }
+  };
+
+  window._mktEditNote = async function (gigId) {
+    // Pull the current note out of the rendered state so the prompt is seeded.
+    const existing = (state.detail && state.detail.my_application && state.detail.my_application.note) || '';
+    const next = prompt('Update your note to the poster:', existing);
+    if (next == null) return; // Cancel
+    try {
+      await api('/api/marketplace/' + encodeURIComponent(gigId) + '/application', {
+        method: 'PATCH',
+        body: JSON.stringify({ note: next.slice(0, 1000) }),
+      });
+      toast('Note updated.');
+      const r2 = await api('/api/marketplace/' + encodeURIComponent(gigId));
+      renderDetail((r2 && r2.gig) ? r2.gig : r2);
+    } catch (e) {
+      toast(e.message || 'Couldn\u2019t update note.');
     }
   };
 
@@ -764,8 +911,8 @@
         body: JSON.stringify({ applicant_user_id: userId }),
       });
       toast('Picked. Applicant has been notified.');
-      const gig = await api('/api/marketplace/' + encodeURIComponent(gigId));
-      renderDetail(gig);
+      const r2 = await api('/api/marketplace/' + encodeURIComponent(gigId));
+      renderDetail((r2 && r2.gig) ? r2.gig : r2);
     } catch (e) {
       toast(e.message || 'Couldn\u2019t pick.');
     }
@@ -798,14 +945,32 @@
 
   // ---------- data loads --------------------------------------------------
 
+  function computeDateBounds(range) {
+    if (range !== 'week' && range !== 'month') return {};
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const from = today.toISOString().slice(0, 10);
+    const end = new Date(today);
+    if (range === 'week') end.setDate(end.getDate() + 7);
+    else end.setMonth(end.getMonth() + 1);
+    const to = end.toISOString().slice(0, 10);
+    return { from, to };
+  }
+
   async function loadBrowse(silent) {
     state.loading = true;
     if (!silent) render();
     const params = new URLSearchParams();
-    params.set('tab', state.tab);
+    // Backend expects is_free=true/false rather than tab= — flip here.
+    params.set('is_free', state.tab === 'free' ? 'true' : 'false');
     params.set('sort', state.sort);
-    if (state.instruments.length) params.set('instruments', state.instruments.join(','));
+    if (state.instruments.length) params.set('instrument', state.instruments.join(','));
     if (state.tab === 'paid' && state.minFeePence != null) params.set('min_fee_pence', String(state.minFeePence));
+    if (state.q) params.set('q', state.q);
+    if (state.showOutside) params.set('show_outside_radius', 'true');
+    const bounds = computeDateBounds(state.dateRange);
+    if (bounds.from) params.set('date_from', bounds.from);
+    if (bounds.to)   params.set('date_to',   bounds.to);
     try {
       const r = await api('/api/marketplace?' + params.toString());
       const list = (r && r.gigs) || [];
