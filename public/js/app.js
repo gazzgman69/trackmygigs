@@ -3526,7 +3526,7 @@ function buildOffersHTML(content, offers) {
           <span style="font-size:12px;font-weight:700;color:var(--danger);">${declinedN}</span>
           <span style="font-size:10px;color:var(--danger);">&#x2715;</span>
         </div>
-        <button onclick="openPanel('send-dep-picker')" style="background:var(--accent);color:#000;border:none;border-radius:20px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">Send dep</button>
+        <button onclick="openDepPicker()" style="background:var(--accent);color:#000;border:none;border-radius:20px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">Send dep</button>
       </div>
     </div>
 
