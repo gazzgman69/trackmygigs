@@ -3283,7 +3283,7 @@ function buildInvoicesHTML(content, invoices) {
           <div style="font-size:24px;font-weight:700;color:var(--text);">Invoices</div>
           <div style="font-size:13px;color:var(--text-2);margin-top:2px;">${invoices.length} total &middot; &pound;${(paid + overdue + draft + sent).toFixed(0)} invoiced</div>
         </div>
-        <button onclick="openStandaloneInvoice()" class="pill-g" style="flex-shrink:0;white-space:nowrap;">+ New</button>
+        <button onclick="openStandaloneInvoice()" style="background:var(--accent);color:#000;border:none;border-radius:24px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0;white-space:nowrap;">+ New</button>
       </div>
       <div style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
         ${chipsHtml}
