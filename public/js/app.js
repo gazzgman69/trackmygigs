@@ -2719,7 +2719,22 @@ function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
     const widthPct = (1 / 7) * 100;
     const bg = ab.kind === 'travel_out' ? 'rgba(240,165,0,.10)' : 'rgba(88,166,255,.10)';
     const border = ab.kind === 'travel_out' ? 'rgba(240,165,0,.35)' : 'rgba(88,166,255,.35)';
-    html += `<div style="position:absolute;top:${top}px;height:${height}px;left:calc(${leftPct}% + 1px);width:calc(${widthPct}% - 2px);background:${bg};border-left:2px dashed ${border};border-radius:3px;pointer-events:none;"></div>`;
+    // Week columns are narrow, so stack the label: "Leave" over "HH:MM".
+    // Only show when the halo is tall enough for both lines to fit cleanly.
+    const leaveHH = String(Math.floor(ab.startMin / 60)).padStart(2, '0');
+    const leaveMM = String(ab.startMin % 60).padStart(2, '0');
+    const timeStr = `${leaveHH}:${leaveMM}`;
+    const tipText = ab.kind === 'travel_out'
+      ? `Leave by ${timeStr} (${ab.label || 'drive + load-in'})`
+      : (ab.label || '');
+    const showLabel = ab.kind === 'travel_out' && height >= 26;
+    const labelHtml = showLabel
+      ? `<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:9px;font-weight:600;color:var(--accent);line-height:1.1;pointer-events:none;overflow:hidden;">
+           <span>Leave</span>
+           <span>${timeStr}</span>
+         </div>`
+      : '';
+    html += `<div title="${escapeHtml(tipText)}" style="position:absolute;top:${top}px;height:${height}px;left:calc(${leftPct}% + 1px);width:calc(${widthPct}% - 2px);background:${bg};border-left:2px dashed ${border};border-radius:3px;pointer-events:none;overflow:hidden;">${labelHtml}</div>`;
   });
 
   // Timed events
