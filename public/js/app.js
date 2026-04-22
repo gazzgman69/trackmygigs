@@ -3278,9 +3278,12 @@ function buildInvoicesHTML(content, invoices) {
     }).join('');
 
     let html = `
-      <div style="padding:16px 20px 8px;">
-        <div style="font-size:24px;font-weight:700;color:var(--text);">Invoices</div>
-        <div style="font-size:13px;color:var(--text-2);margin-top:2px;">${invoices.length} total &middot; &pound;${(paid + overdue + draft + sent).toFixed(0)} invoiced</div>
+      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div style="min-width:0;">
+          <div style="font-size:24px;font-weight:700;color:var(--text);">Invoices</div>
+          <div style="font-size:13px;color:var(--text-2);margin-top:2px;">${invoices.length} total &middot; &pound;${(paid + overdue + draft + sent).toFixed(0)} invoiced</div>
+        </div>
+        <button onclick="openStandaloneInvoice()" class="pill-g" style="flex-shrink:0;white-space:nowrap;">+ New</button>
       </div>
       <div style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
         ${chipsHtml}
@@ -5335,8 +5338,10 @@ function handleQuickAction(action) {
   if (action === 'add-gig') {
     openGigWizard();
   } else if (action === 'invoice') {
-    openPanel('panel-invoice');
-    initInvoicePanel();
+    // Open the full Invoices list screen (overdue/draft/sent/paid + "+ New").
+    // The in-screen + New button opens panel-invoice for create; this pill is
+    // the single entry point that gives access to both list and create paths.
+    showScreen('invoices');
   } else if (action === 'block-date') {
     openPanel('panel-block');
   } else if (action === 'receipt') {
@@ -9470,6 +9475,11 @@ async function openStandaloneInvoice() {
   const linked = document.getElementById('invLinkedGig');
   if (linked) linked.value = '';
   openPanel('panel-invoice');
+  // Wire gig dropdown, saved-client auto-fill, preview listeners, invoice
+  // number generation. Without this the panel opens but auto-fill and live
+  // preview do not work (regression from when the nav pill called this
+  // itself and the screen-level "+ New" button skipped it).
+  if (typeof initInvoicePanel === 'function') initInvoicePanel();
 }
 
 async function openSendInvoice(invoiceId) {
