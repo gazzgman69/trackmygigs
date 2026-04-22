@@ -3914,4 +3914,85 @@ router.post('/user-reports', async (req, res) => {
   }
 });
 
+// Phase IX-G: Admin review queue for directory reports.
+// requireAdmin piggybacks on authMiddleware (already applied at router level)
+// and checks the is_admin column set by the migration bootstrap.
+function requireAdmin(req, res, next) {
+  if (!req.user || req.user.is_admin !== true) {
+    return res.status(403).json({ error: 'admin_required' });
+  }
+  next();
+}
+
+router.get('/admin/reports', requireAdmin, async (req, res) => {
+  try {
+    const status = (req.query.status || 'open').toString();
+    let whereClause;
+    if (status === 'all') {
+      whereClause = '';
+    } else if (status === 'resolved' || status === 'dismissed') {
+      whereClause = `WHERE r.resolution_status = $1`;
+    } else {
+      // default: open = not yet acted on
+      whereClause = `WHERE r.resolution_status IS NULL`;
+    }
+    const params = (status === 'resolved' || status === 'dismissed') ? [status] : [];
+    const result = await db.query(
+      `SELECT r.id, r.reason_category, r.reason_text, r.created_at,
+              r.resolution_status, r.resolved_at, r.resolver_id,
+              r.reporter_id, r.target_id,
+              reporter.email AS reporter_email,
+              reporter.name  AS reporter_name,
+              target.email   AS target_email,
+              target.name    AS target_name,
+              resolver.email AS resolver_email,
+              resolver.name  AS resolver_name
+         FROM user_reports r
+         LEFT JOIN users reporter ON reporter.id = r.reporter_id
+         LEFT JOIN users target   ON target.id = r.target_id
+         LEFT JOIN users resolver ON resolver.id = r.resolver_id
+         ${whereClause}
+         ORDER BY r.created_at DESC
+         LIMIT 200`,
+      params
+    );
+    return res.json({ reports: result.rows });
+  } catch (err) {
+    console.error('[admin/reports] list error:', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+async function setReportStatus(req, res, status) {
+  try {
+    const id = req.params.id;
+    if (!id) return res.status(400).json({ error: 'id_required' });
+    const result = await db.query(
+      `UPDATE user_reports
+          SET resolution_status = $1,
+              resolved_at = NOW(),
+              resolver_id = $2
+        WHERE id = $3
+          AND resolution_status IS NULL
+        RETURNING id`,
+      [status, req.user.id, id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'report_not_found_or_already_actioned' });
+    }
+    return res.json({ ok: true, id: result.rows[0].id, status });
+  } catch (err) {
+    console.error('[admin/reports] update error:', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+}
+
+router.post('/admin/reports/:id/resolve', requireAdmin, (req, res) =>
+  setReportStatus(req, res, 'resolved')
+);
+
+router.post('/admin/reports/:id/dismiss', requireAdmin, (req, res) =>
+  setReportStatus(req, res, 'dismissed')
+);
+
 module.exports = router;

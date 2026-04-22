@@ -1795,7 +1795,9 @@ body.theme-teal {
   align-self: flex-start;
 }
 
-/* Bottom sheet for kebab actions + report categories */
+/* Bottom sheet for kebab actions + report categories.
+   cursor: pointer is required so iOS Safari fires click events on the
+   backdrop tap; without it, tap-to-dismiss silently swallows on iOS. */
 .sheet-overlay {
   position: fixed;
   inset: 0;
@@ -1806,6 +1808,11 @@ body.theme-teal {
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.sheet-overlay .sheet-panel {
+  cursor: default;
 }
 .sheet-panel {
   background: var(--card);

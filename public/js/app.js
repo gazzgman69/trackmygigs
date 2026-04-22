@@ -26,8 +26,15 @@ if (window.visualViewport) {
 // scrollable element so nested scroll still works as expected.
 (function enableScrollAnywhere() {
   function findActiveScrollable() {
-    var openPanel = document.querySelector('.panel-overlay.open .panel-body');
-    if (openPanel) return openPanel;
+    // Prefer the topmost open panel. Stacked panels (e.g. profile over
+    // edit-profile) both carry .open, and the later DOM node is visually on
+    // top, so the last match wins.
+    var openPanels = document.querySelectorAll('.panel-overlay.open');
+    if (openPanels.length) {
+      var top = openPanels[openPanels.length - 1];
+      var body = top.querySelector('.panel-body');
+      if (body) return body;
+    }
     var screen = document.querySelector('.screen.active .app-content')
               || document.querySelector('.app-content');
     return screen || null;

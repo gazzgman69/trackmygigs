@@ -230,6 +230,307 @@ app.use('/api/chat', chatRoutes);
 // Public share and EPK routes (no auth) — mounted at /share and /epk via the same router
 app.use('/', publicRoutes);
 
+// Phase IX-G: Admin review queue. The page itself is unauthenticated HTML
+// that fetches /api/admin/reports; the API endpoints do the real is_admin
+// gate via authMiddleware + requireAdmin. Unauthenticated visitors see
+// "Admin access required" because fetch() returns 401/403 and we render it.
+app.get('/admin', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, private');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TMG Admin · Report queue</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1f2630;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --danger: #f85149;
+    --good: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  header nav {
+    display: flex;
+    gap: 8px;
+  }
+  nav button {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font: inherit;
+  }
+  nav button.active {
+    background: var(--accent);
+    color: #0d1117;
+    border-color: var(--accent);
+  }
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  .status-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--panel-2);
+    color: var(--muted);
+  }
+  .status-pill.open { color: #f0b849; }
+  .status-pill.resolved { color: var(--good); }
+  .status-pill.dismissed { color: var(--muted); }
+  .empty, .loading, .error {
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+  }
+  .error { color: var(--danger); border-color: var(--danger); }
+  .report {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .report .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .report .category {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .report .time {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .report .people {
+    font-size: 14px;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .report .people strong { color: var(--text); }
+  .report .reason {
+    background: var(--panel-2);
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin-bottom: 12px;
+    color: var(--text);
+  }
+  .report .actions {
+    display: flex;
+    gap: 8px;
+  }
+  .report .actions button {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font: inherit;
+  }
+  .report .actions button.resolve { border-color: var(--good); color: var(--good); }
+  .report .actions button.dismiss { border-color: var(--muted); }
+  .report .actions button:disabled { opacity: 0.5; cursor: wait; }
+  .report .resolver {
+    font-size: 12px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>TMG Admin · Report queue</h1>
+  <nav>
+    <button data-status="open" class="active">Open</button>
+    <button data-status="resolved">Resolved</button>
+    <button data-status="dismissed">Dismissed</button>
+    <button data-status="all">All</button>
+  </nav>
+</header>
+<main>
+  <div id="queue"><div class="loading">Loading…</div></div>
+</main>
+<script>
+(function () {
+  var currentStatus = 'open';
+  var queueEl = document.getElementById('queue');
+  var navButtons = document.querySelectorAll('header nav button');
+
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function formatTime(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString();
+  }
+
+  function renderReport(r) {
+    var reporter = r.reporter_name || r.reporter_email || r.reporter_id || 'unknown';
+    var target = r.target_name || r.target_email || r.target_id || 'unknown';
+    var status = r.resolution_status || 'open';
+    var statusClass = 'status-pill ' + status;
+    var resolverLine = '';
+    if (r.resolution_status) {
+      var who = r.resolver_name || r.resolver_email || '';
+      resolverLine = '<div class="resolver">' +
+        escapeHtml(status.charAt(0).toUpperCase() + status.slice(1)) +
+        ' ' + escapeHtml(formatTime(r.resolved_at)) +
+        (who ? ' by ' + escapeHtml(who) : '') +
+        '</div>';
+    }
+    var actions = '';
+    if (!r.resolution_status) {
+      actions = '<div class="actions">' +
+        '<button class="resolve" data-id="' + escapeHtml(r.id) + '" data-action="resolve">Resolve</button>' +
+        '<button class="dismiss" data-id="' + escapeHtml(r.id) + '" data-action="dismiss">Dismiss</button>' +
+        '</div>';
+    }
+    return '<article class="report" data-id="' + escapeHtml(r.id) + '">' +
+      '<div class="head">' +
+        '<span class="category">' + escapeHtml(r.reason_category || 'other') + '</span>' +
+        '<span class="' + statusClass + '">' + escapeHtml(status) + '</span>' +
+        '<span class="time">' + escapeHtml(formatTime(r.created_at)) + '</span>' +
+      '</div>' +
+      '<div class="people"><strong>' + escapeHtml(reporter) + '</strong> reported <strong>' + escapeHtml(target) + '</strong></div>' +
+      (r.reason_text ? '<div class="reason">' + escapeHtml(r.reason_text) + '</div>' : '') +
+      resolverLine +
+      actions +
+    '</article>';
+  }
+
+  function setQueueHtml(html) { queueEl.innerHTML = html; }
+
+  function load() {
+    setQueueHtml('<div class="loading">Loading…</div>');
+    fetch('/api/admin/reports?status=' + encodeURIComponent(currentStatus), {
+      credentials: 'include',
+      headers: { 'Accept': 'application/json' }
+    }).then(function (res) {
+      if (res.status === 401) {
+        setQueueHtml('<div class="error">Not signed in. Open the app and sign in first, then reload this page.</div>');
+        return null;
+      }
+      if (res.status === 403) {
+        setQueueHtml('<div class="error">Admin access required.</div>');
+        return null;
+      }
+      if (!res.ok) {
+        setQueueHtml('<div class="error">Error ' + res.status + ' loading reports.</div>');
+        return null;
+      }
+      return res.json();
+    }).then(function (data) {
+      if (!data) return;
+      var rows = (data && data.reports) || [];
+      if (!rows.length) {
+        setQueueHtml('<div class="empty">No reports in this bucket.</div>');
+        return;
+      }
+      setQueueHtml(rows.map(renderReport).join(''));
+    }).catch(function (err) {
+      setQueueHtml('<div class="error">Network error: ' + escapeHtml(err && err.message || err) + '</div>');
+    });
+  }
+
+  function act(id, action, btn) {
+    var buttons = btn.parentNode.querySelectorAll('button');
+    buttons.forEach(function (b) { b.disabled = true; });
+    fetch('/api/admin/reports/' + encodeURIComponent(id) + '/' + action, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Accept': 'application/json' }
+    }).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).then(function () {
+      load();
+    }).catch(function (err) {
+      buttons.forEach(function (b) { b.disabled = false; });
+      alert('Failed to ' + action + ': ' + (err && err.message || err));
+    });
+  }
+
+  navButtons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      navButtons.forEach(function (x) { x.classList.remove('active'); });
+      b.classList.add('active');
+      currentStatus = b.getAttribute('data-status');
+      load();
+    });
+  });
+
+  queueEl.addEventListener('click', function (e) {
+    var t = e.target;
+    if (t && t.tagName === 'BUTTON' && t.getAttribute('data-action')) {
+      act(t.getAttribute('data-id'), t.getAttribute('data-action'), t);
+    }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>`);
+});
+
 // Serve sw.js with BUILD_ID injected so the service worker cache name changes
 // on every server restart — forcing browsers to install the new worker and
 // wipe out any stale cached responses.
@@ -553,6 +854,16 @@ async function runMigrations() {
     // contact row survives as an unlinked entry.
     await db.query(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS linked_user_id UUID REFERENCES users(id) ON DELETE SET NULL`);
     await db.query(`CREATE INDEX IF NOT EXISTS contacts_linked_user_idx ON contacts (linked_user_id) WHERE linked_user_id IS NOT NULL`);
+    // Phase IX-G: Admin review queue for directory reports. is_admin gates the
+    // /admin route and the admin API. resolution_status lives alongside the
+    // existing resolved_at so we can distinguish "resolved (action taken)"
+    // from "dismissed (no action needed)" without losing the audit timestamp.
+    // Owner bootstrap: skinnycheck@gmail.com gets is_admin on every migration
+    // pass so the admin UI is reachable without a manual DB edit.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE`);
+    await db.query(`ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolution_status VARCHAR(16)`);
+    await db.query(`ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolver_id UUID`);
+    await db.query(`UPDATE users SET is_admin = TRUE WHERE lower(email) = 'skinnycheck@gmail.com' AND is_admin = FALSE`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);
