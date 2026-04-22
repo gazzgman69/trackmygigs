@@ -456,46 +456,144 @@
 
   // ═══════════════════════════════════════════════════════════════════════════
   // FEATURE 5 — Invoice Chase Drafter
+  // Drafts three tones (polite / firm / final). Each card has Copy and Send.
+  // Send opens the user's native mail app pre-filled with recipient + subject
+  // + body via Web Share (where files aren't required) or mailto fallback.
+  // On Send we also POST /api/invoices/:id/chase so chase_count updates.
   // ═══════════════════════════════════════════════════════════════════════════
   function aiInvoiceChase(invoiceId) {
     if (!invoiceId) { toast('Invoice ID missing', 'error'); return; }
     const body = h(`
       <div>
-        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2,#999);">Three chase email drafts based on how overdue the invoice is.</p>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2,#999);">Three chase email drafts based on how overdue the invoice is. Tap Send to open your mail app pre-filled.</p>
         <div id="aiChaseResult"></div>
       </div>
     `);
     openModal('Invoice Chase', body);
     const result = body.querySelector('#aiChaseResult');
     result.appendChild(spinner('Drafting chase emails...'));
-    postAI('/draft-invoice-chase', { invoice_id: invoiceId }).then((data) => {
+
+    // Fetch invoice and draft in parallel so the Send button has the recipient
+    Promise.all([
+      fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+      postAI('/draft-invoice-chase', { invoiceId: invoiceId }),
+    ]).then(([invoice, data]) => {
       result.innerHTML = '';
       if (!data) return;
+
+      // Normalise tone shape. Server prompt asks for {subject, body} per tone,
+      // but tolerate a plain string in case the model flattens it.
+      const toTone = (v) => {
+        if (!v) return null;
+        if (typeof v === 'string') return { subject: '', body: v };
+        return { subject: v.subject || '', body: v.body || '' };
+      };
       const tones = [
-        ['Polite nudge', data.polite],
-        ['Firm reminder', data.firm],
-        ['Final notice', data.final],
-      ].filter(([, v]) => v);
+        ['Polite nudge', toTone(data.polite)],
+        ['Firm reminder', toTone(data.firm)],
+        ['Final notice', toTone(data.final)],
+      ].filter(([, v]) => v && v.body);
+
       if (data.context) {
         result.appendChild(h(`<div style="font-size:11px;color:var(--text-3,#666);margin-bottom:10px;">${esc(data.context)}</div>`));
       }
-      tones.forEach(([label, msg]) => {
+
+      const recipientEmail = (invoice && invoice.recipient_email) || '';
+      if (!recipientEmail) {
+        result.appendChild(h(`
+          <div style="font-size:11px;color:var(--warning,#f0a500);background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.25);border-radius:8px;padding:8px 10px;margin-bottom:10px;">
+            No recipient email on file. Send will prompt you.
+          </div>
+        `));
+      }
+
+      tones.forEach(([label, tone]) => {
+        const subjectLine = tone.subject || `Payment reminder: ${(invoice && invoice.invoice_number) || ''}`;
         const card = h(`
           <div class="ai-result-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:8px;flex-wrap:wrap;">
               <div style="font-weight:700;">${esc(label)}</div>
-              <button type="button" class="ai-btn-secondary" style="padding:4px 10px;font-size:11px;">Copy</button>
+              <div style="display:flex;gap:6px;">
+                <button type="button" data-act="copy" class="ai-btn-secondary" style="padding:4px 10px;font-size:11px;">Copy</button>
+                <button type="button" data-act="send" class="ai-btn-primary" style="padding:4px 12px;font-size:11px;background:var(--accent,#f0a500);color:#111;border:none;border-radius:12px;font-weight:700;cursor:pointer;">Send</button>
+              </div>
             </div>
-            <div style="font-size:13px;white-space:pre-wrap;line-height:1.55;">${esc(msg)}</div>
+            ${tone.subject ? `<div style="font-size:11px;color:var(--text-2,#999);margin-bottom:4px;"><strong>Subject:</strong> ${esc(tone.subject)}</div>` : ''}
+            <div style="font-size:13px;white-space:pre-wrap;line-height:1.55;">${esc(tone.body)}</div>
           </div>
         `);
-        card.querySelector('button').addEventListener('click', () => {
-          navigator.clipboard?.writeText(msg);
+
+        card.querySelector('[data-act="copy"]').addEventListener('click', () => {
+          const toCopy = tone.subject ? `Subject: ${tone.subject}\n\n${tone.body}` : tone.body;
+          navigator.clipboard?.writeText(toCopy);
           toast('Copied', 'success');
         });
+
+        card.querySelector('[data-act="send"]').addEventListener('click', () => {
+          sendChaseEmail(invoiceId, recipientEmail, subjectLine, tone.body);
+        });
+
         result.appendChild(card);
       });
     });
+  }
+
+  // Open the user's mail app with the chase pre-filled. Prefers Web Share API
+  // on devices that advertise it for text-only payloads, falls back to mailto.
+  // Also records the chase server-side so chase_count / last_chase_at update.
+  async function sendChaseEmail(invoiceId, recipientEmail, subject, body) {
+    let toAddr = recipientEmail;
+    if (!toAddr) {
+      toAddr = window.prompt('Send chase to which email address?') || '';
+      if (!toAddr) return;
+      // Persist it back so next chase is one click
+      try {
+        await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recipient_email: toAddr }),
+        });
+      } catch (_) {}
+    }
+
+    // Record the chase (chase_count / last_chase_at). Fire-and-forget so a
+    // failure here never blocks opening the mail client.
+    try {
+      fetch(`/api/invoices/${encodeURIComponent(invoiceId)}/chase`, { method: 'POST' });
+      window._cachedInvoices = null;
+      window._cachedInvoicesTime = 0;
+    } catch (_) {}
+
+    // Web Share is the best mobile experience (picks native mail app), but
+    // most implementations only fire the share sheet for URL/text payloads
+    // and don't pre-fill mail recipient. We use it only when the browser
+    // claims file-less share support AND we're on a touch device; otherwise
+    // mailto gives a better pre-fill.
+    const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    const canShare = typeof navigator.share === 'function';
+    if (isTouch && canShare) {
+      try {
+        await navigator.share({ title: subject, text: `To: ${toAddr}\n\n${body}` });
+        toast('Share sheet opened', 'success');
+        const root = document.getElementById('aiModalRoot');
+        if (root) root.remove();
+        return;
+      } catch (err) {
+        // User cancelled or share rejected — fall through to mailto.
+        if (err && err.name === 'AbortError') return;
+      }
+    }
+
+    // mailto: covers desktop (opens default mail client) and any mobile
+    // browser where Web Share didn't run. Most mail apps honour subject+body.
+    const mailto = `mailto:${encodeURIComponent(toAddr)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = mailto;
+    toast('Opening email client...', 'success');
+    // Close the AI modal so the user lands back on the invoice
+    const root = document.getElementById('aiModalRoot');
+    if (root) setTimeout(() => root.remove(), 400);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
