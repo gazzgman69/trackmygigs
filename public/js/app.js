@@ -11749,12 +11749,12 @@ function initInvoicePanel() {
   const gigSelect = document.getElementById('invLinkedGig');
   if (gigSelect) gigSelect.addEventListener('change', onGigSelected);
 
-  // Auto-populate bank details and invoice number from profile
+  // Pull profile for invoice number generation. Note: we used to auto-fill
+  // the Notes field with bank_details here, but the invoice now has a
+  // dedicated Payment Details panel that reads bank_details directly from
+  // the user record, so copying it into notes made it appear twice on the
+  // rendered invoice. Notes is now free-form only.
   const profile = window._cachedProfile || window._currentUser || {};
-  if (profile.bank_details) {
-    const notesEl = document.getElementById('invNotes');
-    if (notesEl && !notesEl.value) notesEl.value = profile.bank_details;
-  }
   // Generate next invoice number using format setting
   const prefix = profile.invoice_prefix || 'INV';
   const nextNum = profile.invoice_next_number || 1;

@@ -3229,6 +3229,16 @@ router.get('/print/invoice/:id', async (req, res) => {
          </div>`
       : '';
 
+    // Strip bank_details out of notes before rendering. Older invoices were
+    // auto-populated with bank_details in the Notes field (the frontend did
+    // this before a dedicated Payment Details panel existed), so rendering
+    // notes as-is would show the same text twice.
+    let renderedNotes = inv.notes || '';
+    if (renderedNotes && me.bank_details) {
+      const bank = String(me.bank_details).trim();
+      renderedNotes = renderedNotes.split(bank).join('').replace(/\n{3,}/g, '\n\n').trim();
+    }
+
     const body = `
       <div style="max-width:680px;margin:0 auto;color:#111;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;">
@@ -3274,7 +3284,7 @@ router.get('/print/invoice/:id', async (req, res) => {
           </tfoot>
         </table>
         ${bankBlock}
-        ${inv.notes ? `<div style="margin-top:14px;font-size:11px;color:#555;white-space:pre-line;">${_printEscape(inv.notes)}</div>` : ''}
+        ${renderedNotes ? `<div style="margin-top:14px;font-size:11px;color:#555;white-space:pre-line;">${_printEscape(renderedNotes)}</div>` : ''}
         <div style="margin-top:22px;padding-top:14px;border-top:1px solid #e5e7eb;font-size:10px;color:#888;text-align:center;">
           Generated with TrackMyGigs \u00b7 trackmygigs.app
         </div>
