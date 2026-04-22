@@ -895,6 +895,7 @@ async function runMigrations() {
     await db.query(`ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolution_status VARCHAR(16)`);
     await db.query(`ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolver_id UUID`);
     await db.query(`UPDATE users SET is_admin = TRUE WHERE lower(email) = 'skinnycheck@gmail.com' AND is_admin = FALSE`);
+    await db.query(`UPDATE users SET subscription_tier = 'premium' WHERE lower(email) = 'skinnycheck@gmail.com' AND subscription_tier IS DISTINCT FROM 'premium'`);
     // Phase X: Urgent-gigs marketplace.
     //
     // users.min_fee_pence drives the default Min £ filter on Browse and which
