@@ -3001,7 +3001,7 @@ function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
     const leaveMM = String(ab.startMin % 60).padStart(2, '0');
     const leaveText = ab.kind === 'travel_out' ? `Leave by ${leaveHH}:${leaveMM}` : (ab.label || 'Travel');
     const tipText = ab.kind === 'travel_out'
-      ? `${leaveText} — ${ab.label || 'drive + load-in'}`
+      ? `${leaveText} (${ab.label || 'drive + load-in'})`
       : (ab.label || '');
     html += `<div title="${escapeHtml(tipText)}" style="position:absolute;top:${top}px;height:${height}px;left:1px;right:1px;background:${bg};border-left:2px dashed ${border};border-radius:3px;pointer-events:none;padding:2px 6px;font-size:10px;font-weight:600;color:var(--accent);overflow:hidden;line-height:1.3;box-sizing:border-box;">
       ${height > 18 ? `${icon} ${escapeHtml(leaveText)}` : ''}
