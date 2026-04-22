@@ -3960,7 +3960,7 @@ function buildProfileHTML(content, profile) {
 
     let html = `
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <button onclick="closePanel('profile-panel')" style="background:none;border:none;color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;padding:0;min-width:60px;text-align:left;">Back</button>
+        <button onclick="closePanel('profile-panel')" style="background:none;border:none;color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;padding:0;min-width:60px;text-align:left;">&#8249; Back</button>
         <div style="font-size:16px;font-weight:700;color:var(--text);">Profile</div>
         <button onclick="editProfile()" style="background:none;border:none;color:var(--accent);font-size:14px;cursor:pointer;font-weight:600;">Edit</button>
       </div>
