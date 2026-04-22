@@ -2125,57 +2125,6 @@ router.get('/finance/month-detail', async (req, res) => {
   }
 });
 
-// ── Public share token (calendar ICS feed) ───────────────────────────────────
-// GET returns { token, enabled }; POST toggles on/off and generates a token on demand.
-router.get('/share-token', async (req, res) => {
-  try {
-    const r = await db.query(
-      'SELECT share_token, share_token_enabled FROM users WHERE id = $1',
-      [req.user.id]
-    );
-    const row = r.rows[0] || {};
-    res.json({
-      token: row.share_token_enabled ? (row.share_token || null) : null,
-      enabled: !!row.share_token_enabled,
-    });
-  } catch (error) {
-    console.error('Get share-token error:', error);
-    res.status(500).json({ error: 'Failed to fetch share token' });
-  }
-});
-
-router.post('/share-token', async (req, res) => {
-  try {
-    const { enabled } = req.body || {};
-    if (!enabled) {
-      await db.query(
-        'UPDATE users SET share_token_enabled = false WHERE id = $1',
-        [req.user.id]
-      );
-      return res.json({ token: null, enabled: false });
-    }
-    // Enabling: ensure a token exists (rotate-safe: only generates if missing)
-    const existing = await db.query(
-      'SELECT share_token FROM users WHERE id = $1',
-      [req.user.id]
-    );
-    let token = existing.rows[0]?.share_token;
-    if (!token) {
-      // 32-char url-safe token
-      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-      token = Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-    }
-    await db.query(
-      'UPDATE users SET share_token = $1, share_token_enabled = true WHERE id = $2',
-      [token, req.user.id]
-    );
-    res.json({ token, enabled: true });
-  } catch (error) {
-    console.error('Set share-token error:', error);
-    res.status(500).json({ error: 'Failed to update share token' });
-  }
-});
-
 // ── Threads / Chat inbox ────────────────────────────────────────────────────
 // Returns an array shaped for the chat inbox panel. Dep threads are distinguished
 // so the inbox can split them into "Active deps" vs "Gig bands".

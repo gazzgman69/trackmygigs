@@ -652,10 +652,6 @@ async function runMigrations() {
       action VARCHAR(32) NOT NULL,
       created_at TIMESTAMP DEFAULT NOW()
     )`);
-    // Calendar public-feed token (separate from public_slug so it can be rotated independently)
-    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS share_token VARCHAR(64)`);
-    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS share_token_enabled BOOLEAN DEFAULT FALSE`);
-    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_share_token_uniq ON users (share_token) WHERE share_token IS NOT NULL`);
     // Thread classification: 'dep' threads are private 1:1 chats with a dep;
     // anything else is a gig-band group thread. Older rows default to NULL.
     await db.query(`ALTER TABLE threads ADD COLUMN IF NOT EXISTS kind VARCHAR(32)`);

@@ -161,8 +161,10 @@ async function findUserBySlug(slug) {
 
 // ── Public availability calendar ────────────────────────────────────────────
 // /share/:slug — shows the next 12 months with busy/free/blocked dates.
-// Bookers often plan 6+ months out (weddings, corporate, festivals), so a
-// 3-month window was cutting off the exact forward view they need.
+// Deliberately anonymous: no name, avatar, email or photo. A booker who has
+// the link knows whose calendar it is; anyone who stumbles across it should
+// see nothing but busy/free dates. If a musician wants to share bio, photo
+// and rates, they send their /epk/:slug link separately.
 router.get('/share/:slug', async (req, res) => {
   try {
     const user = await findUserBySlug(req.params.slug);
@@ -170,8 +172,6 @@ router.get('/share/:slug', async (req, res) => {
       res.status(404).set('Content-Type', 'text/html').send(pageHtml('Not found', `<div class="empty"><h1>Not found</h1><p class="sub">This link is no longer active.</p></div>`));
       return;
     }
-
-    const displayName = user.display_name || user.name || 'Artist';
 
     // Pull next 400 days of gigs and blocked dates (~13 months, to cover any
     // partial month at the end of the 12-month window).
@@ -216,35 +216,21 @@ router.get('/share/:slug', async (req, res) => {
     }).join('');
 
     const body = `
-      <div class="avatar">${esc((displayName[0] || 'M').toUpperCase())}</div>
-      <h1 style="text-align:center;">${esc(displayName)}</h1>
-      <p class="sub" style="text-align:center;">Availability for the next 12 months</p>
+      <h1 style="text-align:center;">Availability</h1>
+      <p class="sub" style="text-align:center;">Next 12 months</p>
       <div class="legend">
         <span><span class="legend-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
         <span><span class="legend-dot" style="background:var(--danger);"></span>Booked</span>
         <span><span class="legend-dot" style="background:#6E7681;"></span>Unavailable</span>
       </div>
-      <div class="card">${monthsHtml}</div>
-      ${
-        // S9-05: the "View full EPK" CTA used to only check epk_bio / epk_photo_url,
-        // so users who filled in a video, audio, rate card, or instrument list
-        // but no bio/photo had a working EPK page but no link to it from /share.
-        // Show the button if ANY EPK-relevant field is present.
-        (user.epk_bio || user.epk_photo_url || user.epk_video_url || user.epk_audio_url ||
-         user.rate_standard != null || user.rate_premium != null || user.rate_dep != null ||
-         user.rate_deposit_pct != null || user.rate_notes || user.instruments)
-          ? `<div style="text-align:center;"><a class="btn btn-o" href="/epk/${esc(user.public_slug || user.id)}">View full EPK</a></div>`
-          : ''
-      }
-      <div style="text-align:center;margin-top:20px;">
-        ${emailLink(user.email, 'Gig enquiry for ' + displayName, 'Enquire about a date')}
-      </div>`;
+      <div class="card">${monthsHtml}</div>`;
 
-    res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} Availability`, body, {
-      description: `Check ${displayName}'s live availability for the next 12 months and enquire about a date.`,
-      image: user.epk_photo_url || user.avatar_url || '',
-      url: absoluteUrl(req),
-      type: 'profile',
+    // Anonymous OG: no name, no image, noindex so the link doesn't leak into
+    // search engines. Bookers get a generic preview card when the link is
+    // pasted into iMessage / WhatsApp.
+    res.set('Content-Type', 'text/html').send(pageHtml('Availability', body, {
+      description: 'Live availability for the next 12 months.',
+      noindex: true,
     }));
   } catch (err) {
     console.error('Public share error:', err);
@@ -352,173 +338,6 @@ router.get('/epk/:slug', async (req, res) => {
     }));
   } catch (err) {
     console.error('Public EPK error:', err);
-    res.status(500).set('Content-Type', 'text/html').send(pageHtml('Error', `<div class="empty"><h1>Something went wrong</h1><p class="sub">Please try again.</p></div>`));
-  }
-});
-
-// ── Public calendar feed (token-gated) ───────────────────────────────────────
-// /cal/:token — friendly HTML calendar (like /share/:slug but token-based)
-// /cal/:token.ics — RFC 5545 ICS feed for subscribe-in-calendar-app
-
-async function findUserByShareToken(token) {
-  if (!token) return null;
-  const r = await db.query(
-    'SELECT * FROM users WHERE share_token = $1 AND share_token_enabled = true',
-    [token]
-  );
-  return r.rows[0] || null;
-}
-
-function escIcs(s) {
-  if (s === null || s === undefined) return '';
-  return String(s).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
-}
-
-function pad(n) { return String(n).padStart(2, '0'); }
-
-function toIcsDate(date, time) {
-  // date is a JS Date or yyyy-mm-dd; time is "HH:MM" or null
-  const d = date instanceof Date ? date : new Date(date);
-  const y = d.getFullYear();
-  const m = pad(d.getMonth() + 1);
-  const day = pad(d.getDate());
-  if (!time) {
-    return { value: `${y}${m}${day}`, allDay: true };
-  }
-  const [hh, mm] = String(time).split(':');
-  return { value: `${y}${m}${day}T${pad(hh || 0)}${pad(mm || 0)}00`, allDay: false };
-}
-
-router.get('/cal/:token.ics', async (req, res) => {
-  try {
-    const user = await findUserByShareToken(req.params.token);
-    if (!user) return res.status(404).type('text/plain').send('Not found');
-
-    const gigsR = await db.query(
-      `SELECT id, date, start_time, end_time, venue_name FROM gigs
-       WHERE user_id = $1 AND date >= CURRENT_DATE - INTERVAL '30 days' AND date <= CURRENT_DATE + INTERVAL '365 days'
-       ORDER BY date ASC`,
-      [user.id]
-    );
-
-    const stamp = new Date();
-    const dtstamp = `${stamp.getUTCFullYear()}${pad(stamp.getUTCMonth() + 1)}${pad(stamp.getUTCDate())}T${pad(stamp.getUTCHours())}${pad(stamp.getUTCMinutes())}${pad(stamp.getUTCSeconds())}Z`;
-
-    const lines = [
-      'BEGIN:VCALENDAR',
-      'VERSION:2.0',
-      'PRODID:-//TrackMyGigs//Availability Feed//EN',
-      'CALSCALE:GREGORIAN',
-      'METHOD:PUBLISH',
-      `X-WR-CALNAME:${escIcs((user.display_name || user.name || 'Artist') + ' - Busy')}`,
-      'X-PUBLISHED-TTL:PT1H',
-    ];
-
-    for (const g of gigsR.rows) {
-      const start = toIcsDate(g.date, g.start_time);
-      const endBase = toIcsDate(g.date, g.end_time || g.start_time || null);
-      // If no start_time at all, make it an all-day event
-      lines.push('BEGIN:VEVENT');
-      lines.push(`UID:gig-${g.id}@trackmygigs.app`);
-      lines.push(`DTSTAMP:${dtstamp}`);
-      if (start.allDay) {
-        lines.push(`DTSTART;VALUE=DATE:${start.value}`);
-        // all-day end is exclusive; add 1 day
-        const d = new Date(g.date); d.setDate(d.getDate() + 1);
-        lines.push(`DTEND;VALUE=DATE:${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`);
-      } else {
-        lines.push(`DTSTART:${start.value}`);
-        lines.push(`DTEND:${endBase.value}`);
-      }
-      lines.push('SUMMARY:Busy');
-      lines.push('TRANSP:OPAQUE');
-      lines.push('END:VEVENT');
-    }
-
-    lines.push('END:VCALENDAR');
-
-    res.set('Content-Type', 'text/calendar; charset=utf-8');
-    res.set('Cache-Control', 'no-cache, max-age=0');
-    res.send(lines.join('\r\n'));
-  } catch (err) {
-    console.error('ICS feed error:', err);
-    res.status(500).type('text/plain').send('Error');
-  }
-});
-
-router.get('/cal/:token', async (req, res) => {
-  try {
-    const user = await findUserByShareToken(req.params.token);
-    if (!user) {
-      res.status(404).set('Content-Type', 'text/html').send(pageHtml('Not found', `<div class="empty"><h1>Not found</h1><p class="sub">This link is no longer active.</p></div>`));
-      return;
-    }
-
-    const displayName = user.display_name || user.name || 'Artist';
-
-    const [gigsR, blockedR] = await Promise.all([
-      db.query(
-        `SELECT date FROM gigs
-         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '400 days'`,
-        [user.id]
-      ),
-      db.query(
-        `SELECT date FROM blocked_dates
-         WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '400 days'`,
-        [user.id]
-      ).catch(() => ({ rows: [] })),
-    ]);
-
-    const bookedSet = new Set(gigsR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
-    const blockedSet = new Set(blockedR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
-
-    const today = new Date();
-    const monthsHtml = Array.from({ length: 12 }, (_, i) => i).map(offset => {
-      const first = new Date(today.getFullYear(), today.getMonth() + offset, 1);
-      const monthLabel = first.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-      const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
-      const firstDow = (first.getDay() + 6) % 7;
-      let cells = '';
-      cells += ['Mo','Tu','We','Th','Fr','Sa','Su'].map(d => `<div class="cal-hd">${d}</div>`).join('');
-      for (let i = 0; i < firstDow; i++) cells += `<div></div>`;
-      for (let d = 1; d <= daysInMonth; d++) {
-        const dateStr = `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        const dateObj = new Date(dateStr);
-        const isPast = dateObj < new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        let cls = 'free';
-        if (bookedSet.has(dateStr)) cls = 'booked';
-        else if (blockedSet.has(dateStr)) cls = 'blocked';
-        if (isPast) cls += ' past';
-        cells += `<div class="cal-cell ${cls}">${d}</div>`;
-      }
-      return `<div class="cal-month">${esc(monthLabel)}</div><div class="cal-grid">${cells}</div>`;
-    }).join('');
-
-    const icsUrl = `/cal/${esc(req.params.token)}.ics`;
-
-    const body = `
-      <div class="avatar">${esc((displayName[0] || 'M').toUpperCase())}</div>
-      <h1 style="text-align:center;">${esc(displayName)}</h1>
-      <p class="sub" style="text-align:center;">Availability for the next 12 months</p>
-      <div class="legend">
-        <span><span class="legend-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
-        <span><span class="legend-dot" style="background:var(--danger);"></span>Booked</span>
-        <span><span class="legend-dot" style="background:#6E7681;"></span>Unavailable</span>
-      </div>
-      <div class="card">${monthsHtml}</div>
-      <div style="text-align:center;margin-top:20px;">
-        <a class="btn btn-o" href="${icsUrl}">Subscribe (ICS)</a>
-      </div>`;
-
-    // /cal/:token is token-gated so we explicitly noindex - tokens shouldn't
-    // leak into search engines and the canonical URL of someone's availability
-    // is /share/:slug, not the private token.
-    res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} Availability`, body, {
-      description: `Subscribe to ${displayName}'s live availability calendar.`,
-      noindex: true,
-    }));
-  } catch (err) {
-    console.error('Public /cal error:', err);
     res.status(500).set('Content-Type', 'text/html').send(pageHtml('Error', `<div class="empty"><h1>Something went wrong</h1><p class="sub">Please try again.</p></div>`));
   }
 });

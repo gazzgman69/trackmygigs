@@ -1968,7 +1968,6 @@ function buildCalendarView(content, gigsData, blockedData) {
       <div style="font-size:24px;font-weight:700;color:var(--text);">Calendar</div>
       <div style="display:flex;gap:8px;">
         <button type="button" onclick="toggleCalendarLayers()" aria-label="Toggle layers" title="Layers" style="width:40px;height:40px;border-radius:20px;background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;padding:0;">&#x2630;</button>
-        <button type="button" onclick="openPanel('pub-cal-share')" aria-label="Share calendar" title="Share" style="width:40px;height:40px;border-radius:20px;background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;padding:0;">&#x1F517;</button>
         <button type="button" onclick="toggleCalendarMenu()" aria-label="More actions" title="More" style="width:40px;height:40px;border-radius:20px;background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;padding:0;">&#8943;</button>
       </div>
     </div>
@@ -5370,7 +5369,6 @@ function openPanel(id) {
   // Trigger render for panels that need dynamic content
   if (id === 'profile-panel') { if (typeof renderProfileScreen === 'function') renderProfileScreen(); }
   if (id === 'panel-notifications') { if (typeof renderNotificationsPanel === 'function') renderNotificationsPanel(); }
-  if (id === 'pub-cal-share' || id === 'panel-pub-cal-share') { if (typeof renderPubCalShare === 'function') renderPubCalShare(); }
   if (id === 'panel-finance') { if (typeof renderFinancePanel === 'function') renderFinancePanel(); }
   if (id === 'panel-chat-inbox') { if (typeof renderChatInbox === 'function') renderChatInbox(); }
   if (id === 'panel-notifications-settings') { if (typeof loadNotificationSettings === 'function') loadNotificationSettings(); }
@@ -6541,82 +6539,6 @@ async function toggleAvailabilityDate(dateStr, currentState) {
 window.openMyAvailabilityPanel = openMyAvailabilityPanel;
 window.toggleAvailabilityDate = toggleAvailabilityDate;
 
-// ── Public Calendar Share Panel ─────────────────────────────────────────────
-async function renderPubCalShare() {
-  const body = document.getElementById('pubCalShareBody');
-  if (!body) return;
-
-  try {
-    const resp = await fetch('/api/share-token');
-    const { token, enabled } = await resp.json();
-    const origin = window.location.origin;
-    const icsUrl = token ? `${origin}/cal/${token}.ics` : '';
-    const pubUrl = token ? `${origin}/cal/${token}` : '';
-    // Slug-based availability link is always shareable (not gated by token),
-    // because anyone with a public_slug can see a calendar view at /share/:slug.
-    // Generate one on first open so the field is pre-populated instead of blank.
-    const slug = await _ensurePublicSlug();
-    const slugUrl = slug ? `${origin}/share/${slug}` : '';
-
-    body.innerHTML = `
-      <div style="padding:14px;">
-        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-            <div style="font-size:14px;font-weight:600;color:var(--text);">Public availability</div>
-            <label style="position:relative;display:inline-block;width:40px;height:22px;">
-              <input type="checkbox" id="pubCalToggle" ${enabled ? 'checked' : ''} onchange="togglePubCal(this.checked)" style="opacity:0;width:0;height:0;">
-              <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:${enabled ? 'var(--accent)' : 'var(--border)'};border-radius:22px;transition:.2s;"></span>
-              <span style="position:absolute;height:18px;width:18px;left:${enabled ? '20px' : '2px'};top:2px;background:white;border-radius:50%;transition:.2s;"></span>
-            </label>
-          </div>
-          <div style="font-size:12px;color:var(--text-2);line-height:1.5;">Let bookers check your availability without exposing personal details. Only the word "Busy" and date ranges are shared.</div>
-        </div>
-
-        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
-          <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Named availability link</div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <input type="text" value="${slugUrl || 'Generating...'}" readonly style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:12px;color:var(--text);" id="pubCalSlugInput">
-            <button onclick="shareAvailability()" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;">Share</button>
-          </div>
-          <div style="font-size:11px;color:var(--text-3);margin-top:6px;">Pretty URL using your profile name. Always live (no toggle required) and shows a 12-month calendar.</div>
-        </div>
-
-        ${enabled && token ? `
-        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
-          <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Public link</div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <input type="text" value="${pubUrl}" readonly style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:12px;color:var(--text);">
-            <button onclick="copyToClipboard('${pubUrl}')" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;">Copy</button>
-          </div>
-        </div>
-
-        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px;">
-          <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Subscribe (ICS feed)</div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <input type="text" value="${icsUrl}" readonly style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:12px;color:var(--text);">
-            <button onclick="copyToClipboard('${icsUrl}')" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;">Copy</button>
-          </div>
-          <div style="font-size:11px;color:var(--text-3);margin-top:6px;">Add this to Google Calendar, Apple Calendar, or Outlook.</div>
-        </div>
-        ` : ''}
-      </div>`;
-  } catch (err) {
-    console.error('Pub cal share error:', err);
-    body.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Couldn't load share settings.</div>`;
-  }
-}
-
-async function togglePubCal(enabled) {
-  try {
-    await fetch('/api/share-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    });
-    renderPubCalShare();
-  } catch (e) { console.error(e); }
-}
-
 function copyToClipboard(text) {
   if (navigator.clipboard) {
     navigator.clipboard.writeText(text).then(() => toast('Copied'));
@@ -6642,7 +6564,6 @@ function toast(msg) {
   window._toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 1800);
 }
 
-window.togglePubCal = togglePubCal;
 window.copyToClipboard = copyToClipboard;
 window.toast = toast;
 

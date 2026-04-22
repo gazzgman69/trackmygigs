@@ -587,8 +587,8 @@ router.get('/me', async (req, res) => {
     // prefetchAllData() completed.
     const userResult = await db.query(
       `SELECT id, name, display_name, email, avatar_url, home_postcode, postcode,
-              instruments, public_slug, onboarded_at, share_token,
-              share_token_enabled, text_scale, colour_theme, invoice_prefix,
+              instruments, public_slug, onboarded_at,
+              text_scale, colour_theme, invoice_prefix,
               invoice_next_number, invoice_due_days, invoice_footer,
               business_name, business_address, business_phone, vat_number,
               bank_account_name, bank_sort_code, bank_account_number,
