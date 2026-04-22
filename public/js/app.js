@@ -1986,7 +1986,7 @@ function buildCalendarView(content, gigsData, blockedData) {
       ${[
         ['gigs', 'Gigs', 'var(--success)'],
         ['blocked', 'Blocked dates', 'var(--danger)'],
-        ['travel', 'Travel + pack-down', 'var(--accent)'],
+        ['travel', 'Travel', 'var(--accent)'],
         ['events', 'Other events', 'var(--info)'],
         ['google', 'Google Calendar', '#4285F4'],
       ].map(([id, label, color]) => `
@@ -2996,7 +2996,7 @@ function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
     const border = ab.kind === 'travel_out' ? 'rgba(240,165,0,.35)' : 'rgba(88,166,255,.35)';
     const icon = ab.kind === 'travel_out' ? '&#128663;' : '&#128230;';
     html += `<div title="${escapeHtml(ab.label || '')}" style="position:absolute;top:${top}px;height:${height}px;left:1px;right:1px;background:${bg};border-left:2px dashed ${border};border-radius:3px;pointer-events:none;padding:2px 6px;font-size:9px;color:var(--text-3);overflow:hidden;line-height:1.3;box-sizing:border-box;">
-      ${height > 18 ? `${icon} ${escapeHtml(ab.label || (ab.kind === 'travel_out' ? 'Travel + load-in' : 'Pack-down + drive home'))}` : ''}
+      ${height > 18 ? `${icon} ${escapeHtml(ab.label || 'Travel + load-in')}` : ''}
     </div>`;
   });
 
@@ -11362,7 +11362,6 @@ function renderNudgeList() {
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
         <span style="font-size:9px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">Import to unlock: \uD83D\uDCB7 Fees</span>
         <span style="font-size:9px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">\uD83D\uDE97 Travel</span>
-        <span style="font-size:9px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">\uD83D\uDCE6 Pack-down</span>
         <span style="font-size:9px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">\uD83C\uDFB5 Set lists</span>
         <span style="font-size:9px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">\uD83D\uDCCA Reports</span>
       </div>
