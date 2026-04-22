@@ -671,8 +671,9 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences JSONB DEFAULT '{}'::jsonb`);
     // Onboarding: has the user seen the welcome tour yet?
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_completed_at TIMESTAMP`);
-    // Invoice metadata: business address and VAT number printed on invoice PDFs.
+    // Invoice metadata: business address, phone and VAT number printed on invoice PDFs.
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS business_address TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS business_phone VARCHAR(32)`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS vat_number VARCHAR(64)`);
     // Invoice lifecycle timestamps and dunning tracking
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP`);
