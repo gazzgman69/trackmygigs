@@ -3920,6 +3920,10 @@ function buildProfileHTML(content, profile) {
           <span style="color:var(--text);font-size:14px;">My Network</span>
           <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
+        <div onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+          <span style="color:var(--text);font-size:14px;display:flex;align-items:center;gap:8px;">Urgent gigs <span id="marketplaceMenuBadge" style="display:none;background:var(--accent);color:#000;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;min-width:18px;text-align:center;">0</span></span>
+          <span style="color:var(--accent);font-size:16px;">›</span>
+        </div>
         <div onclick="openPanel('panel-repertoire'); openRepertoirePanel();" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span style="color:var(--text);font-size:14px;">Repertoire library</span>
           <span style="color:var(--accent);font-size:16px;">›</span>
@@ -7927,6 +7931,12 @@ function buildDirectoryProfileEditor(profile) {
   const bioLen = bioText.length;
   const photoUrl = profile.photo_url || '';
   const selectedGenres = Array.isArray(profile.genres) ? profile.genres.filter(Boolean) : [];
+  // Phase X: Urgent-gigs marketplace preferences. min_fee_pence defaults to
+  // 3000 (£30) per the paid-tab floor; notify_free_gigs defaults to FALSE so
+  // the badge stays quiet for users who don't play unpaid work.
+  const minFeePence = Number.isFinite(profile.min_fee_pence) ? profile.min_fee_pence : 3000;
+  const minFeePounds = Math.max(0, Math.round(minFeePence / 100));
+  const notifyFreeGigs = profile.notify_free_gigs === true;
   const genreSeeds = [
     'Vocals', 'Guitar', 'Bass', 'Keys', 'Piano', 'Drums',
     'Saxophone', 'Trumpet', 'Trombone', 'Violin', 'Cello',
@@ -7969,6 +7979,28 @@ function buildDirectoryProfileEditor(profile) {
       <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Genres &amp; tags</label>
       <div id="editGenresGrid" style="display:flex;flex-wrap:wrap;gap:6px;">${chipHTML}</div>
       <div style="font-size:10px;color:var(--text-3);margin-top:6px;">Tap up to 8 that describe your sound. Shown on your directory card.</div>
+    </div>
+    <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Urgent Gigs</div>
+    <div style="margin-bottom:14px;">
+      <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Minimum fee you'll consider</label>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="color:var(--text-2);font-size:14px;">&pound;</span>
+        <input id="editMinFeePounds" type="number" min="0" step="5" value="${minFeePounds}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+      </div>
+      <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Default for the urgent gigs Browse filter and your notification badge. &pound;30 matches the paid-tab floor.</div>
+    </div>
+    <div style="margin-bottom:14px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">
+      <div style="display:flex;align-items:flex-start;gap:12px;">
+        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
+          <input id="editNotifyFreeGigs" type="checkbox" ${notifyFreeGigs ? 'checked' : ''} style="opacity:0;width:0;height:0;" onchange="this.parentElement.querySelector('.tmg-toggle-dot').style.transform = this.checked ? 'translateX(20px)' : 'translateX(0)'; this.parentElement.querySelector('.tmg-toggle-bg').style.background = this.checked ? 'var(--accent)' : 'var(--border)';" />
+          <span class="tmg-toggle-bg" style="position:absolute;inset:0;background:${notifyFreeGigs ? 'var(--accent)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
+          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${notifyFreeGigs ? 'translateX(20px)' : 'translateX(0)'};"></span>
+        </label>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Notify me about free gigs</div>
+          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">Opt in to the Free tab of urgent gigs: charity, open mic, promo slots and favours. Off by default so your badge stays clean for paid work.</div>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -8149,6 +8181,23 @@ async function saveProfile() {
       .filter(Boolean);
   }
 
+  // Phase X: Urgent-gigs marketplace preferences. UI collects the minimum fee
+  // in whole pounds (number spinner) because pence are confusing to type; we
+  // convert to pence here before sending. Leave undefined if the field isn't
+  // present so we don't accidentally stomp a legacy build.
+  const minFeePoundsEl = document.getElementById('editMinFeePounds');
+  let minFeePence;
+  if (minFeePoundsEl) {
+    const pounds = parseFloat(minFeePoundsEl.value);
+    if (isFinite(pounds) && pounds >= 0) {
+      minFeePence = Math.round(pounds * 100);
+    } else {
+      minFeePence = 0;
+    }
+  }
+  const notifyFreeGigsEl = document.getElementById('editNotifyFreeGigs');
+  const notifyFreeGigs = notifyFreeGigsEl ? !!notifyFreeGigsEl.checked : undefined;
+
   try {
     const payload = {
       name: name !== undefined ? name : null,
@@ -8171,6 +8220,8 @@ async function saveProfile() {
     if (bio !== undefined) payload.bio = bio;
     if (photoUrl !== undefined) payload.photo_url = photoUrl;
     if (genres !== undefined) payload.genres = genres;
+    if (minFeePence !== undefined) payload.min_fee_pence = minFeePence;
+    if (notifyFreeGigs !== undefined) payload.notify_free_gigs = notifyFreeGigs;
 
     const res = await fetch('/api/user/profile', {
       method: 'PATCH',

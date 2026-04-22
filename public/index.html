@@ -821,10 +821,39 @@
     </div>
   </div>
 
+  <!-- Urgent Gigs Marketplace (Phase X) -->
+  <div class="panel-overlay" id="panel-marketplace">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-marketplace')">&#8249; Back</button>
+      <div class="panel-title">Urgent gigs</div>
+      <button id="marketplaceComposeBtn" onclick="openMarketplaceCompose()" style="background:var(--accent);color:#000;border:none;border-radius:18px;padding:7px 14px;font-size:13px;font-weight:700;cursor:pointer;">+ Post</button>
+    </div>
+    <div class="panel-body" id="marketplaceBody"></div>
+  </div>
+
+  <div class="panel-overlay" id="panel-marketplace-detail">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-marketplace-detail')">&#8249; Back</button>
+      <div class="panel-title">Gig details</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div class="panel-body" id="marketplaceDetailBody"></div>
+  </div>
+
+  <div class="panel-overlay" id="panel-marketplace-compose">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-marketplace-compose')">&#8249; Back</button>
+      <div class="panel-title">Post a gig</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div class="panel-body" id="marketplaceComposeBody"></div>
+  </div>
+
   <script>window.GOOGLE_CLIENT_ID = "775009954166-8ngl19vdj033jv0mbquoll385c8cd58t.apps.googleusercontent.com";</script>
   <script src="/js/fee_benchmarks.js" defer></script>
   <script src="/js/app.js" defer></script>
   <script src="/js/auth.js" defer></script>
   <script src="/js/ai.js" defer></script>
+  <script src="/js/marketplace.js" defer></script>
 </body>
 </html>

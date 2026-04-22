@@ -895,6 +895,73 @@ async function runMigrations() {
     await db.query(`ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolution_status VARCHAR(16)`);
     await db.query(`ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolver_id UUID`);
     await db.query(`UPDATE users SET is_admin = TRUE WHERE lower(email) = 'skinnycheck@gmail.com' AND is_admin = FALSE`);
+    // Phase X: Urgent-gigs marketplace.
+    //
+    // users.min_fee_pence drives the default Min £ filter on Browse and which
+    // gigs feed the menu notification badge. £30 default matches the paid-tab
+    // floor. Stored in pence so we avoid floating-point drift. users.notify_
+    // free_gigs is an opt-in flag for the Free tab — badge stays clean for
+    // users who don't play unpaid work, discoverable for students/charity-
+    // minded pros who switch it on.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS min_fee_pence INTEGER DEFAULT 3000`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_free_gigs BOOLEAN DEFAULT FALSE`);
+    // marketplace_gigs: a single post on the urgent-gigs board. fee_pence = 0
+    // with is_free = TRUE is the Free tab; fee_pence >= 3000 with is_free =
+    // FALSE is the Paid tab. free_reason is required when is_free = TRUE
+    // (enforced in the POST handler, not at the column level, so we can
+    // evolve the reason list without a migration). mode is 'pick' or 'fcfs';
+    // defaults are set per-tab in the composer, not at the column level.
+    // status: 'open' (default), 'filled' (someone picked or FCFS-claimed),
+    // 'expired' (past expires_at with no fill), 'cancelled' (poster withdrew).
+    // instruments is a TEXT[] so the radius-badge matcher can do a simple
+    // overlap check against the user's own instruments array.
+    await db.query(`CREATE TABLE IF NOT EXISTS marketplace_gigs (
+      id SERIAL PRIMARY KEY,
+      poster_user_id UUID NOT NULL,
+      title VARCHAR(200) NOT NULL,
+      description TEXT,
+      venue_name VARCHAR(200),
+      venue_address TEXT,
+      venue_postcode VARCHAR(16),
+      venue_lat DOUBLE PRECISION,
+      venue_lng DOUBLE PRECISION,
+      gig_date DATE NOT NULL,
+      start_time TIME,
+      end_time TIME,
+      instruments TEXT[] NOT NULL DEFAULT '{}',
+      fee_pence INTEGER NOT NULL DEFAULT 0,
+      is_free BOOLEAN NOT NULL DEFAULT FALSE,
+      free_reason VARCHAR(40),
+      mode VARCHAR(10) NOT NULL DEFAULT 'pick',
+      status VARCHAR(20) NOT NULL DEFAULT 'open',
+      filled_by_user_id UUID,
+      filled_at TIMESTAMP,
+      expires_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )`);
+    await db.query(`CREATE INDEX IF NOT EXISTS marketplace_gigs_status_idx ON marketplace_gigs (status)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS marketplace_gigs_date_idx ON marketplace_gigs (gig_date)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS marketplace_gigs_is_free_idx ON marketplace_gigs (is_free, status)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS marketplace_gigs_poster_idx ON marketplace_gigs (poster_user_id, created_at DESC)`);
+    // marketplace_applications: one row per applicant per gig. UNIQUE on
+    // (gig, applicant) blocks double-applies. status transitions:
+    // 'pending' → 'accepted' (poster picked them, or FCFS won) | 'rejected'
+    // (poster picked someone else) | 'withdrawn' (applicant pulled out). note
+    // is the applicant's short pitch shown in the applicant list + profile
+    // preview. thread_id will be backfilled when we wire chat into the flow.
+    await db.query(`CREATE TABLE IF NOT EXISTS marketplace_applications (
+      id SERIAL PRIMARY KEY,
+      marketplace_gig_id INTEGER NOT NULL REFERENCES marketplace_gigs(id) ON DELETE CASCADE,
+      applicant_user_id UUID NOT NULL,
+      note TEXT,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      thread_id INTEGER,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE (marketplace_gig_id, applicant_user_id)
+    )`);
+    await db.query(`CREATE INDEX IF NOT EXISTS marketplace_apps_gig_idx ON marketplace_applications (marketplace_gig_id)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS marketplace_apps_applicant_idx ON marketplace_applications (applicant_user_id, created_at DESC)`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);

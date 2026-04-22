@@ -703,7 +703,8 @@ router.patch('/user/profile', async (req, res) => {
             rate_standard, rate_premium, rate_dep, rate_deposit_pct, rate_notes,
             travel_radius_miles,
             business_address, business_phone, vat_number,
-            discoverable, bio, photo_url, genres } = req.body;
+            discoverable, bio, photo_url, genres,
+            min_fee_pence, notify_free_gigs } = req.body;
 
     // instruments comes as a comma-separated string from the client but the
     // column is TEXT[].  Convert it to a proper PG array (or null to keep
@@ -767,6 +768,27 @@ router.patch('/user/profile', async (req, res) => {
         .slice(0, 8);
       // Empty array is meaningful (user cleared their genres); keep it as []
       // rather than NULL so the next COALESCE doesn't resurrect old values.
+    }
+
+    // Phase X: Urgent-gigs marketplace preferences. Both can be meaningfully
+    // FALSE/0 so they ride provided-flag CASE-WHEN rather than COALESCE.
+    // min_fee_pence is clamped 0..100000 (£0..£1000) - anything outside is
+    // almost certainly a typo by someone who thinks the field is in pounds.
+    let minFeeProvided = false;
+    let minFeeValue = null;
+    if (min_fee_pence !== undefined) {
+      minFeeProvided = true;
+      const n = parseInt(min_fee_pence, 10);
+      if (!isFinite(n)) {
+        return res.status(400).json({ error: 'Minimum fee must be a number', field: 'min_fee_pence' });
+      }
+      minFeeValue = Math.max(0, Math.min(100000, n));
+    }
+    let notifyFreeProvided = false;
+    let notifyFreeValue = null;
+    if (notify_free_gigs !== undefined) {
+      notifyFreeProvided = true;
+      notifyFreeValue = !!notify_free_gigs;
     }
 
     // Distance filter (roadmap Phase VI): whenever the user supplies a
@@ -839,7 +861,9 @@ router.patch('/user/profile', async (req, res) => {
        genres = CASE WHEN $35::boolean THEN $36::text[] ELSE genres END,
        business_address = COALESCE($37, business_address),
        business_phone = COALESCE($38, business_phone),
-       vat_number = COALESCE($39, vat_number)
+       vat_number = COALESCE($39, vat_number),
+       min_fee_pence = CASE WHEN $40::boolean THEN $41::integer ELSE min_fee_pence END,
+       notify_free_gigs = CASE WHEN $42::boolean THEN $43::boolean ELSE notify_free_gigs END
        WHERE id = $8 RETURNING *`,
       [name, phone, instrumentsArr, normalisedPostcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
        bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name,
@@ -854,7 +878,9 @@ router.patch('/user/profile', async (req, res) => {
        genresArr !== null, genresArr,
        (business_address !== undefined && business_address !== null) ? String(business_address) : null,
        (business_phone !== undefined && business_phone !== null) ? String(business_phone).slice(0, 64) : null,
-       (vat_number !== undefined && vat_number !== null) ? String(vat_number).slice(0, 64) : null]
+       (vat_number !== undefined && vat_number !== null) ? String(vat_number).slice(0, 64) : null,
+       minFeeProvided, minFeeValue,
+       notifyFreeProvided, notifyFreeValue]
     );
 
     res.json(result.rows[0]);
@@ -4164,5 +4190,793 @@ router.post('/admin/reports/:id/resolve', requireAdmin, (req, res) =>
 router.post('/admin/reports/:id/dismiss', requireAdmin, (req, res) =>
   setReportStatus(req, res, 'dismissed')
 );
+
+// ---------------------------------------------------------------------------
+// Phase X: Urgent-gigs marketplace
+//
+// Two tabs on the Browse screen: Paid (fee_pence >= 3000, is_free = FALSE) and
+// Free (is_free = TRUE with a required free_reason). Shared pick/FCFS flow,
+// shared applicant model, shared chat. Tab routing is a single is_free boolean
+// on the row, not a forked schema.
+// ---------------------------------------------------------------------------
+
+const MARKETPLACE_FREE_REASONS = new Set([
+  'charity', 'open_mic', 'promo_slot', 'favour', 'student_showcase', 'other'
+]);
+const MARKETPLACE_MODES = new Set(['pick', 'fcfs']);
+const MARKETPLACE_SORTS = new Set([
+  'nearest', 'newest', 'fee_high', 'fee_low', 'soonest'
+]);
+const PAID_FLOOR_PENCE = 3000;
+
+// Shared SELECT fragment. Keeps the list/detail/mine endpoints returning the
+// same shape so the frontend can pass cards from one screen to another without
+// re-fetching. applicant_count is scoped to pending+accepted so withdrawn rows
+// don't inflate the number the poster sees on My Posts.
+const MARKETPLACE_SELECT = `
+  SELECT
+    mg.id,
+    mg.poster_user_id,
+    mg.title,
+    mg.description,
+    mg.venue_name,
+    mg.venue_address,
+    mg.venue_postcode,
+    mg.venue_lat,
+    mg.venue_lng,
+    mg.gig_date,
+    mg.start_time,
+    mg.end_time,
+    mg.instruments,
+    mg.fee_pence,
+    mg.is_free,
+    mg.free_reason,
+    mg.mode,
+    mg.status,
+    mg.filled_by_user_id,
+    mg.filled_at,
+    mg.expires_at,
+    mg.created_at,
+    mg.updated_at,
+    COALESCE(u.display_name, u.first_name || ' ' || u.last_name, u.email) AS poster_name,
+    u.photo_url AS poster_photo_url,
+    (
+      SELECT COUNT(*) FROM marketplace_applications ma
+      WHERE ma.marketplace_gig_id = mg.id
+        AND ma.status IN ('pending', 'accepted')
+    ) AS applicant_count
+  FROM marketplace_gigs mg
+  LEFT JOIN users u ON u.id = mg.poster_user_id
+`;
+
+// Decorate a raw marketplace_gigs row with distance_miles relative to the
+// current user's home lat/lng. Used by list + detail so cards know how far
+// away the gig is without a per-row round-trip on the frontend.
+async function attachDistance(rows, userId) {
+  if (!rows || rows.length === 0) return rows;
+  const homeRes = await db.query(
+    `SELECT home_lat, home_lng FROM users WHERE id = $1`,
+    [userId]
+  );
+  const home = homeRes.rows[0] || {};
+  const lat = home.home_lat, lng = home.home_lng;
+  return rows.map((row) => {
+    const dist = haversineMiles(lat, lng, row.venue_lat, row.venue_lng);
+    return { ...row, distance_miles: dist == null ? null : Math.round(dist * 10) / 10 };
+  });
+}
+
+// POST /api/marketplace
+//
+// Create a marketplace gig. Paid posts require fee_pence >= PAID_FLOOR_PENCE
+// and is_free = FALSE. Free posts require is_free = TRUE plus a free_reason.
+// Venue geocoding reuses the existing postcodes.io helper so the radius-
+// badge matcher has a lat/lng to distance-check against. Default mode is
+// Pick for paid, FCFS for free (can be overridden by the poster).
+router.post('/marketplace', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const {
+      title,
+      description,
+      venue_name,
+      venue_address,
+      venue_postcode,
+      gig_date,
+      start_time,
+      end_time,
+      instruments,
+      fee_pence,
+      is_free,
+      free_reason,
+      mode,
+      expires_at,
+    } = req.body || {};
+
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({ error: 'title_required' });
+    }
+    if (!gig_date) {
+      return res.status(400).json({ error: 'gig_date_required' });
+    }
+    const instrumentList = toTextArray(instruments) || [];
+    if (instrumentList.length === 0) {
+      return res.status(400).json({ error: 'instruments_required' });
+    }
+
+    const isFree = !!is_free;
+    let feeP = parseInt(fee_pence, 10);
+    if (!Number.isFinite(feeP) || feeP < 0) feeP = 0;
+
+    let reason = null;
+    if (isFree) {
+      reason = typeof free_reason === 'string' ? free_reason.trim().toLowerCase() : '';
+      if (!MARKETPLACE_FREE_REASONS.has(reason)) {
+        return res.status(400).json({ error: 'invalid_free_reason' });
+      }
+      feeP = 0; // normalise: a free post has no fee regardless of what was sent
+    } else {
+      if (feeP < PAID_FLOOR_PENCE) {
+        return res.status(400).json({ error: 'below_paid_floor', floor_pence: PAID_FLOOR_PENCE });
+      }
+    }
+
+    // Mode default: pick for paid, fcfs for free. Explicit value overrides.
+    let modeFinal = typeof mode === 'string' ? mode.trim().toLowerCase() : '';
+    if (!MARKETPLACE_MODES.has(modeFinal)) {
+      modeFinal = isFree ? 'fcfs' : 'pick';
+    }
+
+    // Expiry default: end of gig date at 23:59. If the poster supplied an
+    // explicit ISO timestamp, use that.
+    let expiresAt = null;
+    if (expires_at) {
+      const d = new Date(expires_at);
+      if (!isNaN(d)) expiresAt = d.toISOString();
+    }
+    if (!expiresAt) {
+      expiresAt = new Date(`${gig_date}T23:59:00Z`).toISOString();
+    }
+
+    // Best-effort geocode. Failure to geocode doesn't block the post — the
+    // distance filter just won't work for this gig. The poster still has a
+    // venue_name and venue_address for display.
+    let venueLat = null, venueLng = null, venuePostcodeNorm = null;
+    if (venue_postcode) {
+      venuePostcodeNorm = normalisePostcode(venue_postcode);
+      try {
+        const geo = await lookupPostcode(venuePostcodeNorm);
+        if (geo && geo.latitude && geo.longitude) {
+          venueLat = geo.latitude;
+          venueLng = geo.longitude;
+        }
+      } catch (_) { /* non-fatal */ }
+    }
+
+    const result = await db.query(
+      `INSERT INTO marketplace_gigs
+        (poster_user_id, title, description, venue_name, venue_address, venue_postcode,
+         venue_lat, venue_lng, gig_date, start_time, end_time, instruments,
+         fee_pence, is_free, free_reason, mode, status, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'open', $17)
+       RETURNING id`,
+      [
+        userId,
+        title.trim().slice(0, 200),
+        description ? String(description).slice(0, 4000) : null,
+        venue_name ? String(venue_name).slice(0, 200) : null,
+        venue_address ? String(venue_address).slice(0, 500) : null,
+        venuePostcodeNorm,
+        venueLat,
+        venueLng,
+        gig_date,
+        start_time || null,
+        end_time || null,
+        instrumentList,
+        feeP,
+        isFree,
+        reason,
+        modeFinal,
+        expiresAt,
+      ]
+    );
+
+    return res.json({ ok: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error('[POST /marketplace]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// GET /api/marketplace
+//
+// Browse list. Query params:
+//   is_free: "true" | "false" (defaults to "false" = Paid tab)
+//   instrument: comma-separated list; defaults to the user's own instruments
+//   min_fee_pence: integer; defaults to user's min_fee_pence
+//   max_distance_miles: integer; defaults to user's travel_radius_miles
+//   show_outside_radius: "true" to drop the distance cap
+//   mode: "pick" | "fcfs" (optional)
+//   date_from, date_to: YYYY-MM-DD (optional)
+//   sort: one of MARKETPLACE_SORTS (default "nearest")
+//   limit, offset: pagination
+router.get('/marketplace', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const {
+      is_free,
+      instrument,
+      min_fee_pence,
+      max_distance_miles,
+      show_outside_radius,
+      mode,
+      date_from,
+      date_to,
+      sort,
+    } = req.query || {};
+
+    // Load user defaults so filter omissions fall back to personal prefs.
+    const prefs = await db.query(
+      `SELECT instruments, home_lat, home_lng, travel_radius_miles, min_fee_pence, notify_free_gigs
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+    const u = prefs.rows[0] || {};
+
+    const tabFree = String(is_free || '').toLowerCase() === 'true';
+    const userInstruments = Array.isArray(u.instruments) ? u.instruments : [];
+    const filterInstruments = toTextArray(instrument) || userInstruments;
+    const minFee = Number.isFinite(parseInt(min_fee_pence, 10))
+      ? parseInt(min_fee_pence, 10)
+      : (tabFree ? 0 : (u.min_fee_pence || PAID_FLOOR_PENCE));
+    const maxDistance = Number.isFinite(parseInt(max_distance_miles, 10))
+      ? parseInt(max_distance_miles, 10)
+      : (u.travel_radius_miles || 50);
+    const showOutside = String(show_outside_radius || '').toLowerCase() === 'true';
+
+    const clauses = [`mg.status = 'open'`, `mg.poster_user_id <> $1`];
+    const params = [userId];
+    let p = 2;
+
+    clauses.push(`mg.is_free = $${p++}`);
+    params.push(tabFree);
+
+    if (!tabFree) {
+      clauses.push(`mg.fee_pence >= $${p++}`);
+      params.push(minFee);
+    }
+
+    if (filterInstruments.length > 0) {
+      clauses.push(`mg.instruments && $${p++}::text[]`);
+      params.push(filterInstruments);
+    }
+
+    if (mode && MARKETPLACE_MODES.has(String(mode).toLowerCase())) {
+      clauses.push(`mg.mode = $${p++}`);
+      params.push(String(mode).toLowerCase());
+    }
+
+    if (date_from) { clauses.push(`mg.gig_date >= $${p++}`); params.push(date_from); }
+    if (date_to)   { clauses.push(`mg.gig_date <= $${p++}`); params.push(date_to); }
+
+    // Hide from users already blocked by / blocking the poster, matching the
+    // directory search contract. Keeps abuse-report flows consistent across
+    // surfaces.
+    clauses.push(`NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE (ub.blocker_id = $1 AND ub.blocked_id = mg.poster_user_id)
+         OR (ub.blocked_id = $1 AND ub.blocker_id = mg.poster_user_id)
+    )`);
+
+    // Distance is computed post-query because the haversine would need a
+    // PostGIS extension to run in SQL. For the typical case (a few hundred
+    // open posts at a time) the in-JS pass is fine.
+    const sortKey = MARKETPLACE_SORTS.has(String(sort || '').toLowerCase())
+      ? String(sort).toLowerCase()
+      : 'nearest';
+
+    // SQL ORDER BY covers what we can do without distance. Distance-based
+    // sorts ("nearest") are applied in JS after attachDistance.
+    let orderSql = '';
+    switch (sortKey) {
+      case 'newest':   orderSql = 'ORDER BY mg.created_at DESC'; break;
+      case 'fee_high': orderSql = 'ORDER BY mg.fee_pence DESC, mg.created_at DESC'; break;
+      case 'fee_low':  orderSql = 'ORDER BY mg.fee_pence ASC, mg.created_at DESC'; break;
+      case 'soonest':  orderSql = 'ORDER BY mg.gig_date ASC, mg.start_time ASC NULLS LAST'; break;
+      default:         orderSql = 'ORDER BY mg.created_at DESC';
+    }
+
+    const sql = `${MARKETPLACE_SELECT}
+      WHERE ${clauses.join(' AND ')}
+      ${orderSql}
+      LIMIT 200`;
+
+    const result = await db.query(sql, params);
+    let rows = await attachDistance(result.rows, userId);
+
+    if (!showOutside && u.home_lat != null && u.home_lng != null) {
+      rows = rows.filter((r) => r.distance_miles == null || r.distance_miles <= maxDistance);
+    }
+
+    if (sortKey === 'nearest') {
+      rows.sort((a, b) => {
+        const da = a.distance_miles == null ? Infinity : a.distance_miles;
+        const db = b.distance_miles == null ? Infinity : b.distance_miles;
+        return da - db;
+      });
+    }
+
+    return res.json({ gigs: rows });
+  } catch (err) {
+    console.error('[GET /marketplace]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// GET /api/marketplace/mine — poster's own posts with applicant counts.
+// Ordered newest-first so the composer lands above older posts.
+router.get('/marketplace/mine', async (req, res) => {
+  try {
+    const result = await db.query(
+      `${MARKETPLACE_SELECT}
+       WHERE mg.poster_user_id = $1
+       ORDER BY mg.created_at DESC
+       LIMIT 200`,
+      [req.user.id]
+    );
+    return res.json({ gigs: result.rows });
+  } catch (err) {
+    console.error('[GET /marketplace/mine]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// GET /api/marketplace/applications/mine — user's own applications with the
+// gig inlined. Lets My Applications render in one round-trip.
+router.get('/marketplace/applications/mine', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT
+        ma.id AS application_id,
+        ma.status AS application_status,
+        ma.note,
+        ma.created_at AS applied_at,
+        mg.id, mg.title, mg.venue_name, mg.gig_date, mg.start_time, mg.end_time,
+        mg.instruments, mg.fee_pence, mg.is_free, mg.free_reason, mg.mode,
+        mg.status AS gig_status, mg.expires_at, mg.filled_by_user_id,
+        COALESCE(u.display_name, u.first_name || ' ' || u.last_name, u.email) AS poster_name
+       FROM marketplace_applications ma
+       JOIN marketplace_gigs mg ON mg.id = ma.marketplace_gig_id
+       LEFT JOIN users u ON u.id = mg.poster_user_id
+       WHERE ma.applicant_user_id = $1
+       ORDER BY ma.created_at DESC
+       LIMIT 200`,
+      [req.user.id]
+    );
+    return res.json({ applications: result.rows });
+  } catch (err) {
+    console.error('[GET /marketplace/applications/mine]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// GET /api/marketplace/badge-count — count of open posts matching the user's
+// instruments + within travel radius + at or above their min fee. Free posts
+// are included only if notify_free_gigs is on. Fast-path: if the user has
+// no home lat/lng we return the instrument-matched count with no distance
+// filter rather than zero, so a user who never typed a postcode still sees
+// something to click.
+router.get('/marketplace/badge-count', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const prefs = await db.query(
+      `SELECT instruments, home_lat, home_lng, travel_radius_miles, min_fee_pence, notify_free_gigs
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+    const u = prefs.rows[0] || {};
+    const instruments = Array.isArray(u.instruments) ? u.instruments : [];
+    if (instruments.length === 0) return res.json({ count: 0 });
+
+    const clauses = [
+      `mg.status = 'open'`,
+      `mg.poster_user_id <> $1`,
+      `mg.instruments && $2::text[]`,
+    ];
+    const params = [userId, instruments];
+    let p = 3;
+
+    // Paid or Free-when-opted-in.
+    if (u.notify_free_gigs) {
+      clauses.push(`(
+        (mg.is_free = FALSE AND mg.fee_pence >= $${p})
+        OR mg.is_free = TRUE
+      )`);
+      params.push(u.min_fee_pence || PAID_FLOOR_PENCE);
+      p++;
+    } else {
+      clauses.push(`mg.is_free = FALSE`);
+      clauses.push(`mg.fee_pence >= $${p++}`);
+      params.push(u.min_fee_pence || PAID_FLOOR_PENCE);
+    }
+
+    clauses.push(`NOT EXISTS (
+      SELECT 1 FROM user_blocks ub
+      WHERE (ub.blocker_id = $1 AND ub.blocked_id = mg.poster_user_id)
+         OR (ub.blocked_id = $1 AND ub.blocker_id = mg.poster_user_id)
+    )`);
+
+    const result = await db.query(
+      `SELECT mg.id, mg.venue_lat, mg.venue_lng FROM marketplace_gigs mg
+       WHERE ${clauses.join(' AND ')}
+       LIMIT 500`,
+      params
+    );
+
+    // Distance filter in JS.
+    let rows = result.rows;
+    if (u.home_lat != null && u.home_lng != null) {
+      const radius = u.travel_radius_miles || 50;
+      rows = rows.filter((r) => {
+        const d = haversineMiles(u.home_lat, u.home_lng, r.venue_lat, r.venue_lng);
+        return d == null || d <= radius;
+      });
+    }
+
+    return res.json({ count: rows.length });
+  } catch (err) {
+    console.error('[GET /marketplace/badge-count]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// GET /api/marketplace/:id — single gig with poster info + distance. Does not
+// expose applicant list unless the caller is the poster; applicants-list has
+// its own endpoint so we can audit that access path separately.
+router.get('/marketplace/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await db.query(
+      `${MARKETPLACE_SELECT} WHERE mg.id = $1`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    const [gig] = await attachDistance(result.rows, userId);
+
+    // Has the current user already applied? Populates the "Applied" state
+    // on the detail screen without a second round-trip.
+    const appRes = await db.query(
+      `SELECT id, status, note, created_at FROM marketplace_applications
+       WHERE marketplace_gig_id = $1 AND applicant_user_id = $2`,
+      [id, userId]
+    );
+    gig.my_application = appRes.rows[0] || null;
+    gig.is_poster = gig.poster_user_id === userId;
+
+    return res.json({ gig });
+  } catch (err) {
+    console.error('[GET /marketplace/:id]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// GET /api/marketplace/:id/applicants — poster-only list. Rows include
+// applicant profile snippet (name, photo, bio, rating stub, gigs_completed)
+// so the applicant preview modal renders without a second round-trip.
+router.get('/marketplace/:id/applicants', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const own = await db.query(
+      `SELECT poster_user_id FROM marketplace_gigs WHERE id = $1`,
+      [id]
+    );
+    if (own.rows.length === 0) return res.status(404).json({ error: 'not_found' });
+    if (own.rows[0].poster_user_id !== userId) {
+      return res.status(403).json({ error: 'not_poster' });
+    }
+
+    const apps = await db.query(
+      `SELECT
+        ma.id AS application_id,
+        ma.status,
+        ma.note,
+        ma.created_at AS applied_at,
+        u.id AS user_id,
+        COALESCE(u.display_name, u.first_name || ' ' || u.last_name, u.email) AS name,
+        u.photo_url,
+        u.bio,
+        u.instruments,
+        u.home_lat,
+        u.home_lng,
+        (
+          SELECT COUNT(*) FROM gigs g
+          WHERE g.user_id = u.id AND g.gig_date < CURRENT_DATE
+        ) AS gigs_completed
+       FROM marketplace_applications ma
+       JOIN users u ON u.id = ma.applicant_user_id
+       WHERE ma.marketplace_gig_id = $1
+       ORDER BY
+         CASE ma.status WHEN 'accepted' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
+         ma.created_at ASC`,
+      [id]
+    );
+
+    // Decorate with distance from gig venue so the poster sees how far each
+    // applicant is from the gig.
+    const gigRes = await db.query(
+      `SELECT venue_lat, venue_lng FROM marketplace_gigs WHERE id = $1`, [id]
+    );
+    const venue = gigRes.rows[0] || {};
+    const decorated = apps.rows.map((a) => {
+      const d = haversineMiles(venue.venue_lat, venue.venue_lng, a.home_lat, a.home_lng);
+      return {
+        ...a,
+        distance_miles: d == null ? null : Math.round(d * 10) / 10,
+        is_new_to_tmg: (a.gigs_completed == null ? 0 : parseInt(a.gigs_completed, 10)) === 0,
+      };
+    });
+    // Strip raw lat/lng from the response — the applicant's home location
+    // isn't the poster's business, only the resulting distance.
+    decorated.forEach((a) => { delete a.home_lat; delete a.home_lng; });
+
+    return res.json({ applicants: decorated });
+  } catch (err) {
+    console.error('[GET /marketplace/:id/applicants]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// POST /api/marketplace/:id/apply — applicant submits a note. In FCFS mode
+// the first successful apply auto-fills the gig inside a transaction so two
+// simultaneous applies can't both win. In Pick mode the row lands as
+// 'pending' and the poster picks later.
+router.post('/marketplace/:id/apply', async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+  const { note } = req.body || {};
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const lock = await client.query(
+      `SELECT id, poster_user_id, mode, status, is_free, instruments
+       FROM marketplace_gigs WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    if (lock.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'not_found' });
+    }
+    const gig = lock.rows[0];
+    if (gig.poster_user_id === userId) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'own_post' });
+    }
+    if (gig.status !== 'open') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'not_open', gig_status: gig.status });
+    }
+
+    // FCFS path: mark gig filled inside the same transaction the application
+    // inserts in. Any losing parallel request sees status != 'open' and bails
+    // with the locked-FCFS error.
+    if (gig.mode === 'fcfs') {
+      await client.query(
+        `INSERT INTO marketplace_applications (marketplace_gig_id, applicant_user_id, note, status)
+         VALUES ($1, $2, $3, 'accepted')
+         ON CONFLICT (marketplace_gig_id, applicant_user_id)
+         DO UPDATE SET note = EXCLUDED.note, status = 'accepted'`,
+        [id, userId, note ? String(note).slice(0, 1000) : null]
+      );
+      await client.query(
+        `UPDATE marketplace_gigs
+         SET status = 'filled', filled_by_user_id = $2, filled_at = NOW(), updated_at = NOW()
+         WHERE id = $1`,
+        [id, userId]
+      );
+      await client.query('COMMIT');
+      return res.json({ ok: true, mode: 'fcfs', status: 'accepted' });
+    }
+
+    // Pick path: pending application, poster picks later.
+    await client.query(
+      `INSERT INTO marketplace_applications (marketplace_gig_id, applicant_user_id, note, status)
+       VALUES ($1, $2, $3, 'pending')
+       ON CONFLICT (marketplace_gig_id, applicant_user_id)
+       DO UPDATE SET note = EXCLUDED.note, status = 'pending'`,
+      [id, userId, note ? String(note).slice(0, 1000) : null]
+    );
+    await client.query('COMMIT');
+    return res.json({ ok: true, mode: 'pick', status: 'pending' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[POST /marketplace/:id/apply]', err);
+    return res.status(500).json({ error: 'server_error' });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/marketplace/:id/pick — poster accepts an applicant (Pick mode).
+// All other pending applicants get marked 'rejected' in the same transaction
+// so the My Applications screen shows a clean outcome to everyone.
+router.post('/marketplace/:id/pick', async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+  const { applicant_user_id } = req.body || {};
+  if (!applicant_user_id) return res.status(400).json({ error: 'applicant_required' });
+
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const own = await client.query(
+      `SELECT poster_user_id, status, mode FROM marketplace_gigs WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    if (own.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'not_found' }); }
+    if (own.rows[0].poster_user_id !== userId) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'not_poster' }); }
+    if (own.rows[0].status !== 'open') { await client.query('ROLLBACK'); return res.status(409).json({ error: 'not_open' }); }
+
+    // Ensure the applicant actually applied to this gig.
+    const appCheck = await client.query(
+      `SELECT id FROM marketplace_applications
+       WHERE marketplace_gig_id = $1 AND applicant_user_id = $2 AND status = 'pending'`,
+      [id, applicant_user_id]
+    );
+    if (appCheck.rows.length === 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'applicant_not_pending' }); }
+
+    await client.query(
+      `UPDATE marketplace_applications
+       SET status = CASE
+         WHEN applicant_user_id = $2 THEN 'accepted'
+         ELSE 'rejected'
+       END
+       WHERE marketplace_gig_id = $1 AND status = 'pending'`,
+      [id, applicant_user_id]
+    );
+    await client.query(
+      `UPDATE marketplace_gigs
+       SET status = 'filled', filled_by_user_id = $2, filled_at = NOW(), updated_at = NOW()
+       WHERE id = $1`,
+      [id, applicant_user_id]
+    );
+    await client.query('COMMIT');
+    return res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[POST /marketplace/:id/pick]', err);
+    return res.status(500).json({ error: 'server_error' });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/marketplace/:id/cancel — poster withdraws an open post. Applicants
+// are not notified automatically; the status change is enough because My
+// Applications reads the gig status live. Not available once the gig is
+// filled (use Cancel gig from the booked flow instead).
+router.post('/marketplace/:id/cancel', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await db.query(
+      `UPDATE marketplace_gigs
+       SET status = 'cancelled', updated_at = NOW()
+       WHERE id = $1 AND poster_user_id = $2 AND status = 'open'
+       RETURNING id`,
+      [id, req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'not_found_or_not_cancellable' });
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[POST /marketplace/:id/cancel]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// POST /api/marketplace/:id/repost — duplicate an expired or cancelled post
+// with a fresh expires_at window. The poster can PATCH fee_pence / expires_at
+// in the body to tweak before republishing. Returns the new gig id.
+router.post('/marketplace/:id/repost', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const { fee_pence, expires_at, gig_date } = req.body || {};
+
+    const src = await db.query(
+      `SELECT * FROM marketplace_gigs WHERE id = $1 AND poster_user_id = $2`,
+      [id, userId]
+    );
+    if (src.rows.length === 0) return res.status(404).json({ error: 'not_found' });
+    const g = src.rows[0];
+
+    const newFee = Number.isFinite(parseInt(fee_pence, 10)) ? parseInt(fee_pence, 10) : g.fee_pence;
+    if (!g.is_free && newFee < PAID_FLOOR_PENCE) {
+      return res.status(400).json({ error: 'below_paid_floor', floor_pence: PAID_FLOOR_PENCE });
+    }
+
+    const newGigDate = gig_date || g.gig_date;
+    let newExpiresAt = null;
+    if (expires_at) {
+      const d = new Date(expires_at);
+      if (!isNaN(d)) newExpiresAt = d.toISOString();
+    }
+    if (!newExpiresAt) {
+      newExpiresAt = new Date(`${newGigDate instanceof Date ? newGigDate.toISOString().slice(0,10) : newGigDate}T23:59:00Z`).toISOString();
+    }
+
+    const ins = await db.query(
+      `INSERT INTO marketplace_gigs
+        (poster_user_id, title, description, venue_name, venue_address, venue_postcode,
+         venue_lat, venue_lng, gig_date, start_time, end_time, instruments,
+         fee_pence, is_free, free_reason, mode, status, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'open', $17)
+       RETURNING id`,
+      [
+        userId, g.title, g.description, g.venue_name, g.venue_address, g.venue_postcode,
+        g.venue_lat, g.venue_lng, newGigDate, g.start_time, g.end_time, g.instruments,
+        newFee, g.is_free, g.free_reason, g.mode, newExpiresAt,
+      ]
+    );
+
+    return res.json({ ok: true, id: ins.rows[0].id });
+  } catch (err) {
+    console.error('[POST /marketplace/:id/repost]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// GET /api/marketplace/:id/similar — three other open gigs matching the
+// locked gig's instruments and within the user's travel radius. Feeds the
+// softer locked-FCFS state ("someone got there first — here are three
+// similar nearby gigs").
+router.get('/marketplace/:id/similar', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const src = await db.query(
+      `SELECT instruments, is_free FROM marketplace_gigs WHERE id = $1`, [id]
+    );
+    if (src.rows.length === 0) return res.json({ gigs: [] });
+    const g = src.rows[0];
+
+    const u = (await db.query(
+      `SELECT home_lat, home_lng, travel_radius_miles, min_fee_pence FROM users WHERE id = $1`,
+      [userId]
+    )).rows[0] || {};
+
+    const result = await db.query(
+      `${MARKETPLACE_SELECT}
+       WHERE mg.id <> $1
+         AND mg.status = 'open'
+         AND mg.poster_user_id <> $2
+         AND mg.is_free = $3
+         AND mg.instruments && $4::text[]
+       ORDER BY mg.created_at DESC
+       LIMIT 20`,
+      [id, userId, g.is_free, g.instruments || []]
+    );
+    let rows = await attachDistance(result.rows, userId);
+    if (u.home_lat != null) {
+      const radius = u.travel_radius_miles || 50;
+      rows = rows.filter((r) => r.distance_miles == null || r.distance_miles <= radius);
+    }
+    rows.sort((a, b) => {
+      const da = a.distance_miles == null ? Infinity : a.distance_miles;
+      const db = b.distance_miles == null ? Infinity : b.distance_miles;
+      return da - db;
+    });
+
+    return res.json({ gigs: rows.slice(0, 3) });
+  } catch (err) {
+    console.error('[GET /marketplace/:id/similar]', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
 
 module.exports = router;
