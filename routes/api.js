@@ -190,6 +190,18 @@ router.post('/gigs', async (req, res) => {
     res.json(gig);
   } catch (error) {
     console.error('Create gig error:', error);
+    // Postgres 23502 = not_null_violation, 22P02 = invalid_text_representation,
+    // 22007 = invalid_datetime_format. All of these are client-input problems,
+    // so surface them as 400 with the offending column rather than a generic
+    // 500. Stress harness flagged this: POST /gigs with only { notes } was
+    // triggering a NOT NULL on date and bubbling up as 500.
+    if (error && (error.code === '23502' || error.code === '22P02' || error.code === '22007')) {
+      return res.status(400).json({
+        error: 'Missing or invalid field',
+        field: error.column || null,
+        detail: error.message,
+      });
+    }
     res.status(500).json({ error: 'Failed to create gig' });
   }
 });
