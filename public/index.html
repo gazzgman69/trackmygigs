@@ -253,7 +253,8 @@
         <div class="invoice-preview-row" id="invPreviewBankRow" style="display:none;border-top:1px solid var(--border);margin-top:8px;padding-top:8px;"><span style="color:var(--text-2);font-size:11px;">Payment</span><span id="invPreviewBank" style="text-align:right;max-width:65%;font-size:11px;color:var(--text-2);white-space:pre-line;">--</span></div>
       </div>
       <div class="form-group"><div class="form-label">Invoice number</div><input class="form-input" id="invInvoiceNumber" placeholder="INV-001"></div>
-      <div class="form-group"><div class="form-label">Bill to</div><input class="form-input" id="invBillTo" placeholder="Band / client name"></div>
+      <div class="form-group"><div class="form-label">Bill to</div><input class="form-input" id="invBillTo" placeholder="Band / client name" list="invClientSuggest" autocomplete="off"><datalist id="invClientSuggest"></datalist></div>
+      <div class="form-group"><div class="form-label">Client address (optional)</div><textarea class="form-input" id="invClientAddress" rows="3" placeholder="e.g. The Grand Hotel&#10;High Street&#10;London SW1A 1AA" style="resize:vertical;min-height:60px;font-family:inherit;"></textarea></div>
       <div class="form-group"><div class="form-label">Linked gig (optional)</div><select class="form-input" id="invLinkedGig"><option value="">Select a gig...</option></select></div>
       <!-- Teaching lesson bundler: hidden by default, toggled by the link just below. -->
       <div class="form-group" style="margin-top:-6px;">

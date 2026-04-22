@@ -3399,8 +3399,13 @@ async function openInvoiceDetail(invoiceId) {
         </div>` : ''}
         ${invoice.venue_address ? `
         <div style="display:flex;justify-content:space-between;margin-top:4px;">
-          <span style="color:var(--text-2);font-size:12px;">Address</span>
-          <span style="font-size:12px;color:var(--text);text-align:right;max-width:60%;">${escapeHtml(invoice.venue_address)}</span>
+          <span style="color:var(--text-2);font-size:12px;">Venue address</span>
+          <span style="font-size:12px;color:var(--text);text-align:right;max-width:60%;white-space:pre-line;">${escapeHtml(invoice.venue_address)}</span>
+        </div>` : ''}
+        ${invoice.recipient_address ? `
+        <div style="display:flex;justify-content:space-between;margin-top:8px;">
+          <span style="color:var(--text-2);font-size:12px;">Client address</span>
+          <span style="font-size:12px;color:var(--text);text-align:right;max-width:60%;white-space:pre-line;">${escapeHtml(invoice.recipient_address)}</span>
         </div>` : ''}
       </div>`;
 
@@ -8050,6 +8055,21 @@ function editProfile() {
       </div>
       <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Invoice Settings</div>
       <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Business Address</label>
+        <textarea id="editBusinessAddress" rows="3" placeholder="e.g. 12 High Street&#10;London&#10;SW1A 1AA" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;min-height:60px;font-family:inherit;">${escapeHtml(profile.business_address || '')}</textarea>
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Shows under your name on invoices</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Business Phone</label>
+          <input id="editBusinessPhone" type="tel" value="${escapeHtml(profile.business_phone || '')}" placeholder="07…" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">VAT Number</label>
+          <input id="editVatNumber" type="text" value="${escapeHtml(profile.vat_number || '')}" placeholder="GB123456789" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+        </div>
+      </div>
+      <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Bank / Payment Details</label>
         <textarea id="editBankDetails" rows="3" placeholder="e.g. Sort code: 12-34-56&#10;Account: 12345678&#10;Gareth Gwyn" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;min-height:60px;font-family:inherit;">${escapeHtml(profile.bank_details || '')}</textarea>
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Auto-fills on every new invoice</div>
@@ -8074,10 +8094,16 @@ function editProfile() {
         </div>
       </div>
       <div id="invFormatPreview" style="font-size:12px;color:var(--accent);margin-bottom:14px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">Next invoice: ${escapeHtml(generateInvoiceNumber(profile.invoice_prefix || 'INV', profile.invoice_next_number || 1, profile.invoice_format || 'plain'))}</div>
+      <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Saved Clients</div>
+      <div style="font-size:11px;color:var(--text-3);margin-bottom:10px;line-height:1.45;">Names you&#8217;ve billed before. They auto-fill the client address when you pick one in the invoice composer.</div>
+      <div id="savedClientsList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;"><div style="font-size:12px;color:var(--text-3);padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">Loading&#8230;</div></div>
       ${buildRateCardEditor(profile)}
     </div>`;
 
   openPanel('panel-edit-profile');
+  // Populate the Saved Clients list asynchronously so the panel doesn't
+  // block on an API call.
+  setTimeout(() => { if (typeof renderSavedClientsList === 'function') renderSavedClientsList(); }, 0);
 
   // Live preview of EPK video if we're rendering an editor that includes it
   setTimeout(() => {
@@ -8097,6 +8123,9 @@ async function saveProfile() {
   const googleReviewUrl = document.getElementById('editGoogleReview')?.value?.trim();
   const facebookReviewUrl = document.getElementById('editFacebookReview')?.value?.trim();
   const bankDetails = document.getElementById('editBankDetails')?.value?.trim();
+  const businessAddress = document.getElementById('editBusinessAddress')?.value?.trim();
+  const businessPhone = document.getElementById('editBusinessPhone')?.value?.trim();
+  const vatNumber = document.getElementById('editVatNumber')?.value?.trim();
   const invoicePrefix = document.getElementById('editInvoicePrefix')?.value?.trim().toUpperCase();
   const invoiceNextNum = parseInt(document.getElementById('editInvoiceNextNum')?.value, 10) || null;
   const invoiceFormat = document.getElementById('editInvoiceFormat')?.value || null;
@@ -8131,6 +8160,9 @@ async function saveProfile() {
       google_review_url: googleReviewUrl || null,
       facebook_review_url: facebookReviewUrl || null,
       bank_details: bankDetails || null,
+      business_address: businessAddress || null,
+      business_phone: businessPhone || null,
+      vat_number: vatNumber || null,
       invoice_prefix: invoicePrefix || null,
       invoice_next_number: invoiceNextNum,
       invoice_format: invoiceFormat,
@@ -9267,7 +9299,7 @@ async function openSongForm(songId) {
 
 async function openStandaloneInvoice() {
   // Reset the create-invoice form and open panel-invoice
-  const fields = ['invInvoiceNumber','invBillTo','invDesc','invAmount','invDueDate','invNotes'];
+  const fields = ['invInvoiceNumber','invBillTo','invClientAddress','invDesc','invAmount','invDueDate','invNotes'];
   fields.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   const linked = document.getElementById('invLinkedGig');
   if (linked) linked.value = '';
@@ -11739,11 +11771,20 @@ function initInvoicePanel() {
   populateGigDropdown();
 
   // Live preview updates
-  const fields = ['invBillTo', 'invDesc', 'invAmount', 'invNotes', 'invInvoiceNumber'];
+  const fields = ['invBillTo', 'invClientAddress', 'invDesc', 'invAmount', 'invNotes', 'invInvoiceNumber'];
   fields.forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', updateInvoicePreview);
   });
+
+  // Populate the saved-client datalist and wire auto-fill when the user
+  // picks a name that matches a saved record.
+  loadInvoiceClientSuggest();
+  const billToEl = document.getElementById('invBillTo');
+  if (billToEl) {
+    billToEl.addEventListener('input', maybeAutoFillClientAddress);
+    billToEl.addEventListener('change', maybeAutoFillClientAddress);
+  }
 
   // Gig selector auto-fill
   const gigSelect = document.getElementById('invLinkedGig');
@@ -11786,6 +11827,94 @@ function initInvoicePanel() {
   const bundleResults = document.getElementById('invBundleResults');
   if (bundleResults) bundleResults.innerHTML = '';
 }
+
+// ── Saved invoice clients (name + address address book) ─────────────────────
+// The list is fetched once per composer open and cached on window so the
+// autofill helper can look up the address without another round-trip. Names
+// are indexed lowercase so lookup matches the composer input regardless of
+// what case the user types.
+window._invoiceClientsCache = null;
+async function loadInvoiceClientSuggest() {
+  const dl = document.getElementById('invClientSuggest');
+  try {
+    const res = await fetch('/api/invoice-clients');
+    if (!res.ok) return;
+    const clients = await res.json();
+    window._invoiceClientsCache = clients;
+    if (dl) {
+      dl.innerHTML = clients
+        .map((c) => `<option value="${escapeHtml(c.name)}"></option>`)
+        .join('');
+    }
+  } catch (err) {
+    console.warn('Invoice client suggest load failed:', err);
+  }
+}
+
+function maybeAutoFillClientAddress() {
+  const billToEl = document.getElementById('invBillTo');
+  const addrEl = document.getElementById('invClientAddress');
+  if (!billToEl || !addrEl) return;
+  const typed = (billToEl.value || '').trim().toLowerCase();
+  if (!typed) return;
+  const clients = window._invoiceClientsCache || [];
+  const match = clients.find((c) => (c.name || '').trim().toLowerCase() === typed);
+  // Only autofill when the address field is empty, so we never clobber a
+  // user-edited address.
+  if (match && match.address && !addrEl.value.trim()) {
+    addrEl.value = match.address;
+    updateInvoicePreview();
+  }
+}
+
+// Renders the Saved Clients section inside Edit Profile. Each row shows the
+// client name + a first-line address preview, with a delete button. Edits
+// aren't supported here because the source of truth is the next invoice you
+// send to that client: changing the address on a fresh invoice will upsert
+// the record.
+async function renderSavedClientsList() {
+  const container = document.getElementById('savedClientsList');
+  if (!container) return;
+  try {
+    const res = await fetch('/api/invoice-clients');
+    if (!res.ok) throw new Error('Failed to load clients');
+    const clients = await res.json();
+    if (!clients.length) {
+      container.innerHTML = `<div style="font-size:12px;color:var(--text-3);padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">No saved clients yet. They&#8217;ll appear here after you send your first invoice.</div>`;
+      return;
+    }
+    container.innerHTML = clients.map((c) => {
+      const firstLine = (c.address || '').split('\n')[0] || '';
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(c.name)}</div>
+            ${firstLine ? `<div style="font-size:11px;color:var(--text-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(firstLine)}</div>` : ''}
+          </div>
+          <button type="button" onclick="deleteSavedClient(${c.id})" style="background:none;border:1px solid var(--border);color:var(--text-2);font-size:11px;padding:6px 10px;border-radius:var(--rs);cursor:pointer;">Delete</button>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    console.error('Saved clients load error:', err);
+    container.innerHTML = `<div style="font-size:12px;color:var(--error);padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">Could not load saved clients.</div>`;
+  }
+}
+window.renderSavedClientsList = renderSavedClientsList;
+
+async function deleteSavedClient(id) {
+  if (!confirm('Remove this saved client? Future invoices won\u2019t autofill their address.')) return;
+  try {
+    const res = await fetch(`/api/invoice-clients/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Delete failed');
+    // Invalidate the composer cache so the datalist re-fetches next open
+    window._invoiceClientsCache = null;
+    renderSavedClientsList();
+  } catch (err) {
+    console.error('Delete client error:', err);
+    alert('Could not delete client.');
+  }
+}
+window.deleteSavedClient = deleteSavedClient;
 
 // ── Teaching lesson bundling ─────────────────────────────────────────────────
 // Lets a teacher pull every Teaching gig for a given student in a date range
@@ -12189,6 +12318,7 @@ async function submitInvoice() {
         invoice_number: invoiceNumber,
         venue_name: venueName,
         venue_address: venueAddress,
+        recipient_address: document.getElementById('invClientAddress')?.value?.trim() || null,
         status: 'sent',
       }),
     });
@@ -12259,6 +12389,7 @@ async function saveInvoiceDraft() {
         invoice_number: invoiceNumber,
         venue_name: venueName,
         venue_address: venueAddress,
+        recipient_address: document.getElementById('invClientAddress')?.value?.trim() || null,
         status: 'draft',
       }),
     });

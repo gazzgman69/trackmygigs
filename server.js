@@ -680,6 +680,27 @@ async function runMigrations() {
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS chase_count INTEGER DEFAULT 0`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS last_chase_at TIMESTAMP`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_email VARCHAR(255)`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_address TEXT`);
+
+    // Invoice client directory: save-on-use address book so a musician only
+    // types a client once. Keyed to (user_id, lower(name)) so "Marriott" and
+    // "marriott" collapse into a single row, and ordered by last_used_at so
+    // recently-billed clients float to the top of the datalist.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS invoice_clients (
+        id SERIAL PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        address TEXT,
+        email VARCHAR(255),
+        phone VARCHAR(64),
+        last_used_at TIMESTAMP DEFAULT NOW(),
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS invoice_clients_user_name_idx
+                    ON invoice_clients (user_id, LOWER(name))`);
+
     // S13-09: link receipts to gigs so "expenses for this gig" and per-gig P&L work.
     await db.query(`ALTER TABLE receipts ADD COLUMN IF NOT EXISTS gig_id INTEGER`);
     await db.query(`CREATE INDEX IF NOT EXISTS receipts_gig_id_idx ON receipts (gig_id)`);

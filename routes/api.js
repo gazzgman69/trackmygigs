@@ -427,15 +427,15 @@ router.get('/invoices', async (req, res) => {
 router.post('/invoices', async (req, res) => {
   try {
     const { gig_id, band_name, amount, status, invoice_number, payment_terms, due_date,
-            venue_address, venue_name, description, notes, recipient_email } = req.body;
+            venue_address, venue_name, description, notes, recipient_email, recipient_address } = req.body;
 
     const effectiveStatus = status || 'draft';
     const sentAt = effectiveStatus === 'sent' ? new Date() : null;
 
     const result = await db.query(
       `INSERT INTO invoices (user_id, gig_id, band_name, amount, status, invoice_number, payment_terms, due_date,
-                             venue_address, venue_name, description, notes, recipient_email, sent_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                             venue_address, venue_name, description, notes, recipient_email, recipient_address, sent_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         req.user.id,
@@ -451,9 +451,32 @@ router.post('/invoices', async (req, res) => {
         description || null,
         notes || null,
         recipient_email || null,
+        recipient_address || null,
         sentAt,
       ]
     );
+
+    // Upsert into the saved client directory so the next invoice can
+    // auto-suggest the name and auto-fill the address. Non-fatal: if this
+    // fails we still return the invoice so the user's flow isn't blocked.
+    const cleanClient = String(band_name || '').trim();
+    if (cleanClient) {
+      try {
+        await db.query(
+          `INSERT INTO invoice_clients (user_id, name, address, email, last_used_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (user_id, LOWER(name)) DO UPDATE
+             SET address = COALESCE(EXCLUDED.address, invoice_clients.address),
+                 email   = COALESCE(EXCLUDED.email, invoice_clients.email),
+                 last_used_at = NOW()`,
+          [req.user.id, cleanClient.slice(0, 255),
+           recipient_address ? String(recipient_address) : null,
+           recipient_email ? String(recipient_email).slice(0, 255) : null]
+        );
+      } catch (dirErr) {
+        console.error('Invoice client upsert (non-fatal):', dirErr.message);
+      }
+    }
 
     res.json(result.rows[0]);
   } catch (error) {
@@ -679,6 +702,7 @@ router.patch('/user/profile', async (req, res) => {
             epk_bio, epk_photo_url, epk_video_url, epk_audio_url,
             rate_standard, rate_premium, rate_dep, rate_deposit_pct, rate_notes,
             travel_radius_miles,
+            business_address, business_phone, vat_number,
             discoverable, bio, photo_url, genres } = req.body;
 
     // instruments comes as a comma-separated string from the client but the
@@ -812,7 +836,10 @@ router.patch('/user/profile', async (req, res) => {
        discoverable = CASE WHEN $29::boolean THEN $30::boolean ELSE discoverable END,
        bio = CASE WHEN $31::boolean THEN $32 ELSE bio END,
        photo_url = CASE WHEN $33::boolean THEN $34 ELSE photo_url END,
-       genres = CASE WHEN $35::boolean THEN $36::text[] ELSE genres END
+       genres = CASE WHEN $35::boolean THEN $36::text[] ELSE genres END,
+       business_address = COALESCE($37, business_address),
+       business_phone = COALESCE($38, business_phone),
+       vat_number = COALESCE($39, vat_number)
        WHERE id = $8 RETURNING *`,
       [name, phone, instrumentsArr, normalisedPostcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
        bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name,
@@ -824,7 +851,10 @@ router.patch('/user/profile', async (req, res) => {
        discoverableProvided, discoverableValue,
        bioProvided, bioValue,
        photoUrlProvided, photoUrlValue,
-       genresArr !== null, genresArr]
+       genresArr !== null, genresArr,
+       (business_address !== undefined && business_address !== null) ? String(business_address) : null,
+       (business_phone !== undefined && business_phone !== null) ? String(business_phone).slice(0, 64) : null,
+       (vat_number !== undefined && vat_number !== null) ? String(vat_number).slice(0, 64) : null]
     );
 
     res.json(result.rows[0]);
@@ -3098,6 +3128,97 @@ router.delete('/invoices/:id', async (req, res) => {
   }
 });
 
+// ── Saved client directory ───────────────────────────────────────────────────
+// Lightweight address book for invoice billing. On invoice submit the client
+// is upserted (match by user_id + case-insensitive name) so the Bill-to field
+// can auto-suggest + auto-fill the address on the next invoice. All routes
+// scope to req.user.id so a user only ever sees their own directory.
+
+router.get('/invoice-clients', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, name, address, email, phone, last_used_at
+         FROM invoice_clients
+        WHERE user_id = $1
+        ORDER BY last_used_at DESC NULLS LAST, LOWER(name) ASC`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('List invoice clients error:', error);
+    res.status(500).json({ error: 'Failed to fetch clients' });
+  }
+});
+
+router.post('/invoice-clients', async (req, res) => {
+  try {
+    const { name, address, email, phone } = req.body;
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return res.status(400).json({ error: 'Client name is required' });
+
+    // Upsert by (user_id, lower(name)) so repeated submits update the same row
+    // instead of silently failing on the unique index. COALESCE keeps existing
+    // address/email/phone if the caller sends null for them.
+    const result = await db.query(
+      `INSERT INTO invoice_clients (user_id, name, address, email, phone, last_used_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (user_id, LOWER(name)) DO UPDATE
+         SET address = COALESCE(EXCLUDED.address, invoice_clients.address),
+             email   = COALESCE(EXCLUDED.email, invoice_clients.email),
+             phone   = COALESCE(EXCLUDED.phone, invoice_clients.phone),
+             last_used_at = NOW()
+       RETURNING id, name, address, email, phone, last_used_at`,
+      [req.user.id, cleanName.slice(0, 255),
+       address ? String(address) : null,
+       email ? String(email).slice(0, 255) : null,
+       phone ? String(phone).slice(0, 64) : null]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Upsert invoice client error:', error);
+    res.status(500).json({ error: 'Failed to save client' });
+  }
+});
+
+router.patch('/invoice-clients/:id', async (req, res) => {
+  try {
+    const { name, address, email, phone } = req.body;
+    const result = await db.query(
+      `UPDATE invoice_clients SET
+         name    = COALESCE($1, name),
+         address = COALESCE($2, address),
+         email   = COALESCE($3, email),
+         phone   = COALESCE($4, phone)
+       WHERE id = $5 AND user_id = $6
+       RETURNING id, name, address, email, phone, last_used_at`,
+      [name ? String(name).trim().slice(0, 255) : null,
+       address != null ? String(address) : null,
+       email != null ? String(email).slice(0, 255) : null,
+       phone != null ? String(phone).slice(0, 64) : null,
+       req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Client not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update invoice client error:', error);
+    res.status(500).json({ error: 'Failed to update client' });
+  }
+});
+
+router.delete('/invoice-clients/:id', async (req, res) => {
+  try {
+    const result = await db.query(
+      'DELETE FROM invoice_clients WHERE id = $1 AND user_id = $2 RETURNING id',
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Client not found' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete invoice client error:', error);
+    res.status(500).json({ error: 'Failed to delete client' });
+  }
+});
+
 // ── Printable export pages (Save as PDF via browser) ──────────────────────────
 // Zero-dependency PDF: we return a clean printable HTML page and the user hits
 // their browser Print > Save as PDF. Auto-triggers window.print() on load.
@@ -3188,7 +3309,7 @@ router.get('/print/gigs', async (req, res) => {
 router.get('/print/invoice/:id', async (req, res) => {
   try {
     const userR = await db.query(
-      `SELECT display_name, name, business_address, vat_number, bank_details
+      `SELECT display_name, name, business_address, business_phone, vat_number, bank_details
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -3207,9 +3328,11 @@ router.get('/print/invoice/:id', async (req, res) => {
     const fromName = me.display_name || me.name || 'TrackMyGigs user';
     const fromMetaBits = [];
     if (me.business_address) fromMetaBits.push(_printEscape(me.business_address).replace(/\n/g, '<br>'));
+    if (me.business_phone) fromMetaBits.push(_printEscape(me.business_phone));
     if (me.vat_number) fromMetaBits.push(`VAT: ${_printEscape(me.vat_number)}`);
 
     const billTo = inv.band_name || inv.g_band || '';
+    const billToAddress = inv.recipient_address ? _printEscape(inv.recipient_address).replace(/\n/g, '<br>') : '';
     const invDate = _fmtDate(inv.created_at || new Date());
     const dueDate = inv.due_date ? _fmtDate(inv.due_date) : (inv.payment_terms || 'On receipt');
     const desc = inv.description || (inv.g_venue
@@ -3256,6 +3379,7 @@ router.get('/print/invoice/:id', async (req, res) => {
           <div>
             <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#777;">Bill to</div>
             <div style="font-size:13px;font-weight:600;color:#111;margin-top:4px;">${_printEscape(billTo)}</div>
+            ${billToAddress ? `<div style="font-size:11px;color:#555;margin-top:4px;line-height:1.5;">${billToAddress}</div>` : ''}
           </div>
           <div>
             <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#777;">Payment due</div>
@@ -3304,7 +3428,7 @@ router.get('/print/invoice/:id', async (req, res) => {
 router.get('/invoices/:id/pdf', async (req, res) => {
   try {
     const userR = await db.query(
-      `SELECT display_name, name, business_address, vat_number, bank_details
+      `SELECT display_name, name, business_address, business_phone, vat_number, bank_details
        FROM users WHERE id = $1`,
       [req.user.id]
     );
