@@ -8027,7 +8027,7 @@ function editProfile() {
           <span>Travel Radius</span>
           <span id="editTravelRadiusValue" style="color:var(--accent);font-weight:700;">${profile.travel_radius_miles != null ? profile.travel_radius_miles : 50} mi</span>
         </label>
-        <input id="editTravelRadius" type="range" min="1" max="500" step="1" value="${profile.travel_radius_miles != null ? profile.travel_radius_miles : 50}" oninput="document.getElementById('editTravelRadiusValue').textContent = this.value + ' mi'" style="width:100%;accent-color:var(--accent);" />
+        <input id="editTravelRadius" type="range" min="10" max="500" step="5" value="${profile.travel_radius_miles != null ? profile.travel_radius_miles : 50}" oninput="document.getElementById('editTravelRadiusValue').textContent = this.value + ' mi'" style="width:100%;accent-color:var(--accent);" />
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">How far you'll travel for a gig. Broadcast dep offers beyond this distance are silently filtered out. Direct pick-dep offers still reach you but are flagged as outside your radius.</div>
       </div>
       <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Review Links</div>
