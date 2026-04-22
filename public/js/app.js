@@ -3278,12 +3278,9 @@ function buildInvoicesHTML(content, invoices) {
     }).join('');
 
     let html = `
-      <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-        <div>
-          <div style="font-size:24px;font-weight:700;color:var(--text);">Invoices</div>
-          <div style="font-size:13px;color:var(--text-2);margin-top:2px;">${invoices.length} total &middot; &pound;${(paid + overdue + draft + sent).toFixed(0)} invoiced</div>
-        </div>
-        <button onclick="openPanel('panel-invoice');initInvoicePanel();" style="background:var(--accent);color:#000;border:none;border-radius:24px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;">+ New</button>
+      <div style="padding:16px 20px 8px;">
+        <div style="font-size:24px;font-weight:700;color:var(--text);">Invoices</div>
+        <div style="font-size:13px;color:var(--text-2);margin-top:2px;">${invoices.length} total &middot; &pound;${(paid + overdue + draft + sent).toFixed(0)} invoiced</div>
       </div>
       <div style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
         ${chipsHtml}
@@ -3511,6 +3508,13 @@ function buildOffersHTML(content, offers) {
 
   const visibleOffers = pending;
 
+  // Which tab is active. 'received' = offers sent TO me (default),
+  // 'sent' = offers I sent to other people. 'marketplace' opens the
+  // existing marketplace panel rather than swapping tab content.
+  const view = window._offersView || 'received';
+  const isReceived = view === 'received';
+  const isSent = view === 'sent';
+
   let html = `
     <div class="ph" style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
       <div style="display:flex;align-items:center;gap:10px;">
@@ -3531,13 +3535,24 @@ function buildOffersHTML(content, offers) {
     </div>
 
     <div class="tbar" style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;gap:0;">
-      <div class="tb ac">My Offers (${pending.length})</div>
+      <div class="tb${isReceived ? ' ac' : ''}" onclick="showOffersTab('received')" style="cursor:pointer;">Received (${pending.length})</div>
+      <div class="tb${isSent ? ' ac' : ''}" onclick="showOffersTab('sent')" style="cursor:pointer;">Sent</div>
       <div class="tb" onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="cursor:pointer;display:flex;align-items:center;gap:6px;">
         <span>Marketplace &#x26A1;</span>
         <span id="marketplaceMenuBadge" style="display:none;background:var(--accent);color:#000;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;min-width:18px;text-align:center;line-height:1;">0</span>
       </div>
-    </div>
+    </div>`;
 
+  if (isSent) {
+    html += `<div id="sentOffersList" style="padding:8px 16px 24px;">
+      <div style="padding:32px 16px;text-align:center;color:var(--text-2);font-size:13px;">Loading sent offers&hellip;</div>
+    </div>`;
+    content.innerHTML = html;
+    loadSentOffers();
+    return;
+  }
+
+  html += `
     <!-- Global snooze toggle -->
     <div style="margin:8px 16px 0;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;">
       <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -3669,6 +3684,135 @@ function buildOffersHTML(content, offers) {
 
   html += `</div>`;
   content.innerHTML = html;
+}
+
+// Swap between the Received and Sent tab views inside the Offers screen.
+// Persists the choice on window so re-renders (cache hits) keep the active
+// tab stable. 'marketplace' is not a tab swap — the tab's onclick opens the
+// marketplace panel directly.
+function showOffersTab(view) {
+  window._offersView = view;
+  const content = document.getElementById('offersScreen');
+  if (!content) return;
+  // Re-render using cached offers so the Received tab stays fast. If there
+  // is no cache yet, fall back to the async path.
+  if (window._cachedOffers) {
+    buildOffersHTML(content, window._cachedOffers);
+  } else {
+    renderOffersScreen();
+  }
+}
+
+// Fetch and render the Sent tab content. Called from buildOffersHTML when
+// view === 'sent'. Keeps the list call out of the main render path so the
+// received tab stays cache-first.
+async function loadSentOffers() {
+  const listEl = document.getElementById('sentOffersList');
+  if (!listEl) return;
+  try {
+    const res = await fetch('/api/offers/sent');
+    if (!res.ok) throw new Error('Failed to fetch sent offers');
+    const offers = await res.json();
+    renderSentOffers(listEl, offers);
+  } catch (err) {
+    console.error('Sent offers error:', err);
+    listEl.innerHTML = `
+      <div style="padding:40px 16px;text-align:center;">
+        <div style="font-size:28px;margin-bottom:8px;">&#x26A0;&#xFE0F;</div>
+        <div style="font-size:13px;color:var(--text-2);">Couldn&#x2019;t load sent offers. Try again.</div>
+      </div>`;
+  }
+}
+
+function renderSentOffers(listEl, offers) {
+  if (!Array.isArray(offers) || offers.length === 0) {
+    listEl.innerHTML = `
+      <div style="padding:40px 16px;text-align:center;color:var(--text-2);">
+        <div style="font-size:32px;margin-bottom:8px;">&#x1F4E4;</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;">You haven&#x2019;t sent any offers yet</div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:14px;">When you need a dep, your sent requests will live here so you can see who&#x2019;s said yes.</div>
+        <button onclick="openDepPicker()" style="background:var(--accent);color:#000;border:none;border-radius:20px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;">Send a dep</button>
+      </div>`;
+    return;
+  }
+
+  // Surface pending offers first, then the rest in reverse-chronological order
+  // which is what the backend already returns.
+  const pending = offers.filter(o => o.status === 'pending');
+  const other = offers.filter(o => o.status !== 'pending');
+  const ordered = [...pending, ...other];
+
+  const statusStyle = (status) => {
+    switch (status) {
+      case 'accepted': return { label: 'Accepted', color: 'var(--success)', bg: 'var(--success-dim)' };
+      case 'declined': return { label: 'Declined', color: 'var(--danger)', bg: 'var(--danger-dim)' };
+      case 'expired':  return { label: 'Expired',  color: 'var(--text-3)', bg: 'var(--surface)' };
+      case 'cancelled':return { label: 'Cancelled',color: 'var(--text-3)', bg: 'var(--surface)' };
+      case 'pending':
+      default:         return { label: 'Pending',  color: 'var(--warning)', bg: 'var(--warning-dim)' };
+    }
+  };
+
+  let html = '';
+  ordered.forEach(offer => {
+    const recipientName = offer.recipient_display_name || offer.recipient_name || 'Musician';
+    const st = statusStyle(offer.status);
+    const badge = offer.offer_type === 'dep' ? 'Dep request' : 'Lineup callout';
+    const badgeColor = offer.offer_type === 'dep' ? 'var(--warning)' : 'var(--info)';
+    const badgeBg = offer.offer_type === 'dep' ? 'var(--warning-dim)' : 'var(--info-dim)';
+    const fee = parseFloat(offer.fee || 0).toFixed(0);
+
+    html += `
+      <div class="oc">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;">${escapeHtml(offer.band_name || 'Gig')}</div>
+          <span style="font-size:10px;color:${badgeColor};background:${badgeBg};border-radius:8px;padding:2px 8px;font-weight:600;">${badge}</span>
+        </div>
+        <div style="display:flex;gap:10px;align-items:flex-start;">
+          <div style="flex:1;">
+            <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(offer.venue_name || 'Venue TBC')}</div>
+            <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">&#x1F4C5; ${formatDateLong(offer.gig_date)}</div>
+            ${offer.start_time ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">&#x1F550; ${offer.start_time.slice(0,5)}${offer.end_time ? '&ndash;' + offer.end_time.slice(0,5) : ''}</div>` : ''}
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--success);">&pound;${fee}</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;margin:10px 0;display:flex;align-items:center;gap:10px;">
+          <div style="width:36px;height:36px;border-radius:18px;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--accent);">${escapeHtml(recipientName[0] || 'M')}</div>
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);">Sent to ${escapeHtml(recipientName)}</div>
+            <div style="font-size:11px;color:var(--text-2);">${new Date(offer.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}</div>
+          </div>
+          <span style="font-size:11px;font-weight:700;color:${st.color};background:${st.bg};border-radius:10px;padding:4px 10px;">${st.label}</span>
+        </div>
+        ${offer.status === 'pending' ? `
+        <div style="display:flex;gap:8px;">
+          <button onclick="cancelSentOffer('${offer.id}')" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">Cancel request</button>
+        </div>` : ''}
+      </div>`;
+  });
+
+  listEl.innerHTML = html;
+}
+
+// Sender-side withdrawal. Hits POST /offers/:id/withdraw which only touches
+// offers the current user sent that are still pending. On success we reload
+// the Sent list in place so the row moves into the cancelled group without
+// a full screen re-render.
+async function cancelSentOffer(offerId) {
+  if (!confirm('Withdraw this dep request? The recipient will see it as cancelled.')) return;
+  try {
+    const res = await fetch(`/api/offers/${offerId}/withdraw`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      toast(err.error || 'Could not withdraw offer');
+      return;
+    }
+    toast('Offer withdrawn');
+    loadSentOffers();
+  } catch (err) {
+    console.error('Withdraw sent offer error:', err);
+    toast('Could not withdraw offer');
+  }
 }
 
 
@@ -5198,9 +5342,6 @@ function handleQuickAction(action) {
     initInvoicePanel();
   } else if (action === 'block-date') {
     openPanel('panel-block');
-  } else if (action === 'send-dep') {
-    openPanel('panel-dep');
-    initDepPanel();
   } else if (action === 'receipt') {
     openPanel('panel-receipt');
     initReceiptPanel();

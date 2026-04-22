@@ -509,6 +509,34 @@ router.get('/offers', async (req, res) => {
   }
 });
 
+// Sent offers: same offer rows viewed from the sender side. Used by the
+// Offers screen "Sent" tab so a user can see who they've sent dep offers
+// to and the current status (pending / accepted / declined / expired /
+// cancelled). Recipient display name is joined off users so the UI can
+// show "Sent to Alex" without a second round-trip.
+router.get('/offers/sent', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT
+         o.id, o.sender_id, o.recipient_id, o.gig_id, o.offer_type,
+         o.status, o.fee, o.deadline, o.created_at, o.responded_at,
+         g.band_name, g.venue_name, g.venue_address,
+         g.date as gig_date, g.start_time, g.end_time, g.dress_code,
+         u.display_name as recipient_display_name, u.name as recipient_name
+       FROM offers o
+       LEFT JOIN gigs g ON g.id = o.gig_id
+       LEFT JOIN users u ON u.id = o.recipient_id
+       WHERE o.sender_id = $1
+       ORDER BY o.created_at DESC`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get sent offers error:', error);
+    res.status(500).json({ error: 'Failed to fetch sent offers' });
+  }
+});
+
 // S7-08: snooze a single offer server-side. The client sends `hours` (float
 // OK) and we stamp snoozed_until = NOW() + interval. Clearing a snooze is
 // done by passing hours <= 0 (nullifies the column). Scoped by recipient_id
@@ -683,6 +711,30 @@ router.post('/offers/:id/cancel', async (req, res) => {
   } catch (error) {
     console.error('Cancel dep error:', error);
     res.status(500).json({ error: 'Failed to cancel dep' });
+  }
+});
+
+// Sender-side withdrawal of a PENDING offer. The existing /cancel route is
+// scoped to recipients cancelling after they've accepted, so we can't reuse
+// it here without breaking that semantics. This one only touches offers the
+// current user sent and that are still pending; accepted offers must go
+// through the recipient's cancel flow instead.
+router.post('/offers/:id/withdraw', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updated = await db.query(
+      `UPDATE offers SET status = 'cancelled', responded_at = NOW()
+         WHERE id = $1 AND sender_id = $2 AND status = 'pending'
+         RETURNING id`,
+      [id, req.user.id]
+    );
+    if (updated.rows.length === 0) {
+      return res.status(404).json({ error: 'Pending offer not found' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Withdraw offer error:', error);
+    res.status(500).json({ error: 'Failed to withdraw offer' });
   }
 });
 
