@@ -4238,7 +4238,7 @@ const MARKETPLACE_SELECT = `
     mg.expires_at,
     mg.created_at,
     mg.updated_at,
-    COALESCE(u.display_name, u.first_name || ' ' || u.last_name, u.email) AS poster_name,
+    COALESCE(u.display_name, u.name, u.email) AS poster_name,
     u.photo_url AS poster_photo_url,
     (
       SELECT COUNT(*) FROM marketplace_applications ma
@@ -4544,7 +4544,7 @@ router.get('/marketplace/applications/mine', async (req, res) => {
         mg.id, mg.title, mg.venue_name, mg.gig_date, mg.start_time, mg.end_time,
         mg.instruments, mg.fee_pence, mg.is_free, mg.free_reason, mg.mode,
         mg.status AS gig_status, mg.expires_at, mg.filled_by_user_id,
-        COALESCE(u.display_name, u.first_name || ' ' || u.last_name, u.email) AS poster_name
+        COALESCE(u.display_name, u.name, u.email) AS poster_name
        FROM marketplace_applications ma
        JOIN marketplace_gigs mg ON mg.id = ma.marketplace_gig_id
        LEFT JOIN users u ON u.id = mg.poster_user_id
@@ -4686,7 +4686,7 @@ router.get('/marketplace/:id/applicants', async (req, res) => {
         ma.note,
         ma.created_at AS applied_at,
         u.id AS user_id,
-        COALESCE(u.display_name, u.first_name || ' ' || u.last_name, u.email) AS name,
+        COALESCE(u.display_name, u.name, u.email) AS name,
         u.photo_url,
         u.bio,
         u.instruments,
