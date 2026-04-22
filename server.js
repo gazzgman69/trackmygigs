@@ -90,10 +90,18 @@ function handleReload(req, res) {
   // lands the working tree on the latest origin/main. The reload secret is
   // enough of a gate since the only consumer is Gareth's deploy flow.
   const force = req.query.force === '1' || req.body?.force === '1' || req.body?.force === true;
-  const cmd = force
+  // install=1 chains `npm install` after the git update so dependency bumps
+  // (e.g. adding pdfkit) don't require a manual Shell visit. nodemon will
+  // then restart the process against the freshly installed node_modules.
+  // Timeout is bumped to 120s when install is requested because a cold
+  // `npm install` on Replit can take 30-60s.
+  const install = req.query.install === '1' || req.body?.install === '1' || req.body?.install === true;
+  const gitCmd = force
     ? 'git fetch origin main && git reset --hard origin/main'
     : 'git pull origin main';
-  exec(cmd, { cwd: __dirname, timeout: 30000 }, (err, stdout, stderr) => {
+  const cmd = install ? `${gitCmd} && npm install --no-audit --no-fund` : gitCmd;
+  const timeoutMs = install ? 120000 : 30000;
+  exec(cmd, { cwd: __dirname, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
     if (err) {
       console.error('[reload] ' + cmd + ' failed:', err.message);
       return res.status(500).json({ error: cmd + ' failed', stderr: stderr || err.message });
@@ -125,6 +133,7 @@ function handleReload(req, res) {
     res.json({
       ok: true,
       mode: force ? 'force' : 'pull',
+      install,
       output: stdout.trim(),
       indexReloaded,
       buildId: BUILD_ID
