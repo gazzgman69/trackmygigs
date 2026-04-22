@@ -3509,9 +3509,7 @@ function buildOffersHTML(content, offers) {
   const snoozedNow = snoozeState.snoozed;
   const missed = getMissedWhileSnoozed(offers);
 
-  // Filter for the active tab (Marketplace is a premium teaser)
-  const activeTab = window._offersTab || 'received';
-  const visibleOffers = activeTab === 'received' ? pending : [];
+  const visibleOffers = pending;
 
   let html = `
     <div class="ph" style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
@@ -3533,8 +3531,7 @@ function buildOffersHTML(content, offers) {
     </div>
 
     <div class="tbar" style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;">
-      <div class="tb ${activeTab === 'received' ? 'ac' : ''}" onclick="switchOffersTab('received')">My Offers (${pending.length})</div>
-      <div class="tb ${activeTab === 'marketplace' ? 'ac' : ''}" onclick="switchOffersTab('marketplace')">Marketplace &#x1F512;</div>
+      <div class="tb ac">My Offers (${pending.length})</div>
     </div>
 
     <!-- Global snooze toggle -->
@@ -3577,19 +3574,6 @@ function buildOffersHTML(content, offers) {
     </div>` : ''}
 
     <div id="offersListContent" style="padding:8px 16px 24px;">`;
-
-  if (activeTab === 'marketplace') {
-    html += `
-      <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:var(--r);padding:18px 16px;text-align:center;margin-top:8px;">
-        <div style="font-size:32px;margin-bottom:8px;">&#x1F3AF;</div>
-        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">Marketplace is premium</div>
-        <div style="font-size:12px;color:var(--text-2);max-width:280px;margin:0 auto 14px;line-height:1.5;">Get featured in a pool of working deps. Band leaders pick you by instrument, distance, and past gigs together.</div>
-        <button onclick="toast('Premium coming soon')" style="background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;">Learn more</button>
-      </div>`;
-    html += `</div>`;
-    content.innerHTML = html;
-    return;
-  }
 
   // Ecosystem offers section
   if (ecoState === 'upsell') {
@@ -3683,12 +3667,6 @@ function buildOffersHTML(content, offers) {
   content.innerHTML = html;
 }
 
-function switchOffersTab(tab) {
-  window._offersTab = tab;
-  if (window._cachedOffers) {
-    buildOffersHTML(document.getElementById('offersScreen'), window._cachedOffers);
-  }
-}
 
 function showAcceptedOffers() {
   const offers = (window._cachedOffers || []).filter(o => o.status === 'accepted');
@@ -3783,7 +3761,6 @@ function formatSnoozeEnd(ts) {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-window.switchOffersTab = switchOffersTab;
 window.showAcceptedOffers = showAcceptedOffers;
 window.showDeclinedOffers = showDeclinedOffers;
 window.setGlobalSnooze = setGlobalSnooze;
