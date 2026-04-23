@@ -203,6 +203,51 @@ function initApp(user) {
     }
   }
 
+  // Stripe handshake (task #282):
+  //   ?intent=premium&plan=<monthly|annual> — landing bounced the user here
+  //     because they weren't signed in when they clicked Go Premium. Now that
+  //     they're authed, fire checkout and forward them to Stripe.
+  //   ?premium=success&session_id=... — Stripe checkout completed. Show a
+  //     welcome toast; the webhook has already flipped the premium flag.
+  //   ?premium=cancelled — user backed out of checkout. Quiet acknowledgement.
+  // All three params are stripped from the address bar after handling so a
+  // refresh doesn't re-trigger the flow.
+  try {
+    const url = new URL(window.location.href);
+    const intent = url.searchParams.get('intent');
+    const premiumStatus = url.searchParams.get('premium');
+    const plan = url.searchParams.get('plan');
+    let needsStrip = false;
+    if (intent === 'premium' && (plan === 'monthly' || plan === 'annual')) {
+      needsStrip = true;
+      if (typeof startPremiumCheckout === 'function') {
+        setTimeout(() => startPremiumCheckout(plan), 400);
+      }
+    }
+    if (premiumStatus === 'success') {
+      needsStrip = true;
+      if (typeof toast === 'function') {
+        setTimeout(() => toast('Welcome to premium. Your 14-day trial has started.'), 500);
+      }
+      // Invalidate caches so premium-gated UI re-reads the new flag.
+      try { window._cachedProfile = null; } catch (_) {}
+      try { window._cachedStats = null; window._cachedStatsTime = 0; } catch (_) {}
+    } else if (premiumStatus === 'cancelled') {
+      needsStrip = true;
+      if (typeof toast === 'function') {
+        setTimeout(() => toast('Checkout cancelled. No charge made.'), 300);
+      }
+    }
+    if (needsStrip) {
+      url.searchParams.delete('intent');
+      url.searchParams.delete('plan');
+      url.searchParams.delete('premium');
+      url.searchParams.delete('session_id');
+      const qs = url.searchParams.toString();
+      history.replaceState(null, '', url.pathname + (qs ? `?${qs}` : '') + url.hash);
+    }
+  } catch (_) { /* never block boot on this */ }
+
   // Seed calendar connection state from the user record we already have,
   // so Profile and Calendar panels render correctly on first paint.
   if (user && typeof user === 'object') {
@@ -4208,6 +4253,42 @@ function buildProfileHTML(content, profile) {
             <span style="color:var(--accent);font-size:16px;">\u203A</span>
           </span>
         </div>
+        ${(() => {
+          // Subscription row (task #282). Premium users get "Manage subscription"
+          // opening the Stripe Billing Portal; free users get "Go premium"
+          // opening the plan picker. premium_until formatted as "renews on"
+          // when set, so the user sees their trial or renewal anchor at a glance.
+          const prof = window._cachedProfile || {};
+          const isPremium = prof.premium === true;
+          const untilRaw = prof.premium_until || null;
+          let untilLabel = '';
+          if (untilRaw) {
+            try {
+              const d = new Date(untilRaw);
+              if (!isNaN(d.getTime())) {
+                untilLabel = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+              }
+            } catch (_) { /* ignore */ }
+          }
+          if (isPremium) {
+            return `
+        <div onclick="window.openBillingPortal && window.openBillingPortal()" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+            <span style="color:var(--text);font-size:14px;">Manage subscription</span>
+            <span style="color:var(--text-2);font-size:11px;">Premium${untilLabel ? ' &middot; renews ' + untilLabel : ''}</span>
+          </div>
+          <span style="color:var(--accent);font-size:16px;">&rsaquo;</span>
+        </div>`;
+          }
+          return `
+        <div onclick="window.openPremiumPicker && window.openPremiumPicker()" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+            <span style="color:var(--text);font-size:14px;">Go premium</span>
+            <span style="color:var(--text-2);font-size:11px;">14-day free trial. &pound;14.99/mo or &pound;129/yr.</span>
+          </div>
+          <span style="color:var(--accent);font-size:16px;">&rsaquo;</span>
+        </div>`;
+        })()}
         <div style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);">
           <div style="font-size:14px;color:var(--text);margin-bottom:10px;">Colour theme</div>
           <div style="display:flex;gap:12px;justify-content:center;">
@@ -14379,4 +14460,94 @@ window.importAllNudges = async function importAllNudges() {
   document.body.appendChild(overlay);
   // Seed the same state the first-import modal uses so fiStartImport works.
   window._firstImport = { events: nudges, windowMode: 'future' };
+};
+
+// ── Premium checkout + billing portal wiring (task #282) ────────────────────
+// startPremiumCheckout(plan) posts to /api/stripe/create-checkout-session and
+// redirects the tab to the returned Stripe URL. openBillingPortal() does the
+// same for existing subscribers, routing them to Stripe's hosted portal to
+// manage card, plan, or cancellation. Both are idempotent and surface errors
+// via toast rather than silent failure, which was the previous inert state.
+window.startPremiumCheckout = async function startPremiumCheckout(plan) {
+  const chosen = plan === 'annual' ? 'annual' : 'monthly';
+  if (typeof toast === 'function') toast('Opening Stripe checkout...');
+  try {
+    const res = await fetch('/api/stripe/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: chosen }),
+    });
+    if (res.status === 401 || res.status === 403) {
+      // Shouldn't happen from in-app (we only call this when authed), but
+      // fall back to login anyway so we never leave the user stuck.
+      window.location.href = '/login?next=' + encodeURIComponent('/app?intent=premium&plan=' + chosen);
+      return;
+    }
+    if (res.status === 503) {
+      if (typeof toast === 'function') toast('Premium signup is not live yet. Try again soon.');
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    if (data && data.url) {
+      window.location.href = data.url;
+      return;
+    }
+    if (typeof toast === 'function') toast((data && data.error) || 'Could not start checkout.');
+  } catch (err) {
+    console.error('[premium] checkout error:', err);
+    if (typeof toast === 'function') toast('Network hiccup. Try again.');
+  }
+};
+
+window.openBillingPortal = async function openBillingPortal() {
+  if (typeof toast === 'function') toast('Opening billing portal...');
+  try {
+    const res = await fetch('/api/stripe/billing-portal', { method: 'POST' });
+    if (res.status === 503) {
+      if (typeof toast === 'function') toast('Billing portal is not live yet.');
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    if (data && data.url) {
+      window.location.href = data.url;
+      return;
+    }
+    if (data && data.error === 'no_subscription') {
+      if (typeof toast === 'function') toast('Subscribe first to access the billing portal.');
+      return;
+    }
+    if (typeof toast === 'function') toast((data && data.error) || 'Could not open portal.');
+  } catch (err) {
+    console.error('[premium] billing portal error:', err);
+    if (typeof toast === 'function') toast('Network hiccup. Try again.');
+  }
+};
+
+// Small plan-picker modal for free users tapping "Go premium" from Profile.
+// Intentionally tiny — two big pills (Monthly / Annual save £50), copy
+// matching the landing page so nothing changes semantically when the user
+// crosses over from marketing to in-app.
+window.openPremiumPicker = function openPremiumPicker() {
+  const existing = document.getElementById('premiumPickerOverlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'premiumPickerOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.innerHTML = `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:18px;width:100%;max-width:380px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div style="font-size:17px;font-weight:700;color:var(--text);">Go premium</div>
+        <button onclick="document.getElementById('premiumPickerOverlay').remove();" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;line-height:1;padding:0 4px;">&times;</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:14px;line-height:1.5;">14-day free trial on both plans. Cancel any time before day 14 and you will not be charged.</div>
+      <button onclick="document.getElementById('premiumPickerOverlay').remove(); window.startPremiumCheckout('monthly');" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;font-size:14px;font-weight:600;color:var(--text);cursor:pointer;margin-bottom:8px;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <span><span style="font-weight:700;">Monthly</span><br><span style="font-size:11px;color:var(--text-2);font-weight:400;">&pound;14.99 per month</span></span>
+        <span style="color:var(--accent);">&rsaquo;</span>
+      </button>
+      <button onclick="document.getElementById('premiumPickerOverlay').remove(); window.startPremiumCheckout('annual');" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:14px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <span><span>Annual <span style="background:#000;color:var(--accent);font-size:9px;font-weight:700;padding:2px 6px;border-radius:999px;margin-left:4px;letter-spacing:0.4px;">SAVE &pound;50</span></span><br><span style="font-size:11px;color:#000;opacity:.75;font-weight:500;">&pound;129 per year</span></span>
+        <span>&rsaquo;</span>
+      </button>
+    </div>`;
+  document.body.appendChild(overlay);
 };
