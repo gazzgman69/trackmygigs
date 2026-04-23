@@ -4,6 +4,7 @@ const nodemailer = require('nodemailer');
 const { OAuth2Client } = require('google-auth-library');
 const { google } = require('googleapis');
 const db = require('../db');
+const { subscribeToKit } = require('../lib/kit');
 
 const router = express.Router();
 
@@ -140,6 +141,17 @@ async function findOrCreateUser(email, name, avatarUrl, googleId) {
       'INSERT INTO users (email, name, display_name, avatar_url, google_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [email, derivedName, derivedName || null, avatarUrl || null, googleId || null]
     );
+    // Owner marketing list hook: enrol the new user into the Kit form so they
+    // get the welcome series + feature updates + offers. Fire-and-forget so a
+    // slow Kit API never blocks signup. No-op when KIT_API_KEY / KIT_FORM_ID
+    // are unset (dev / first deploys). See lib/kit.js for the compliance notes.
+    subscribeToKit(email, derivedName)
+      .then(r => {
+        if (r && !r.ok && !r.skipped) {
+          console.warn('[kit] subscribe failed for', email, '-', r.reason || r.status);
+        }
+      })
+      .catch(err => console.warn('[kit] subscribe threw for', email, err && err.message));
     return createResult.rows[0];
   }
 
