@@ -4842,8 +4842,12 @@ router.get('/marketplace/:id/applicants', async (req, res) => {
         u.home_lat,
         u.home_lng,
         (
+          -- gigs.date is the actual column name (marketplace_gigs uses
+          -- gig_date, they were crossed). Old query used g.gig_date which
+          -- silently 500-ed the applicants endpoint on any post that
+          -- had applicants. Caught by the 2026-04-23 stress harness.
           SELECT COUNT(*) FROM gigs g
-          WHERE g.user_id = u.id AND g.gig_date < CURRENT_DATE
+          WHERE g.user_id = u.id AND g.date < CURRENT_DATE
         ) AS gigs_completed
        FROM marketplace_applications ma
        JOIN users u ON u.id = ma.applicant_user_id

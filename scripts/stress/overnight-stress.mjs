@@ -1065,13 +1065,19 @@ async function scenarioMarketplace() {
     }
     record('marketplace', 'J: create post', 'pass', `postId=${postId}`);
 
-    // dep1 browses + applies
-    const browse = await http('GET', '/api/marketplace', { token: sessions.dep1.token });
+    // dep1 browses. Note: /api/marketplace applies instrument overlap + fee
+    // floor filters based on the CALLER's profile, so whether dep1 sees the
+    // post depends on dep1 having "Guitar" (or the post having a matching
+    // instrument casing) and the post fee clearing dep1's min_fee. Pass extra
+    // query params so the test is deterministic rather than user-profile-dependent.
+    const browse = await http('GET', '/api/marketplace?instrument=guitar&instrument=Guitar&min_fee_pence=0', {
+      token: sessions.dep1.token,
+    });
     const visible = Array.isArray(browse.json) ? browse.json : browse.json?.gigs || browse.json?.posts || [];
-    const visibleIds = visible.map(g => g.id);
+    const visibleIds = visible.map(g => String(g.id));
     record('marketplace', 'J: dep1 sees the post',
-      visibleIds.includes(postId) ? 'pass' : 'fail',
-      `visible=${visibleIds.length} includes=${visibleIds.includes(postId)}`);
+      visibleIds.includes(String(postId)) ? 'pass' : 'fail',
+      `visible=${visibleIds.length} includes=${visibleIds.includes(String(postId))} ids=${visibleIds.slice(0, 5).join(',')}`);
 
     const apply = await http('POST', `/api/marketplace/${postId}/apply`, {
       token: sessions.dep1.token,
@@ -1081,17 +1087,19 @@ async function scenarioMarketplace() {
       apply.status === 200 && (apply.json?.ok || apply.json?.status === 'pending') ? 'pass' : 'fail',
       `status=${apply.status} body=${JSON.stringify(apply.json).slice(0, 200)}`);
 
-    // leader1 sees the applicant
+    // leader1 sees the applicant. Server returns { applicants: [...] } where each
+    // applicant row uses `user_id` for the dep's user id (aliased from
+    // ma.applicant_user_id in the SQL).
     const applicants = await http('GET', `/api/marketplace/${postId}/applicants`, {
       token: sessions.leader1.token,
     });
     const appList = Array.isArray(applicants.json)
       ? applicants.json
-      : applicants.json?.applications || applicants.json?.applicants || [];
-    const hasDep1 = appList.some(a => (a.applicant_user_id || a.user_id || a.id) === sessions.dep1.user.id);
+      : applicants.json?.applicants || applicants.json?.applications || [];
+    const hasDep1 = appList.some(a => (a.user_id || a.applicant_user_id || a.id) === sessions.dep1.user.id);
     record('marketplace', 'J: leader1 sees dep1 in applicants',
       hasDep1 ? 'pass' : 'fail',
-      `applicants=${appList.length} hasDep1=${hasDep1}`);
+      `applicants=${appList.length} hasDep1=${hasDep1} shape=${JSON.stringify(appList[0] || {}).slice(0, 200)}`);
 
     // Non-poster cannot see applicant list
     const unauthApps = await http('GET', `/api/marketplace/${postId}/applicants`, {
@@ -1110,13 +1118,16 @@ async function scenarioMarketplace() {
       pick.status === 200 ? 'pass' : 'fail',
       `status=${pick.status} body=${JSON.stringify(pick.json).slice(0, 200)}`);
 
-    // dep1 can see their application status flipped
+    // dep1 can see their application status flipped. Server returns
+    // { applications: [...] } where each row has `id` (the post id) and
+    // `application_status` (accepted/pending/rejected).
     const myApps = await http('GET', '/api/marketplace/applications/mine', { token: sessions.dep1.token });
     const myList = Array.isArray(myApps.json) ? myApps.json : myApps.json?.applications || [];
-    const mine = myList.find(a => (a.marketplace_gig_id || a.post_id) === postId);
+    const mine = myList.find(a => String(a.id) === String(postId) || String(a.marketplace_gig_id) === String(postId));
+    const mineStatus = mine?.application_status || mine?.status;
     record('marketplace', 'J: dep1 sees application accepted',
-      mine && (mine.status === 'accepted' || mine.status === 'picked') ? 'pass' : 'fail',
-      `mine=${JSON.stringify(mine).slice(0, 200)}`);
+      mine && (mineStatus === 'accepted' || mineStatus === 'picked') ? 'pass' : 'fail',
+      `mine=${mine ? JSON.stringify(mine).slice(0, 200) : 'not-found'} status=${mineStatus}`);
 
     // Own-post apply guard
     const selfApply = await http('POST', `/api/marketplace/${postId}/apply`, {
@@ -1301,6 +1312,10 @@ async function scenarioAI() {
       name: 'M: /ai/generate-setlist',
       path: '/api/ai/generate-setlist',
       body: { durationMinutes: 90, venueType: 'pub', crowd: 'mixed age 30-60', mood: 'upbeat classic rock' },
+      // Returns 400 "Add songs to your Repertoire first." when the test account
+      // has no songs — expected for a clean [STRESS] account. 200 also acceptable
+      // if a prior run seeded songs.
+      accept: [200, 400],
     },
     {
       name: 'M: /ai/draft-invoice-chase',
