@@ -749,6 +749,17 @@ async function runMigrations() {
     // S7-08: per-offer snooze timestamp so snooze survives device switches / re-auth.
     // Offers whose snoozed_until is in the future are hidden from the inbox list.
     await db.query(`ALTER TABLE offers ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMP`);
+    // Import write-safety flag (2026-04-23). When FALSE, the gig was
+    // imported from Google and has never been edited in TrackMyGigs. The
+    // sync-back layer uses this to avoid overwriting user-curated Google
+    // event descriptions / titles / locations with TMG auto-generated
+    // copies. Flipped TRUE the first time a user saves the gig via PATCH
+    // or the wizard; also TRUE for gigs created directly in TMG.
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS tmg_edited BOOLEAN NOT NULL DEFAULT FALSE`);
+    // Gigs created directly in TMG (no Google origin) should count as
+    // edited from the start — if they didn't, sync-back would silently
+    // skip them. Backfill any pre-existing rows that originated locally.
+    await db.query(`UPDATE gigs SET tmg_edited = TRUE WHERE tmg_edited = FALSE AND (source IS NULL OR source NOT LIKE 'gcal:%')`);
     // Premium subscription columns (2026-04-23). premium is the live flag
     // used to gate premium features; premium_until mirrors the Stripe
     // current_period_end so we can show the user when their billing cycle

@@ -645,9 +645,60 @@ router.get('/events', async (req, res) => {
 
     const candidates = items.filter(ev => !importedIds.has(ev.id));
 
-    // Try AI classification (batch call)
-    const aiResults = await classifyEventsBatch(candidates);
+    // Recurring-event dedup (2026-04-23). A weekly teaching slot for 2 years
+    // expands into 104 candidates via singleEvents:true. The AI classifier
+    // doesn't need to see all 104 - the classification of the first instance
+    // (title + location + description pattern) applies to all siblings.
+    // Group by recurringEventId, classify one representative per group, then
+    // fan the result back out. Cuts Haiku cost 60-80% for calendars with
+    // repeating gigs, rehearsals, or teaching.
+    const representativeIndexByGroup = new Map();
+    const groupForIndex = new Array(candidates.length).fill(null);
+    candidates.forEach((ev, i) => {
+      const groupKey = ev.recurringEventId || null;
+      if (!groupKey) return;
+      if (!representativeIndexByGroup.has(groupKey)) {
+        representativeIndexByGroup.set(groupKey, i);
+      }
+      groupForIndex[i] = groupKey;
+    });
+    // The set to actually classify: all non-recurring events plus one
+    // representative per recurring series.
+    const toClassifyIndices = [];
+    candidates.forEach((ev, i) => {
+      if (!groupForIndex[i]) {
+        toClassifyIndices.push(i);
+      } else if (representativeIndexByGroup.get(groupForIndex[i]) === i) {
+        toClassifyIndices.push(i);
+      }
+    });
+    const toClassify = toClassifyIndices.map(i => candidates[i]);
+    const classifiedSubset = await classifyEventsBatch(toClassify);
+    // Fan results back out: map each candidate index to the AI result of its
+    // representative. Gives us a result array the same length as `candidates`
+    // so the downstream render code doesn't need to know about dedup.
+    let aiResults = null;
+    if (classifiedSubset) {
+      aiResults = new Array(candidates.length).fill(null);
+      toClassifyIndices.forEach((origIdx, subsetIdx) => {
+        aiResults[origIdx] = classifiedSubset[subsetIdx];
+      });
+      // Fan out: every candidate that's part of a recurring series gets the
+      // representative's result.
+      candidates.forEach((ev, i) => {
+        if (groupForIndex[i] && aiResults[i] == null) {
+          const repIdx = representativeIndexByGroup.get(groupForIndex[i]);
+          aiResults[i] = aiResults[repIdx] || null;
+        }
+      });
+    }
     const classifier = aiResults ? 'ai' : 'keyword';
+    if (classifiedSubset) {
+      const dedupSaved = candidates.length - toClassify.length;
+      if (dedupSaved > 0) {
+        console.log(`[ai] recurring-event dedup saved ${dedupSaved} classifications (${candidates.length} events -> ${toClassify.length} classified)`);
+      }
+    }
 
     const events = candidates.map((ev, i) => {
       const start = ev.start?.dateTime || ev.start?.date;
@@ -1221,6 +1272,22 @@ async function pushGigToGoogle(userId, gig) {
     if (!handle) return null;
     const { auth, calendarId } = handle;
 
+    // Write-safety guard (2026-04-23). If the gig was imported from Google
+    // (source starts with 'gcal:' or has a google_event_id already) AND the
+    // user has not edited it in TrackMyGigs yet (tmg_edited = false), we
+    // MUST NOT push a TMG-shaped version back to Google. Doing so would
+    // overwrite the user's curated event title, description, and location
+    // with our auto-generated template. First edit in TMG flips
+    // tmg_edited = true and normal sync resumes.
+    const originatedInGoogle = Boolean(
+      gig.google_event_id ||
+      (gig.source && String(gig.source).startsWith('gcal:'))
+    );
+    const userHasEdited = !!gig.tmg_edited;
+    if (originatedInGoogle && !userHasEdited) {
+      return null;
+    }
+
     const calendar = google.calendar({ version: 'v3', auth });
     const resource = buildEventResource(gig);
 
@@ -1276,6 +1343,24 @@ async function pushGigToGoogle(userId, gig) {
 async function removeGigFromGoogle(userId, gig) {
   try {
     if (!gig) return false;
+    // Delete-safety guard (2026-04-23). Refuse to delete the Google event
+    // when the gig was imported from Google AND has never been touched in
+    // TrackMyGigs. Rationale: a user tidying up TMG might click Delete on
+    // an imported-but-untouched gig to "remove it from TMG", expecting the
+    // source event in their calendar to stay. Without this guard, we would
+    // also nuke the Google event. Imported gigs the user HAS edited in TMG
+    // remain deleted in both places (existing behaviour) because the user's
+    // last action on that event happened inside TMG, so deleting both sides
+    // matches their intent.
+    const originatedInGoogle = Boolean(
+      gig.google_event_id ||
+      (gig.source && String(gig.source).startsWith('gcal:'))
+    );
+    const userHasEdited = !!gig.tmg_edited;
+    if (originatedInGoogle && !userHasEdited) {
+      return false;
+    }
+
     // Same fallback chain as pushGigToGoogle: google_event_id is the canonical
     // link, but gigs imported via /api/calendar/import only have source='gcal:<id>'
     // until first edit backfills google_event_id. Without this fallback, deleting
