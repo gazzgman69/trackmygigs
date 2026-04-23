@@ -1854,6 +1854,7 @@ router.get('/stats', async (req, res) => {
       activeDepResult,
       monthlyBreakdownResult,
       recentMessagesResult,
+      missingFeeResult,
     ] = await Promise.all([
       // Next gig
       db.query(
@@ -1972,6 +1973,17 @@ router.get('/stats', async (req, res) => {
          LIMIT 3`,
         [userId]
       ),
+      // Imported-from-Google gigs that still need a fee. Drives the Home banner
+      // + the persistent "fill in fees" entry point (task #291) so a musician
+      // who skipped the first-import wizard can finish later. Only counts
+      // gcal-sourced rows so we don't nag about manually-entered £0 gigs.
+      db.query(
+        `SELECT COUNT(*)::int AS count FROM gigs
+         WHERE user_id = $1
+           AND source LIKE 'gcal:%'
+           AND (fee IS NULL OR fee = 0)`,
+        [userId]
+      ),
     ]);
 
     const overdueRow = overdueCombinedResult.rows[0] || {};
@@ -2052,6 +2064,7 @@ router.get('/stats', async (req, res) => {
       monthly_breakdown: monthlyBreakdown,
       recent_messages: recentMessages,
       active_dep_request: activeDepRequest,
+      gigs_missing_fee: parseInt(missingFeeResult.rows[0]?.count || 0),
     });
   } catch (error) {
     console.error('Get stats error:', error);

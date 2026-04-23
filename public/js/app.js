@@ -683,6 +683,23 @@ function buildHomeHTML(content, stats) {
 
     html += `</div>`;
 
+    // Imported gigs missing a fee (task #291). Persistent entry point for the
+    // quick-fire wizard so a musician who skipped the first-import flow can
+    // fill fees in later. Only renders when count > 0. The whole card opens
+    // the wizard — no separate tap target for clarity.
+    if (stats.gigs_missing_fee > 0) {
+      const n = stats.gigs_missing_fee;
+      html += `
+      <div onclick="window.openFeeReviewWizard && window.openFeeReviewWizard()" style="margin:0 16px 6px;background:linear-gradient(135deg,rgba(240,165,0,.14),rgba(240,165,0,.04));border:1px solid rgba(240,165,0,.32);border-radius:var(--r);padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+        <div style="font-size:18px;">&#x1F4B7;</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;font-weight:700;color:var(--text);">${n} imported gig${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} a fee</div>
+          <div style="font-size:10px;color:var(--text-2);margin-top:1px;">Quick-fire ${n === 1 ? 'it' : 'them'} in for accurate tax reporting.</div>
+        </div>
+        <div style="font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">Fill in &rsaquo;</div>
+      </div>`;
+    }
+
     // Next 7 days strip: 7 tap-able pills, one per day. Each pill is coloured
     // by state (blue = gig, red = blocked, white/empty = open). Whole strip
     // opens the Availability panel; individual pills jump to the day's detail
@@ -1717,7 +1734,22 @@ function renderGigsList(gigs) {
     ? `<div style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;margin:12px 0 6px;">Depped out</div>` + deppedGigs.map(gig => `<div style="opacity:.55;">${renderGigCard(gig)}</div>`).join('')
     : '';
 
-  listContent.innerHTML = headerHtml + gigCardsHtml + deppedHtml;
+  // Task #291: persistent "fill in fees" entry. Counted from the FULL gigs
+  // argument (not viewFiltered) so the banner is consistent across Weekly /
+  // Monthly / Yearly tabs — the work-to-do count isn't view-scoped.
+  const missingFeeCount = (gigs || []).filter(g => {
+    const src = g.source || '';
+    const fee = g.fee;
+    return src.startsWith('gcal:') && (fee == null || Number(fee) === 0);
+  }).length;
+  const missingFeeBanner = missingFeeCount > 0 ? `
+    <div onclick="window.openFeeReviewWizard && window.openFeeReviewWizard()" style="margin:0 0 10px;padding:9px 12px;background:linear-gradient(135deg,rgba(240,165,0,.14),rgba(240,165,0,.04));border:1px solid rgba(240,165,0,.32);border-radius:12px;cursor:pointer;display:flex;align-items:center;gap:10px;">
+      <div style="font-size:15px;">&#x1F4B7;</div>
+      <div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--text);">${missingFeeCount} imported gig${missingFeeCount === 1 ? '' : 's'} missing a fee</div>
+      <div style="font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">Fill in &rsaquo;</div>
+    </div>` : '';
+
+  listContent.innerHTML = missingFeeBanner + headerHtml + gigCardsHtml + deppedHtml;
 }
 
 function renderGigCard(gig) {
@@ -14215,8 +14247,98 @@ window.isTimeAutoBlocked = isTimeAutoBlocked;
       </div>`;
     // Invalidate gigs cache so the Gigs screen reflects all the saved fees.
     if (typeof invalidateGigsCache === 'function') invalidateGigsCache();
+    // Nudge Home to re-fetch so the "needs a fee" banner reflects the new count.
+    try {
+      window._cachedStats = null;
+      window._cachedStatsTime = 0;
+    } catch (_) {}
   }
   window.fiFinishWizard = fiFinishWizard;
+
+  // ── Reusable entry point (task #291) ─────────────────────────────────────
+  // Opens the quick-fire wizard from anywhere (Home banner, Gigs screen,
+  // manual call) without going through the first-import flow. Fetches the
+  // current pool of imported gigs missing a fee, seeds the same state shape
+  // the wizard expects, and kicks off at step 1. Idempotent — multiple calls
+  // just re-open the overlay with a fresh fetch.
+  window.openFeeReviewWizard = async function openFeeReviewWizard() {
+    const existing = ov();
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'firstImportOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto;';
+    overlay.innerHTML = `
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:18px;width:100%;max-width:440px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.5);">
+        <div id="fiBody">
+          <div style="text-align:center;padding:40px 20px;">
+            <div style="width:44px;height:44px;border-radius:50%;border:3px solid var(--border);border-top-color:var(--accent);margin:0 auto 16px;animation:fiSpin 1s linear infinite;"></div>
+            <div style="font-size:14px;color:var(--text-2);">Finding imported gigs without a fee...</div>
+          </div>
+        </div>
+      </div>
+      <style>@keyframes fiSpin{to{transform:rotate(360deg);}}</style>`;
+    document.body.appendChild(overlay);
+
+    let gigs = [];
+    try {
+      const r = await fetch('/api/gigs');
+      const data = await r.json();
+      const all = Array.isArray(data) ? data : (data.gigs || []);
+      // Candidates = gcal-sourced rows with no fee recorded. Matches the
+      // /api/stats counting rule so the banner and the wizard stay in sync.
+      gigs = all.filter((g) => {
+        const src = g.source || '';
+        const fee = g.fee;
+        const missing = fee == null || Number(fee) === 0;
+        return src.startsWith('gcal:') && missing;
+      });
+    } catch (err) {
+      const body = document.getElementById('fiBody');
+      if (body) {
+        body.innerHTML = `
+          <div style="text-align:center;padding:30px 16px;">
+            <div style="font-size:15px;font-weight:600;color:var(--danger);margin-bottom:6px;">Couldn&#x2019;t load gigs</div>
+            <div style="font-size:12px;color:var(--text-2);margin-bottom:16px;">${escapeHtml(err.message || String(err))}</div>
+            <button onclick="document.getElementById('firstImportOverlay').remove();" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 20px;font-size:13px;cursor:pointer;">Close</button>
+          </div>`;
+      }
+      return;
+    }
+
+    if (gigs.length === 0) {
+      const body = document.getElementById('fiBody');
+      if (body) {
+        body.innerHTML = `
+          <div style="text-align:center;padding:30px 16px;">
+            <div style="font-size:40px;margin-bottom:10px;">&#x1F389;</div>
+            <div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:6px;">All caught up</div>
+            <div style="font-size:12px;color:var(--text-2);margin-bottom:18px;line-height:1.5;">Every gig imported from Google has a fee recorded.</div>
+            <button onclick="document.getElementById('firstImportOverlay').remove();" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:14px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;">Nice</button>
+          </div>`;
+      }
+      return;
+    }
+
+    // Sort oldest first so the user works chronologically — makes it easier to
+    // remember fees as they go (early-year gigs usually have better recall
+    // than "yeah I did one in October, I think").
+    gigs.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+    // Seed the same state shape the first-import flow uses so the wizard
+    // functions work without modification. `imported` is only used by the
+    // summary screen that we bypass, but we set it defensively.
+    window._firstImport = {
+      events: [],
+      windowMode: 'fee_review',
+      imported: gigs,
+      needsFee: gigs,
+      wizardIndex: 0,
+      wizardCompleted: 0,
+    };
+
+    fiRenderWizardStep();
+  };
 })();
 
 // Helper referenced by the modal in case it isn't defined elsewhere.
