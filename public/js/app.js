@@ -3520,10 +3520,6 @@ function buildOffersHTML(content, offers) {
   const acceptedN = offers.filter(o => o.status === 'accepted').length;
   const declinedN = offers.filter(o => o.status === 'declined' || o.status === 'expired').length;
 
-  // Ecosystem-offers state: none of MT/CF is connected yet — always show upsell for now
-  // Future: read from user profile (mt_connected, cf_connected flags) and surface real offers
-  const ecoState = 'upsell';
-
   // Global snooze state from localStorage
   const snoozeState = getGlobalSnoozeState();
   const snoozedNow = snoozeState.snoozed;
@@ -3616,34 +3612,6 @@ function buildOffersHTML(content, offers) {
     </div>` : ''}
 
     <div id="offersListContent" style="padding:8px 16px 24px;">`;
-
-  // Ecosystem offers section
-  if (ecoState === 'upsell') {
-    html += `
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
-        <div style="height:1px;flex:1;background:linear-gradient(90deg,transparent,rgba(240,165,0,.4));"></div>
-        <span style="font-size:10px;font-weight:700;letter-spacing:1px;color:var(--accent);text-transform:uppercase;white-space:nowrap;">Unlock network offers</span>
-        <div style="height:1px;flex:1;background:linear-gradient(270deg,transparent,rgba(240,165,0,.4));"></div>
-      </div>
-      <div style="background:linear-gradient(135deg,rgba(240,165,0,.08) 0%,rgba(240,165,0,.03) 100%);border:1px solid rgba(240,165,0,.25);border-radius:var(--r);padding:18px 16px;margin-bottom:14px;text-align:center;">
-        <div style="font-size:28px;margin-bottom:8px;">&#x1F517;</div>
-        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">Get gig offers from your network</div>
-        <div style="font-size:12px;color:var(--text-2);line-height:1.5;max-width:280px;margin:0 auto 14px;">Connect ClientFlow or Musician Tracker and receive offers directly from agencies and band leaders you already work with &mdash; pre-filled with every detail.</div>
-        <div style="display:flex;flex-direction:column;gap:6px;max-width:240px;margin:0 auto;">
-          <button onclick="toast('Coming soon')" style="background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:12px;font-weight:700;cursor:pointer;">Connect ClientFlow</button>
-          <button onclick="toast('Coming soon')" style="background:var(--card);color:var(--text);border:1px solid var(--accent);border-radius:8px;padding:10px;font-size:12px;font-weight:600;cursor:pointer;">Connect Musician Tracker</button>
-        </div>
-        <div style="font-size:10px;color:var(--text-3);margin-top:10px;">Musicians with network connections accept gigs 3&times; faster</div>
-      </div>`;
-  }
-
-  // Other offers divider
-  html += `
-    <div style="display:flex;align-items:center;gap:6px;margin:8px 0;">
-      <div style="height:1px;flex:1;background:var(--border);"></div>
-      <span style="font-size:10px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;white-space:nowrap;">Other offers</span>
-      <div style="height:1px;flex:1;background:var(--border);"></div>
-    </div>`;
 
   if (visibleOffers.length === 0) {
     html += `
