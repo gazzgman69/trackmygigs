@@ -503,7 +503,7 @@ router.get('/offers', async (req, res) => {
       `SELECT
          o.id, o.sender_id, o.recipient_id, o.gig_id, o.offer_type,
          o.status, o.fee, o.deadline, o.created_at, o.responded_at,
-         o.snoozed_until,
+         o.snoozed_until, o.nudge_count, o.last_nudged_at,
          g.band_name, g.venue_name, g.venue_address,
          g.date as gig_date, g.start_time, g.end_time, g.dress_code,
          u.display_name as sender_display_name, u.name as sender_name
@@ -511,7 +511,7 @@ router.get('/offers', async (req, res) => {
        LEFT JOIN gigs g ON g.id = o.gig_id
        LEFT JOIN users u ON u.id = o.sender_id
        WHERE o.recipient_id = $1 AND o.sender_id != $1
-       ORDER BY o.created_at DESC`,
+       ORDER BY COALESCE(o.last_nudged_at, o.created_at) DESC`,
       [req.user.id]
     );
     res.json(result.rows);
@@ -532,6 +532,7 @@ router.get('/offers/sent', async (req, res) => {
       `SELECT
          o.id, o.sender_id, o.recipient_id, o.gig_id, o.offer_type,
          o.status, o.fee, o.deadline, o.created_at, o.responded_at,
+         o.nudge_count, o.last_nudged_at,
          g.band_name, g.venue_name, g.venue_address,
          g.date as gig_date, g.start_time, g.end_time, g.dress_code,
          u.display_name as recipient_display_name, u.name as recipient_name

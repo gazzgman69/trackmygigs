@@ -3807,14 +3807,78 @@ function renderSentOffers(listEl, offers) {
           </div>
           <span style="font-size:11px;font-weight:700;color:${st.color};background:${st.bg};border-radius:10px;padding:4px 10px;">${st.label}</span>
         </div>
-        ${offer.status === 'pending' ? `
+        ${offer.status === 'pending' ? (() => {
+          // Nudge cap: 1 send + up to 2 nudges per offer. Show the nudge
+          // button alongside Cancel request with a live "N left" label so
+          // the sender knows how many reminders they have in the bank.
+          const nudgeCount = Number(offer.nudge_count || 0);
+          const nudgesLeft = Math.max(0, 2 - nudgeCount);
+          const nudgeLabel = nudgesLeft === 0
+            ? 'No nudges left'
+            : nudgeCount === 0
+              ? 'Nudge (2 left)'
+              : `Nudge (${nudgesLeft} left)`;
+          const nudgeDisabled = nudgesLeft === 0;
+          const nudgeHint = offer.last_nudged_at
+            ? `<div style="font-size:11px;color:var(--text-3);margin:4px 0 8px;">Last nudged ${formatRelativeTime(offer.last_nudged_at)}</div>`
+            : '';
+          return `
+        ${nudgeHint}
         <div style="display:flex;gap:8px;">
           <button onclick="cancelSentOffer('${offer.id}')" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">Cancel request</button>
-        </div>` : ''}
+          <button onclick="nudgeSentOffer('${offer.id}')" ${nudgeDisabled ? 'disabled' : ''} style="flex:1;background:${nudgeDisabled ? 'var(--surface)' : 'var(--accent)'};color:${nudgeDisabled ? 'var(--text-3)' : '#000'};border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:${nudgeDisabled ? 'not-allowed' : 'pointer'};">${nudgeLabel}</button>
+        </div>`;
+        })() : ''}
       </div>`;
   });
 
   listEl.innerHTML = html;
+}
+
+// Format a past timestamp as "2 hours ago" / "yesterday" / "3 days ago" for the
+// nudge hint line under pending offers. Defensive: bad input returns an empty
+// string so we never poison the card render.
+function formatRelativeTime(iso) {
+  if (!iso) return '';
+  const then = new Date(iso);
+  if (isNaN(then)) return '';
+  const seconds = Math.floor((Date.now() - then.getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  return then.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+// Sender-side nudge. Hits POST /offers/:id/nudge which enforces the max-2 cap
+// server-side. On success reload the Sent list so the nudge count updates in
+// place. 409 means the recipient has responded (no longer pending) or the cap
+// was hit from another device mid-click — either way we refresh to show the
+// real state.
+async function nudgeSentOffer(offerId) {
+  try {
+    const res = await fetch(`/api/offers/${offerId}/nudge`, { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 200 && body.success) {
+      const left = Math.max(0, Number(body.nudges_remaining || 0));
+      toast(left === 0 ? 'Nudge sent. That was your last one.' : `Nudge sent. ${left} left on this offer.`);
+      loadSentOffers();
+      return;
+    }
+    if (res.status === 409) {
+      toast(body.error || 'No nudges left on this offer');
+      loadSentOffers(); // refresh so the disabled state reflects reality
+      return;
+    }
+    toast(body.error || 'Could not nudge offer');
+  } catch (err) {
+    console.error('Nudge sent offer error:', err);
+    toast('Could not nudge offer');
+  }
 }
 
 // Sender-side withdrawal. Hits POST /offers/:id/withdraw which only touches
@@ -12723,14 +12787,20 @@ async function submitDepOffer() {
       const filteredOOR = data.filtered_out_of_range || 0;
       const oorList = Array.isArray(data.out_of_range_contacts) ? data.out_of_range_contacts : [];
       const overridden = oorList.filter(c => c.overridden);
+      // Nudge cap (2026-04-23): the server returns any contacts who already
+      // have a pending offer from this user for this gig. We don't create a
+      // new offer row for them — instead we offer a one-tap "Nudge them
+      // instead?" confirm right after the send toast.
+      const alreadySent = Array.isArray(data.already_sent) ? data.already_sent : [];
+      const nudgeable = alreadySent.filter(a => (a.nudges_remaining || 0) > 0);
 
       // Build the result message. Priority: tell the user what actually
       // happened, including any distance-filter outcomes.
       let msg;
       if (mode === 'all' && filteredOOR > 0) {
         // Broadcast: show X of Y sent, Z filtered by distance.
-        const total = sent + filteredOOR;
-        msg = `Sent to ${sent} of ${total} (${filteredOOR} filtered by distance)`;
+        const total = sent + filteredOOR + alreadySent.length;
+        msg = `Sent to ${sent} of ${total} (${filteredOOR} filtered by distance${alreadySent.length ? `, ${alreadySent.length} already sent` : ''})`;
       } else if (mode === 'pick' && overridden.length > 0) {
         // Pick: delivered anyway, but warn that some are outside their radius.
         const first = overridden[0];
@@ -12740,6 +12810,14 @@ async function submitDepOffer() {
         } else {
           msg = `Sent to ${sent}. ${overridden.length} contacts are outside their travel radius`;
         }
+      } else if (sent === 0 && alreadySent.length > 0) {
+        // Every selected contact was already sent this gig: point them to
+        // the nudge action directly.
+        msg = alreadySent.length === 1
+          ? `You've already sent this to them. ${nudgeable.length > 0 ? 'Nudge instead?' : 'No nudges left on that offer.'}`
+          : `You've already sent this to ${alreadySent.length} of them. ${nudgeable.length > 0 ? 'Nudge instead?' : 'No nudges left.'}`;
+      } else if (sent > 0 && alreadySent.length > 0) {
+        msg = `Sent to ${sent}. ${alreadySent.length} were already sent this gig.`;
       } else if (sent > 0 && unresolved > 0) {
         msg = `Sent to ${sent}, ${unresolved} without a TrackMyGigs account`;
       } else if (sent > 0) {
@@ -12750,11 +12828,52 @@ async function submitDepOffer() {
         msg = 'Dep offer sent!';
       }
       showToast(msg);
+
+      // Second action: if any of the selected contacts are nudgeable, fire
+      // a confirm so the user can nudge all of them in one tap. Waits 400ms
+      // so the send toast lands first and doesn't feel stacked.
+      if (nudgeable.length > 0) {
+        setTimeout(() => {
+          const who = nudgeable.length === 1 ? '1 person' : `${nudgeable.length} people`;
+          if (confirm(`Nudge ${who} who already had this offer?`)) {
+            nudgeMultipleOffers(nudgeable.map(n => n.existing_offer_id));
+          }
+        }, 400);
+      }
     } else {
       showToast(data.error || 'Failed to send dep offer');
     }
   } catch {
     showToast('Failed to send dep offer');
+  }
+}
+
+// Bulk-nudge helper invoked from the send-dep flow when the server reports
+// that one or more selected contacts already had a pending offer. Fires
+// POST /api/offers/:id/nudge in parallel for each id, counts successes, and
+// shows a single summary toast.
+async function nudgeMultipleOffers(offerIds) {
+  if (!Array.isArray(offerIds) || offerIds.length === 0) return;
+  const results = await Promise.allSettled(
+    offerIds.map(id => fetch(`/api/offers/${id}/nudge`, { method: 'POST' }).then(r => r.json().catch(() => ({}))))
+  );
+  let ok = 0;
+  let capped = 0;
+  let failed = 0;
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value && r.value.success) ok++;
+    else if (r.status === 'fulfilled' && r.value && /nudges left/i.test(r.value.error || '')) capped++;
+    else failed++;
+  }
+  if (ok && !capped && !failed) {
+    showToast(`${ok} nudge${ok === 1 ? '' : 's'} sent`);
+  } else if (ok || capped || failed) {
+    showToast(`${ok} nudged, ${capped} out of nudges, ${failed} failed`);
+  }
+  // If the Offers screen's Sent tab is open, refresh it so nudge_count and
+  // last_nudged_at reflect the new state without a page reload.
+  if (typeof loadSentOffers === 'function' && document.getElementById('sentOffersList')) {
+    loadSentOffers();
   }
 }
 
