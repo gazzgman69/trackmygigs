@@ -185,8 +185,22 @@ function initApp(user) {
 
   // Strip ?calendar_connected=true from the URL once we've landed, so a
   // refresh doesn't re-show any connected banner keyed off that param.
+  // First-import modal hook (2026-04-23): if the URL flag is present and
+  // this user has never bulk-imported, open the modal before we strip.
+  const justConnected = (typeof URL !== 'undefined')
+    && new URL(window.location.href).searchParams.get('calendar_connected') === 'true';
   if (typeof clearCalendarConnectedParam === 'function') {
     clearCalendarConnectedParam();
+  }
+  if (justConnected) {
+    const firstDone = (function () {
+      try { return localStorage.getItem('tmg_first_import_done') === '1'; }
+      catch (_) { return false; }
+    })();
+    if (!firstDone && typeof openFirstImportModal === 'function') {
+      // Small delay so the Calendar panel is ready under the modal.
+      setTimeout(() => openFirstImportModal(), 600);
+    }
   }
 
   // Seed calendar connection state from the user record we already have,
@@ -1342,15 +1356,18 @@ function renderImportsBarHtml(toReview) {
     : '';
   return `
     <div style="margin:8px 16px 0;background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
-      <div onclick="toggleImportsBar()" style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;">
-        <div style="display:flex;align-items:center;gap:10px;">
+      <div style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <div onclick="toggleImportsBar()" style="display:flex;align-items:center;gap:10px;cursor:pointer;flex:1;min-width:0;">
           <div style="min-width:22px;height:22px;padding:0 7px;border-radius:11px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#000;">${count}</div>
           <div>
             <div style="font-size:13px;font-weight:600;color:var(--text);">Imports to review</div>
             <div style="font-size:10px;color:var(--text-3);">Tap to ${expanded ? 'collapse' : 'expand'} · found in your calendar</div>
           </div>
         </div>
-        <div style="font-size:11px;color:var(--text-3);transform:rotate(${expanded ? '180' : '0'}deg);transition:transform .15s;">▾</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          <button onclick="event.stopPropagation();importAllNudges()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">Import all</button>
+          <div onclick="toggleImportsBar()" style="font-size:11px;color:var(--text-3);transform:rotate(${expanded ? '180' : '0'}deg);transition:transform .15s;cursor:pointer;padding:4px;">▾</div>
+        </div>
       </div>
       ${expanded ? `<div style="border-top:1px solid var(--border);padding:4px 14px 12px;">${itemsHtml}${overflow}</div>` : ''}
     </div>
@@ -13818,3 +13835,426 @@ function isTimeAutoBlocked(startIso, endIso) {
   }
 }
 window.isTimeAutoBlocked = isTimeAutoBlocked;
+
+// ── First-import modal + quick-fire wizard ──────────────────────────────────
+// Triggered automatically after the OAuth callback appends ?calendar_connected=true
+// to the URL (see setupApp). User sees a full-screen overlay with a fetched
+// count of likely gigs, three window choices (current tax year default, future
+// only, custom range), and a single "Import all" CTA. On success, we kick off
+// the quick-fire fee wizard which steps through each imported gig that came
+// back without a fee, auto-focusing the fee input for keyboard-first entry.
+//
+// All markup is injected dynamically so there's no dependency on index.html
+// having panels declared up-front. State lives on window._firstImport so a
+// page refresh mid-flow can pick up where the user left off (best-effort).
+
+(function () {
+  const ov = () => document.getElementById('firstImportOverlay');
+  const closeOverlay = () => { const el = ov(); if (el) el.remove(); };
+
+  // Public entry point exposed on window. Idempotent - if the overlay is
+  // already open, this just re-fetches the events.
+  window.openFirstImportModal = async function openFirstImportModal(opts = {}) {
+    const existing = ov();
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'firstImportOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto;';
+    overlay.innerHTML = `
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:18px;width:100%;max-width:440px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.5);">
+        <div id="fiBody">
+          <div style="text-align:center;padding:40px 20px;">
+            <div style="width:44px;height:44px;border-radius:50%;border:3px solid var(--border);border-top-color:var(--accent);margin:0 auto 16px;animation:fiSpin 1s linear infinite;"></div>
+            <div style="font-size:14px;color:var(--text-2);">Looking through your calendar...</div>
+          </div>
+        </div>
+      </div>
+      <style>@keyframes fiSpin{to{transform:rotate(360deg);}}</style>`;
+    document.body.appendChild(overlay);
+
+    // Fetch the current tax year by default; the UI lets users widen it.
+    await fiFetchAndRender('current_tax_year');
+  };
+
+  async function fiFetchAndRender(windowMode, from, to) {
+    const body = document.getElementById('fiBody');
+    if (!body) return;
+    body.innerHTML = `
+      <div style="text-align:center;padding:40px 20px;">
+        <div style="width:44px;height:44px;border-radius:50%;border:3px solid var(--border);border-top-color:var(--accent);margin:0 auto 16px;animation:fiSpin 1s linear infinite;"></div>
+        <div style="font-size:14px;color:var(--text-2);">Classifying events with AI...</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:6px;">This takes 10-30 seconds for a full year.</div>
+      </div>`;
+
+    let url = '/api/calendar/events?window=' + encodeURIComponent(windowMode);
+    if (windowMode === 'custom' && from && to) {
+      url += '&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
+    }
+    let events = [];
+    try {
+      const r = await fetch(url);
+      const data = await r.json();
+      if (!data.connected) {
+        body.innerHTML = `
+          <div style="text-align:center;padding:30px 16px;">
+            <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px;">Calendar not connected</div>
+            <div style="font-size:12px;color:var(--text-2);margin-bottom:16px;">Connect Google Calendar in Profile first.</div>
+            <button onclick="document.getElementById('firstImportOverlay').remove();" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 20px;font-size:13px;cursor:pointer;">Close</button>
+          </div>`;
+        return;
+      }
+      events = (data.events || []).filter(e => !e.already_imported);
+    } catch (err) {
+      body.innerHTML = `
+        <div style="text-align:center;padding:30px 16px;">
+          <div style="font-size:15px;font-weight:600;color:var(--danger);margin-bottom:6px;">Couldn't read your calendar</div>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:16px;">${escapeHtml(err.message || String(err))}</div>
+          <button onclick="document.getElementById('firstImportOverlay').remove();" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 20px;font-size:13px;cursor:pointer;">Close</button>
+        </div>`;
+      return;
+    }
+
+    // No candidates? Friendly empty state and a "maybe try a wider range" tip.
+    if (events.length === 0) {
+      body.innerHTML = `
+        <div style="text-align:center;padding:30px 16px;">
+          <div style="font-size:32px;margin-bottom:10px;">&#x1F4C5;</div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px;">No gigs found in this range</div>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:20px;line-height:1.5;">We didn't spot anything that looks like a gig in ${windowLabel(windowMode)}. Try a wider range or check your calendar choice in Settings.</div>
+          <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:12px;">
+            <button onclick="fiFetchAndRender('all')" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:12px;cursor:pointer;">Try last 2 years</button>
+            <button onclick="document.getElementById('firstImportOverlay').remove();" style="background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:12px;cursor:pointer;">Skip for now</button>
+          </div>
+        </div>`;
+      window.fiFetchAndRender = fiFetchAndRender;
+      return;
+    }
+
+    // Store the fetched events for the import call. Also compute earliest
+    // and latest dates so the copy can say "going back to 6 Apr 2025".
+    window._firstImport = { events, windowMode };
+    const sortedByDate = events.slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+    const earliest = sortedByDate[0] && sortedByDate[0].start ? new Date(sortedByDate[0].start) : null;
+    const latest = sortedByDate[sortedByDate.length - 1] && sortedByDate[sortedByDate.length - 1].start
+      ? new Date(sortedByDate[sortedByDate.length - 1].start) : null;
+    const rangeLine = (earliest && latest)
+      ? `${earliest.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} to ${latest.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+      : '';
+
+    body.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:1.2px;color:var(--accent);text-transform:uppercase;">Calendar import</div>
+        <button onclick="document.getElementById('firstImportOverlay').remove();" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;line-height:1;padding:0 4px;">&times;</button>
+      </div>
+      <div style="font-size:24px;font-weight:700;color:var(--text);margin-bottom:6px;line-height:1.2;">We found <span style="color:var(--accent);">${events.length}</span> gig${events.length === 1 ? '' : 's'} in your calendar.</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:18px;line-height:1.5;">${rangeLine ? 'Covering ' + escapeHtml(rangeLine) + '. ' : ''}Importing pulls venues, dates, times, and fees into TrackMyGigs. Your Google Calendar isn't touched.</div>
+
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:flex-start;gap:10px;">
+        <div style="font-size:16px;line-height:1;">&#x1F50D;</div>
+        <div style="flex:1;">
+          <div style="font-size:12px;color:var(--text);font-weight:600;margin-bottom:2px;">Range</div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+            ${rangeChip('current_tax_year', 'This tax year', windowMode)}
+            ${rangeChip('all', 'Last 2 years', windowMode)}
+            ${rangeChip('future', 'Future only', windowMode)}
+          </div>
+        </div>
+      </div>
+
+      <button id="fiImportBtn" onclick="fiStartImport()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:14px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;">Import all ${events.length}</button>
+      <button onclick="document.getElementById('firstImportOverlay').remove();localStorage.setItem('tmg_first_import_done','1');" style="width:100%;background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:14px;padding:12px;font-size:13px;cursor:pointer;">Skip for now</button>
+
+      <div style="font-size:11px;color:var(--text-3);margin-top:14px;line-height:1.5;">We'll add fees, dress code, and load-in times where the AI could find them. Anything blank, you can fill in seconds with the quick-fire review.</div>`;
+
+    // Expose for inline handlers; closures on re-render.
+    window.fiFetchAndRender = fiFetchAndRender;
+    window.fiStartImport = fiStartImport;
+  }
+
+  function rangeChip(val, label, current) {
+    const on = val === current;
+    return `<button onclick="fiFetchAndRender('${val}')" style="background:${on ? 'var(--accent)' : 'var(--card)'};color:${on ? '#000' : 'var(--text-2)'};border:1px solid ${on ? 'var(--accent)' : 'var(--border)'};border-radius:999px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;">${label}</button>`;
+  }
+
+  function windowLabel(mode) {
+    if (mode === 'current_tax_year') return 'this tax year';
+    if (mode === 'all') return 'the last two years';
+    if (mode === 'future') return 'the next 60 days';
+    return 'that range';
+  }
+
+  async function fiStartImport() {
+    const state = window._firstImport;
+    if (!state || !Array.isArray(state.events)) return;
+    const body = document.getElementById('fiBody');
+    if (!body) return;
+    body.innerHTML = `
+      <div style="text-align:center;padding:30px 16px;">
+        <div style="width:44px;height:44px;border-radius:50%;border:3px solid var(--border);border-top-color:var(--accent);margin:0 auto 16px;animation:fiSpin 1s linear infinite;"></div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;">Importing ${state.events.length} gig${state.events.length === 1 ? '' : 's'}...</div>
+        <div style="font-size:11px;color:var(--text-3);">This takes a few seconds.</div>
+      </div>`;
+
+    // Build the payload: one object per event with whatever the AI pulled
+    // plus the fallbacks. Server UPSERTs by google_event_id so re-runs are safe.
+    const payload = {
+      events: state.events.map(e => ({
+        event_id: e.id,
+        title: e.title,
+        location: e.location,
+        start: e.start,
+        end: e.end,
+        band_name: e.suggested_band_name || null,
+        venue_name: e.suggested_venue_name || null,
+        fee: e.suggested_fee || null,
+        dress_code: e.suggested_dress_code || null,
+        load_in_time: e.suggested_load_in_time || null,
+        client_name: e.suggested_client_name || null,
+        client_email: e.suggested_client_email || null,
+        client_phone: e.suggested_client_phone || null,
+        notes: e.suggested_notes || null,
+      })),
+    };
+
+    try {
+      const r = await fetch('/api/calendar/import-bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) {
+        throw new Error(data.error || ('HTTP ' + r.status));
+      }
+
+      localStorage.setItem('tmg_first_import_done', '1');
+      // Invalidate cached gigs so the Gigs + Home screens re-pull on next render.
+      if (typeof invalidateGigsCache === 'function') invalidateGigsCache();
+
+      const imported = (data.imported || 0) + (data.merged || 0);
+      const gigs = Array.isArray(data.gigs) ? data.gigs : [];
+      const needsFee = gigs.filter(g => g.fee == null || g.fee === '' || g.fee === 0);
+
+      // Success state - show totals and kick off quick-fire if there are any
+      // rows with missing fees. Otherwise one-tap close.
+      const totalFee = gigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
+      body.innerHTML = `
+        <div style="text-align:center;padding:10px 6px 0;">
+          <div style="font-size:32px;margin-bottom:10px;">&#x1F389;</div>
+          <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:6px;">Imported ${imported} gig${imported === 1 ? '' : 's'}.</div>
+          <div style="font-size:13px;color:var(--text-2);margin-bottom:18px;line-height:1.5;">
+            ${totalFee > 0 ? `Pre-filled fees total &pound;${totalFee.toLocaleString('en-GB')}. ` : ''}
+            ${needsFee.length > 0 ? `${needsFee.length} need${needsFee.length === 1 ? 's' : ''} a fee filling in.` : 'Every gig has a fee.'}
+          </div>
+          ${needsFee.length > 0 ? `
+            <button onclick="fiStartWizard()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:14px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;">Fill in fees now (${needsFee.length})</button>
+            <button onclick="document.getElementById('firstImportOverlay').remove();" style="width:100%;background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:14px;padding:12px;font-size:13px;cursor:pointer;">Do it later</button>
+          ` : `
+            <button onclick="document.getElementById('firstImportOverlay').remove();" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:14px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;">See my gigs</button>
+          `}
+        </div>`;
+
+      window._firstImport.imported = gigs;
+      window._firstImport.needsFee = needsFee;
+      window.fiStartWizard = fiStartWizard;
+    } catch (err) {
+      console.error('[first-import] bulk error:', err);
+      body.innerHTML = `
+        <div style="text-align:center;padding:30px 16px;">
+          <div style="font-size:15px;font-weight:600;color:var(--danger);margin-bottom:6px;">Import failed</div>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:16px;">${escapeHtml(err.message || String(err))}</div>
+          <button onclick="document.getElementById('firstImportOverlay').remove();" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 20px;font-size:13px;cursor:pointer;">Close</button>
+        </div>`;
+    }
+  }
+  window.fiStartImport = fiStartImport;
+
+  // ── Quick-fire wizard ────────────────────────────────────────────────────
+  // Steps through each imported gig without a fee. One gig per screen, fee
+  // input pre-focused, Enter saves and advances. Keyboard-first so a musician
+  // with 30 gigs to fill can clear them in 2-3 minutes.
+
+  function fiStartWizard() {
+    const state = window._firstImport;
+    if (!state || !Array.isArray(state.needsFee) || state.needsFee.length === 0) {
+      const o = ov(); if (o) o.remove();
+      return;
+    }
+    state.wizardIndex = 0;
+    state.wizardCompleted = 0;
+    fiRenderWizardStep();
+  }
+  window.fiStartWizard = fiStartWizard;
+
+  function fiRenderWizardStep() {
+    const state = window._firstImport;
+    const body = document.getElementById('fiBody');
+    if (!state || !body) return;
+    const gig = state.needsFee[state.wizardIndex];
+    if (!gig) { fiFinishWizard(); return; }
+    const total = state.needsFee.length;
+    const pos = state.wizardIndex + 1;
+    const pct = Math.round((pos / total) * 100);
+    const dateLabel = gig.date ? new Date(gig.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '';
+    const venueLabel = gig.venue_name || '(no venue)';
+    const bandLabel = gig.band_name || gig.title || 'Untitled';
+
+    body.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:1.2px;color:var(--accent);text-transform:uppercase;">Fill in fees - ${pos} of ${total}</div>
+        <button onclick="fiFinishWizard()" aria-label="Close wizard" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;line-height:1;padding:0 4px;">&times;</button>
+      </div>
+      <div style="height:4px;background:var(--border);border-radius:2px;margin-bottom:16px;overflow:hidden;">
+        <div style="height:100%;width:${pct}%;background:var(--accent);transition:width 0.25s;"></div>
+      </div>
+
+      <div style="font-size:17px;font-weight:600;color:var(--text);margin-bottom:2px;">${escapeHtml(bandLabel)}</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(venueLabel)}</div>
+      <div style="font-size:12px;color:var(--text-3);margin-bottom:18px;">${escapeHtml(dateLabel)}${gig.start_time ? ' &middot; ' + String(gig.start_time).substring(0, 5) : ''}</div>
+
+      <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Fee (&pound;)</label>
+      <input id="fiFee" type="number" inputmode="decimal" step="10" placeholder="0" style="width:100%;padding:16px 14px;background:var(--bg);border:2px solid var(--accent);border-radius:12px;color:var(--text);font-size:24px;font-weight:700;box-sizing:border-box;margin-bottom:14px;" onkeydown="if(event.key==='Enter'){event.preventDefault();fiSaveAndNext();}" />
+
+      <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Dress code</label>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;" id="fiDress">
+        ${['Smart', 'Black tie', 'All black', 'Casual'].map(v => `<button type="button" onclick="fiPickDress('${v}')" data-dress="${v}" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;">${v}</button>`).join('')}
+      </div>
+
+      <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Notes (optional)</label>
+      <textarea id="fiNotes" rows="2" placeholder="Anything else to remember..." style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;box-sizing:border-box;margin-bottom:16px;resize:vertical;font-family:inherit;"></textarea>
+
+      <div style="display:flex;gap:8px;">
+        <button onclick="fiSkip()" style="flex:1;background:var(--card);color:var(--text-2);border:1px solid var(--border);border-radius:14px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;">Skip</button>
+        <button onclick="fiSaveAndNext()" style="flex:2;background:var(--accent);color:#000;border:none;border-radius:14px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">Save &amp; next &rarr;</button>
+      </div>
+      <div style="font-size:10px;color:var(--text-3);margin-top:10px;text-align:center;">Tip: hit Enter to save and advance.</div>`;
+
+    // Pre-focus the fee input so the user can start typing immediately.
+    setTimeout(() => {
+      const fee = document.getElementById('fiFee');
+      if (fee) fee.focus();
+    }, 50);
+  }
+  window.fiRenderWizardStep = fiRenderWizardStep;
+
+  function fiPickDress(val) {
+    const wrap = document.getElementById('fiDress');
+    if (!wrap) return;
+    wrap.dataset.chosen = val;
+    Array.from(wrap.querySelectorAll('button')).forEach(btn => {
+      const on = btn.dataset.dress === val;
+      btn.style.background = on ? 'var(--accent)' : 'var(--card)';
+      btn.style.color = on ? '#000' : 'var(--text)';
+      btn.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
+    });
+  }
+  window.fiPickDress = fiPickDress;
+
+  async function fiSaveAndNext() {
+    const state = window._firstImport;
+    if (!state) return;
+    const gig = state.needsFee[state.wizardIndex];
+    if (!gig) { fiFinishWizard(); return; }
+    const feeEl = document.getElementById('fiFee');
+    const notesEl = document.getElementById('fiNotes');
+    const dressEl = document.getElementById('fiDress');
+    const feeVal = feeEl ? parseFloat(feeEl.value) : NaN;
+    const notes = notesEl ? notesEl.value.trim() : '';
+    const dress = dressEl ? dressEl.dataset.chosen : null;
+    if (!Number.isFinite(feeVal) || feeVal < 0) {
+      // No fee typed. Treat as Skip rather than blocking progress - we
+      // want the wizard to feel quick even if some gigs have unknown fees.
+      return fiSkip();
+    }
+    try {
+      await fetch('/api/gigs/' + encodeURIComponent(gig.id), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fee: feeVal, notes: notes || null, dress_code: dress || null }),
+      });
+      state.wizardCompleted++;
+    } catch (err) {
+      console.error('[wizard] save error:', err);
+    }
+    state.wizardIndex++;
+    if (state.wizardIndex >= state.needsFee.length) {
+      fiFinishWizard();
+    } else {
+      fiRenderWizardStep();
+    }
+  }
+  window.fiSaveAndNext = fiSaveAndNext;
+
+  function fiSkip() {
+    const state = window._firstImport;
+    if (!state) return;
+    state.wizardIndex++;
+    if (state.wizardIndex >= state.needsFee.length) {
+      fiFinishWizard();
+    } else {
+      fiRenderWizardStep();
+    }
+  }
+  window.fiSkip = fiSkip;
+
+  function fiFinishWizard() {
+    const state = window._firstImport;
+    const body = document.getElementById('fiBody');
+    if (!body) { closeOverlay(); return; }
+    const done = state ? state.wizardCompleted : 0;
+    const total = state && state.needsFee ? state.needsFee.length : 0;
+    body.innerHTML = `
+      <div style="text-align:center;padding:20px 10px;">
+        <div style="font-size:40px;margin-bottom:10px;">&#x2705;</div>
+        <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:6px;">Nice work.</div>
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:20px;line-height:1.5;">
+          ${done} of ${total} fee${total === 1 ? '' : 's'} saved. ${total - done > 0 ? 'You can fill the rest any time from the Gigs tab.' : 'Every imported gig has a fee. Tax time just got easier.'}
+        </div>
+        <button onclick="document.getElementById('firstImportOverlay').remove();" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:14px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;">See my gigs</button>
+      </div>`;
+    // Invalidate gigs cache so the Gigs screen reflects all the saved fees.
+    if (typeof invalidateGigsCache === 'function') invalidateGigsCache();
+  }
+  window.fiFinishWizard = fiFinishWizard;
+})();
+
+// Helper referenced by the modal in case it isn't defined elsewhere.
+if (typeof invalidateGigsCache !== 'function') {
+  window.invalidateGigsCache = function () {
+    try { window._cachedGigs = null; } catch (_) {}
+    try { window._gigsCacheTime = 0; } catch (_) {}
+  };
+}
+
+// "Import all" helper on the ongoing Imports-to-review bar. Piggy-backs on
+// the first-import flow: pre-seeds the events from the cached nudges array
+// and routes straight to the import + quick-fire path. Returns early if
+// there are no nudges to import.
+window.importAllNudges = async function importAllNudges() {
+  const nudges = Array.isArray(window._calendarNudges) ? window._calendarNudges : [];
+  if (nudges.length === 0) {
+    if (typeof toast === 'function') toast('No imports to review');
+    return;
+  }
+  // Open the same overlay the first-import modal uses, but skip the fetch
+  // step by seeding _firstImport directly with the already-scored nudges.
+  const overlay = document.createElement('div');
+  overlay.id = 'firstImportOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto;';
+  overlay.innerHTML = `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:18px;width:100%;max-width:440px;padding:24px;">
+      <div id="fiBody">
+        <div style="text-align:center;padding:30px 16px;">
+          <div style="font-size:24px;font-weight:700;color:var(--text);margin-bottom:6px;">Import all ${nudges.length}?</div>
+          <div style="font-size:13px;color:var(--text-2);margin-bottom:18px;line-height:1.5;">Pulls the full batch into TrackMyGigs. Your Google Calendar isn't touched. You can fill in fees right after.</div>
+          <button onclick="fiStartImport()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:14px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;">Import ${nudges.length} now</button>
+          <button onclick="document.getElementById('firstImportOverlay').remove();" style="width:100%;background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:14px;padding:12px;font-size:13px;cursor:pointer;">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <style>@keyframes fiSpin{to{transform:rotate(360deg);}}</style>`;
+  document.body.appendChild(overlay);
+  // Seed the same state the first-import modal uses so fiStartImport works.
+  window._firstImport = { events: nudges, windowMode: 'future' };
+};
