@@ -148,6 +148,13 @@ function handleReload(req, res) {
     } catch (readErr) {
       console.error('[reload] failed to re-read index.html:', readErr.message);
     }
+    // Re-read landing.html on reload too so marketing-page edits land
+    // without a full process restart. Same pattern as indexHtml above.
+    try {
+      landingHtml = fs.readFileSync(LANDING_HTML_PATH, 'utf8');
+    } catch (readErr) {
+      console.error('[reload] failed to re-read landing.html:', readErr.message);
+    }
     res.json({
       ok: true,
       mode: force ? 'force' : 'pull',
