@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TrackMyGigs — Your gigs, your money, sorted.</title>
+<title>TrackMyGigs - Your gigs, your money, sorted.</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
 :root{
@@ -242,9 +242,9 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
 <div class="hero">
   <div class="hero-badge">🎵 Built for UK gigging musicians</div>
   <h1>Your gigs. Your money.<br><em>Sorted.</em></h1>
-  <p class="hero-sub">Track gigs, send invoices, claim every mile, and finally know what you're actually earning — all from your phone, between soundcheck and set time.</p>
+  <p class="hero-sub">Track gigs, send invoices, claim every mile, and finally know what you're actually earning - all from your phone, between soundcheck and set time.</p>
   <div class="hero-ctas">
-    <a href="/app" class="btn btn-primary btn-large">Start free — no card needed</a>
+    <a href="/app" class="btn btn-primary btn-large">Start free - no card needed</a>
     <a href="#features" class="btn btn-ghost btn-large">See how it works</a>
   </div>
   <div class="trust-row">
@@ -261,28 +261,49 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
     <div class="phone-frame">
       <div class="phone-notch"></div>
       <div class="phone-screen">
-        <div class="ph-bar"><div class="dot" style="background:var(--accent);"></div><span style="font-size:11px;font-weight:700;color:var(--text);">Dashboard</span></div>
-        <div class="ph-card">
-          <div class="mini-row"><span class="label">This month</span><span class="val" style="color:var(--accent);">£2,480</span></div>
-          <div class="mini-bar"><div class="fill" style="width:72%;background:var(--accent);"></div></div>
+        <!-- Greeting header mirrors the real app: avatar chip + name + bell + theme toggle. -->
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 4px 6px;">
+          <div style="width:26px;height:26px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#000;">G</div>
+          <span style="flex:1;font-size:12px;font-weight:600;color:var(--text);">Good morning, Gareth</span>
+          <span style="font-size:12px;color:var(--text-2);position:relative;">&#x1F514;<span style="position:absolute;top:-2px;right:-2px;width:6px;height:6px;background:var(--danger);border-radius:50%;"></span></span>
+          <span style="font-size:12px;color:var(--text-2);">&#x1F319;</span>
         </div>
-        <div class="ph-card">
-          <div class="mini-row"><span class="label">Upcoming gigs</span><span class="val">4</span></div>
-          <div style="margin-top:6px;">
-            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);padding:4px 0;border-bottom:1px solid var(--border);"><span>Sat 19 Apr — The Grand Hotel</span><span style="color:var(--success);">£350</span></div>
-            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);padding:4px 0;border-bottom:1px solid var(--border);"><span>Fri 25 Apr — Hilton Birmingham</span><span style="color:var(--success);">£280</span></div>
-            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);padding:4px 0;"><span>Sat 3 May — Aston Hall</span><span style="color:var(--accent);">£420</span></div>
+        <!-- Four stat tiles in a 2x2 grid, matching Home's summary cards. -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <div class="ph-card" style="padding:8px;">
+            <div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">This month</div>
+            <div style="font-size:15px;font-weight:800;color:var(--accent);margin-top:2px;">&pound;2,480</div>
+          </div>
+          <div class="ph-card" style="padding:8px;">
+            <div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">Upcoming</div>
+            <div style="font-size:15px;font-weight:800;color:var(--text);margin-top:2px;">4 gigs</div>
+          </div>
+          <div class="ph-card" style="padding:8px;">
+            <div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">Mileage</div>
+            <div style="font-size:15px;font-weight:800;color:var(--success);margin-top:2px;">&pound;412</div>
+          </div>
+          <div class="ph-card" style="padding:8px;">
+            <div style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">Overdue</div>
+            <div style="font-size:15px;font-weight:800;color:var(--danger);margin-top:2px;">2 inv</div>
           </div>
         </div>
-        <div class="ph-card">
-          <div class="mini-row"><span class="label">Mileage this year</span><span class="val green">£412 claimable</span></div>
+        <!-- Next gigs card with middle-dot separator, matching Home's list styling. -->
+        <div class="ph-card" style="padding:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            <span style="font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">Next gigs</span>
+            <span style="font-size:9px;color:var(--text-3);">&rsaquo;</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-2);padding:3px 0;border-bottom:1px solid var(--border);"><span>Sat 19 Apr &middot; Grand Hotel</span><span style="color:var(--success);font-weight:600;">&pound;350</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-2);padding:3px 0;border-bottom:1px solid var(--border);"><span>Fri 25 Apr &middot; Hilton B&rsquo;ham</span><span style="color:var(--success);font-weight:600;">&pound;280</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-2);padding:3px 0;"><span>Sat 3 May &middot; Aston Hall</span><span style="color:var(--accent);font-weight:600;">&pound;420</span></div>
         </div>
-        <div class="ph-card">
-          <div class="mini-row"><span class="label">Outstanding invoices</span><span class="val red">2 overdue</span></div>
-        </div>
-        <div style="display:flex;gap:6px;margin-top:4px;">
-          <div style="flex:1;background:var(--accent);border-radius:8px;padding:8px;text-align:center;font-size:10px;font-weight:700;color:#000;">+ Log gig</div>
-          <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center;font-size:10px;color:var(--text-2);">Send invoice</div>
+        <!-- Bottom quick-action dock, five tiles exactly like the live app. -->
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:2px;">
+          <div style="background:var(--accent);border-radius:6px;padding:6px 4px;text-align:center;font-size:8px;font-weight:700;color:#000;">Add gig</div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 4px;text-align:center;font-size:8px;color:var(--text-2);">Invoice</div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 4px;text-align:center;font-size:8px;color:var(--text-2);">Block</div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 4px;text-align:center;font-size:8px;color:var(--text-2);">Send dep</div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 4px;text-align:center;font-size:8px;color:var(--text-2);">Receipt</div>
         </div>
       </div>
     </div>
@@ -311,26 +332,26 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
           <div class="chaos-chip">Shoeboxes of receipts</div>
         </div>
         <div class="cost-callout">
-          <p>It's not just disorganised — it's costing you real money every single month.</p>
+          <p>It's not just disorganised - it's costing you real money every single month.</p>
         </div>
       </div>
       <div>
         <div class="pain-list">
           <div class="pain-item">
             <div class="pain-icon">💸</div>
-            <div class="pain-text"><strong>Forgetting to invoice</strong> — gigs slip through the cracks and you never chase the money</div>
+            <div class="pain-text"><strong>Forgetting to invoice</strong> - gigs slip through the cracks and you never chase the money</div>
           </div>
           <div class="pain-item">
             <div class="pain-icon">🚗</div>
-            <div class="pain-text"><strong>Under-claiming mileage</strong> — guessing your miles means leaving hundreds on the table at tax time</div>
+            <div class="pain-text"><strong>Under-claiming mileage</strong> - guessing your miles means leaving hundreds on the table at tax time</div>
           </div>
           <div class="pain-item">
             <div class="pain-icon">🏦</div>
-            <div class="pain-text"><strong>Not tracking commission properly</strong> — you know the headline fee, not what you actually take home</div>
+            <div class="pain-text"><strong>Not tracking commission properly</strong> - you know the headline fee, not what you actually take home</div>
           </div>
           <div class="pain-item">
             <div class="pain-icon">😰</div>
-            <div class="pain-text"><strong>Guessing at tax time</strong> — a weekend of dread, digging through texts and bank statements</div>
+            <div class="pain-text"><strong>Guessing at tax time</strong> - a weekend of dread, digging through texts and bank statements</div>
           </div>
         </div>
       </div>
@@ -343,7 +364,7 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
   <div class="section-inner" style="text-align:center;">
     <div class="section-label">More than a gig tracker</div>
     <div class="section-title" style="max-width:700px;margin:0 auto 8px;">One platform. Three apps.<br>The entire gig lifecycle, connected.</div>
-    <div class="section-sub" style="max-width:600px;margin:0 auto;">TrackMyGigs is part of a connected ecosystem built for the live music industry. Gigs flow between apps automatically — no double-entry, no miscommunication.</div>
+    <div class="section-sub" style="max-width:600px;margin:0 auto;">TrackMyGigs is part of a connected ecosystem built for the live music industry. Gigs flow between apps automatically - no double-entry, no miscommunication.</div>
     <div class="ecosystem-grid">
       <div class="eco-card">
         <div class="eco-icon">🎤</div>
@@ -398,7 +419,7 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
       </div>
       <div class="testimonial">
         <div class="stars">★★★★★</div>
-        <blockquote>"I play for 3 different bands with different agencies. TrackMyGigs tracks the commission on each one properly — nothing else did that."</blockquote>
+        <blockquote>"I play for 3 different bands with different agencies. TrackMyGigs tracks the commission on each one properly - nothing else did that."</blockquote>
         <div class="author"><div class="avatar">M</div><div><div class="name">Mike D.</div><div class="role">Drummer & dep musician, Manchester</div></div></div>
       </div>
       <div class="testimonial">
@@ -424,7 +445,7 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
       <div class="step">
         <div class="step-num">1</div>
         <h3>Log your gig</h3>
-        <p>Add the venue, date, fee, and agency. TrackMyGigs auto-calculates your mileage, commission, and take-home pay. Or accept a gig that's been sent to you from a band leader — it arrives pre-filled.</p>
+        <p>Add the venue, date, fee, and agency. TrackMyGigs auto-calculates your mileage, commission, and take-home pay. Or accept a gig that's been sent to you from a band leader - it arrives pre-filled.</p>
       </div>
       <div class="step">
         <div class="step-num">2</div>
@@ -434,10 +455,10 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
       <div class="step">
         <div class="step-num">3</div>
         <h3>Know your tax</h3>
-        <p>TrackMyGigs generates HMRC-ready tax reports covering income, mileage, and expenses — broken down exactly how your accountant wants it. Tax time takes minutes, not a weekend.</p>
+        <p>TrackMyGigs generates HMRC-ready tax reports covering income, mileage, and expenses - broken down exactly how your accountant wants it. Tax time takes minutes, not a weekend.</p>
       </div>
     </div>
-    <div style="margin-top:40px;"><a href="/app" class="btn btn-primary btn-large">Start free — no card needed</a></div>
+    <div style="margin-top:40px;"><a href="/app" class="btn btn-primary btn-large">Start free - no card needed</a></div>
   </div>
 </section>
 
@@ -473,14 +494,14 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
       </div>
       <div class="feature-text">
         <h2>What if every gig was tracked in one place?</h2>
-        <p>Add a gig once — venue, fee, agency, notes. Or accept one that's been sent to you from a band leader. TrackMyGigs remembers venues, calculates mileage automatically, and shows your real take-home after commission.</p>
+        <p>Add a gig once - venue, fee, agency, notes. Or accept one that's been sent to you from a band leader. TrackMyGigs remembers venues, calculates mileage automatically, and shows your real take-home after commission.</p>
         <ul class="feature-bullets">
           <li>Gigs arrive pre-filled from Musician Tracker</li>
           <li>Google Places venue search with full address</li>
           <li>Agency commission calculated automatically</li>
           <li>Calendar view with personal events alongside gigs</li>
         </ul>
-        <a href="/app" class="btn btn-primary">Start free — no card needed</a>
+        <a href="/app" class="btn btn-primary">Start free - no card needed</a>
       </div>
     </div>
 
@@ -504,14 +525,14 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
       </div>
       <div class="feature-text">
         <h2>What if your mileage was calculated automatically at HMRC rates?</h2>
-        <p>Set your home postcode once. TrackMyGigs calculates the round-trip distance to every venue and applies HMRC's approved rate — 45p per mile for the first 10,000, 25p after that.</p>
+        <p>Set your home postcode once. TrackMyGigs calculates the round-trip distance to every venue and applies HMRC's approved rate - 45p per mile for the first 10,000, 25p after that.</p>
         <ul class="feature-bullets">
           <li>No manual logging or guessing</li>
           <li>Round-trip calculated via Google Maps</li>
           <li>Running total visible on your dashboard</li>
           <li>Tax-year breakdown ready for your accountant</li>
         </ul>
-        <a href="/app" class="btn btn-primary">Start free — no card needed</a>
+        <a href="/app" class="btn btn-primary">Start free - no card needed</a>
       </div>
     </div>
 
@@ -548,7 +569,7 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
           <li>Track paid, pending, and overdue at a glance</li>
           <li>Professional PDF invoices with your branding</li>
         </ul>
-        <a href="/app" class="btn btn-primary">Start free — no card needed</a>
+        <a href="/app" class="btn btn-primary">Start free - no card needed</a>
       </div>
     </div>
 
@@ -578,14 +599,14 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
       </div>
       <div class="feature-text">
         <h2>What if you always knew what you're actually earning?</h2>
-        <p>Set each agency's commission rules once. TrackMyGigs instantly shows your real take-home for every gig — not just the headline fee. Finally see what you're actually making after everyone takes their cut.</p>
+        <p>Set each agency's commission rules once. TrackMyGigs instantly shows your real take-home for every gig - not just the headline fee. Finally see what you're actually making after everyone takes their cut.</p>
         <ul class="feature-bullets">
           <li>Multiple agencies with different rates</li>
           <li>Commission tracked as allowable expense for tax</li>
           <li>See real take-home before accepting a gig</li>
           <li>Annual commission summary for your tax return</li>
         </ul>
-        <a href="/app" class="btn btn-primary">Start free — no card needed</a>
+        <a href="/app" class="btn btn-primary">Start free - no card needed</a>
       </div>
     </div>
 
@@ -617,14 +638,14 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
       </div>
       <div class="feature-text">
         <h2>What if your tax return was ready in minutes?</h2>
-        <p>When your accountant asks for numbers, you're ready. TrackMyGigs generates UK tax-year reports covering income, mileage, expenses, and commission — broken down exactly how HMRC wants it. Export as PDF or CSV.</p>
+        <p>When your accountant asks for numbers, you're ready. TrackMyGigs generates UK tax-year reports covering income, mileage, expenses, and commission - broken down exactly how HMRC wants it. Export as PDF or CSV.</p>
         <ul class="feature-bullets">
           <li>Tax-year income breakdown (April to April)</li>
           <li>HMRC-format mileage summary</li>
           <li>Expense tracking with receipt capture</li>
           <li>MTD quarterly summaries included</li>
         </ul>
-        <a href="/app" class="btn btn-primary">Start free — no card needed</a>
+        <a href="/app" class="btn btn-primary">Start free - no card needed</a>
       </div>
     </div>
   </div>
@@ -656,32 +677,32 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
   </div>
 </section>
 
-<!-- ===== WHY GIGFLOW ===== -->
+<!-- ===== WHY TRACKMYGIGS ===== -->
 <section>
   <div class="section-inner" style="text-align:center;max-width:700px;">
     <div class="section-label">The difference</div>
     <div class="section-title">Finance apps don't understand gigs.<br>Gig apps don't understand money.</div>
-    <div class="section-sub" style="max-width:500px;margin:0 auto 32px;text-align:center;">TrackMyGigs understands both — because it was built by people in the industry, for people in the industry.</div>
+    <div class="section-sub" style="max-width:500px;margin:0 auto 32px;text-align:center;">TrackMyGigs understands both - because it was built by people in the industry, for people in the industry.</div>
     <div style="display:flex;flex-direction:column;gap:12px;text-align:left;">
       <div style="display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;">
         <span style="font-size:20px;">🇬🇧</span>
-        <span style="font-size:14px;color:var(--text-2);">Built for UK performers — HMRC rates, UK tax years, MTD-ready</span>
+        <span style="font-size:14px;color:var(--text-2);">Built for UK performers - HMRC rates, UK tax years, MTD-ready</span>
       </div>
       <div style="display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;">
         <span style="font-size:20px;">🏦</span>
-        <span style="font-size:14px;color:var(--text-2);">Handles agency commission properly — most apps completely ignore this</span>
+        <span style="font-size:14px;color:var(--text-2);">Handles agency commission properly - most apps completely ignore this</span>
       </div>
       <div style="display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;">
         <span style="font-size:20px;">🔗</span>
-        <span style="font-size:14px;color:var(--text-2);">Connected to the live music ecosystem — gigs arrive from band leaders and agencies automatically</span>
+        <span style="font-size:14px;color:var(--text-2);">Connected to the live music ecosystem - gigs arrive from band leaders and agencies automatically</span>
       </div>
       <div style="display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;">
         <span style="font-size:20px;">📱</span>
-        <span style="font-size:14px;color:var(--text-2);">Designed for phones, used between gigs — not a desktop app that expects you at a desk</span>
+        <span style="font-size:14px;color:var(--text-2);">Designed for phones, used between gigs - not a desktop app that expects you at a desk</span>
       </div>
       <div style="display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;">
         <span style="font-size:20px;">🌙</span>
-        <span style="font-size:14px;color:var(--text-2);">Calm, simple, and fast — works at 11pm after a long gig when you just want to log it and go to bed</span>
+        <span style="font-size:14px;color:var(--text-2);">Calm, simple, and fast - works at 11pm after a long gig when you just want to log it and go to bed</span>
       </div>
     </div>
   </div>
@@ -816,19 +837,19 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
       </div>
       <div class="faq-item" onclick="this.classList.toggle('open')">
         <div class="faq-q">Is TrackMyGigs only for singers? <span class="icon">+</span></div>
-        <div class="faq-a"><div class="faq-a-inner">No. TrackMyGigs works for any self-employed UK performer — singers, session musicians, DJs, pianists, guitarists, tribute acts, wedding bands, function musicians, entertainers. If you do gigs and need to track income and expenses for tax, TrackMyGigs is for you.</div></div>
+        <div class="faq-a"><div class="faq-a-inner">No. TrackMyGigs works for any self-employed UK performer - singers, session musicians, DJs, pianists, guitarists, tribute acts, wedding bands, function musicians, entertainers. If you do gigs and need to track income and expenses for tax, TrackMyGigs is for you.</div></div>
       </div>
       <div class="faq-item" onclick="this.classList.toggle('open')">
         <div class="faq-q">Can gigs be sent to me from band leaders or agencies? <span class="icon">+</span></div>
-        <div class="faq-a"><div class="faq-a-inner">Yes — this is one of TrackMyGigs's unique features. If your band leader uses Musician Tracker or your agency uses ClientFlow, gigs can arrive in your TrackMyGigs app pre-filled with all the details. Accept with one tap.</div></div>
+        <div class="faq-a"><div class="faq-a-inner">Yes - this is one of TrackMyGigs's unique features. If your band leader uses Musician Tracker or your agency uses ClientFlow, gigs can arrive in your TrackMyGigs app pre-filled with all the details. Accept with one tap.</div></div>
       </div>
       <div class="faq-item" onclick="this.classList.toggle('open')">
         <div class="faq-q">Can I use TrackMyGigs for my Self Assessment tax return? <span class="icon">+</span></div>
-        <div class="faq-a"><div class="faq-a-inner">Absolutely. TrackMyGigs generates a tax summary showing total income, mileage allowance, commission, and expenses — broken down exactly how HMRC wants it. Export and hand it to your accountant, or use it to file yourself.</div></div>
+        <div class="faq-a"><div class="faq-a-inner">Absolutely. TrackMyGigs generates a tax summary showing total income, mileage allowance, commission, and expenses - broken down exactly how HMRC wants it. Export and hand it to your accountant, or use it to file yourself.</div></div>
       </div>
       <div class="faq-item" onclick="this.classList.toggle('open')">
         <div class="faq-q">Is my data secure? <span class="icon">+</span></div>
-        <div class="faq-a"><div class="faq-a-inner">Yes. TrackMyGigs uses encrypted connections and secure cloud storage. Your financial data stays yours — we never share it with third parties.</div></div>
+        <div class="faq-a"><div class="faq-a-inner">Yes. TrackMyGigs uses encrypted connections and secure cloud storage. Your financial data stays yours - we never share it with third parties.</div></div>
       </div>
     </div>
   </div>
@@ -838,7 +859,7 @@ footer{background:var(--surface);border-top:1px solid var(--border);padding:48px
 <div class="final-cta">
   <h2>If gig admin is quietly stressing you out, this is for you.</h2>
   <p>Join hundreds of UK musicians who stopped guessing and started knowing.</p>
-  <a href="/app" class="btn btn-primary btn-large">Start free — no card needed</a>
+  <a href="/app" class="btn btn-primary btn-large">Start free - no card needed</a>
   <div style="margin-top:16px;font-size:12px;color:var(--text-3);">🔒 Encrypted and secure · No spam · Cancel anytime</div>
 </div>
 
