@@ -54,6 +54,7 @@
     q: '',                   // free-text search (title + venue)
     dateRange: 'any',        // 'any' | 'week' | 'month'
     showOutside: false,      // include posts beyond my travel radius
+    filtersExpanded: false,  // collapsed by default; tap Filters to open
     paid: null,              // last fetched list for Paid
     free: null,              // last fetched list for Free
     myPosts: null,
@@ -295,6 +296,18 @@
   }
 
   function renderFilterBar() {
+    // Count how many filters differ from defaults so the collapsed pill can
+    // show an "at a glance" active-filter badge. Search query is always
+    // visible so it doesn't count. Defaults: instruments empty (falls back
+    // to profile), minFee null, dateRange 'any', showOutside false.
+    const activeCount = (
+      (Array.isArray(state.instruments) && state.instruments.length > 0 ? 1 : 0) +
+      (state.minFeePence != null ? 1 : 0) +
+      (state.dateRange && state.dateRange !== 'any' ? 1 : 0) +
+      (state.showOutside ? 1 : 0)
+    );
+    const expanded = !!state.filtersExpanded;
+
     const chips = INSTRUMENT_PRESETS.map(instr => {
       const on = state.instruments.includes(instr);
       return `<button onclick="_mktToggleInstr('${escAttr(instr)}')" style="padding:5px 11px;background:${on?'var(--accent)':'var(--card)'};color:${on?'#000':'var(--text)'};border:1px solid ${on?'var(--accent)':'var(--border)'};border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">${esc(instr)}</button>`;
@@ -302,37 +315,58 @@
 
     const sortOpts = SORTS.map(s => `<option value="${esc(s.value)}" ${state.sort===s.value?'selected':''}>${esc(s.label)}</option>`).join('');
 
-    const feeRow = state.tab === 'paid' ? `
-      <div style="display:flex;align-items:center;gap:8px;padding:8px 0;">
-        <span style="font-size:11px;color:var(--text-2);white-space:nowrap;">Min fee</span>
-        <input type="number" min="0" step="10" value="${state.minFeePence == null ? '' : Math.round(state.minFeePence/100)}" placeholder="any" id="mktMinFee" oninput="_mktSetMinFee(this.value)" style="width:80px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12px;" />
-        <span style="font-size:11px;color:var(--text-2);">Paid gigs must meet £30 floor.</span>
-      </div>` : `<div style="padding:4px 0;font-size:11px;color:var(--text-3);">Showing legitimate free posts only (charity, open mic, showcases, favours).</div>`;
-
     function dateChip(val, label) {
       const on = state.dateRange === val;
       return `<button onclick="_mktSetDateRange('${escAttr(val)}')" style="padding:5px 11px;background:${on?'var(--accent)':'var(--card)'};color:${on?'#000':'var(--text)'};border:1px solid ${on?'var(--accent)':'var(--border)'};border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">${esc(label)}</button>`;
     }
 
     const outsideOn = state.showOutside;
-    const outsideBtn = `<button onclick="_mktToggleOutside()" style="padding:5px 11px;background:${outsideOn?'var(--accent)':'var(--card)'};color:${outsideOn?'#000':'var(--text)'};border:1px solid ${outsideOn?'var(--accent)':'var(--border)'};border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">${outsideOn?'&#x2713; ':''}Show all (inc. outside radius)</button>`;
+
+    // Filters badge: shows active count if > 0, else plain "Filters".
+    const filtersBadge = activeCount > 0
+      ? `<span style="background:var(--accent);color:#000;font-size:10px;font-weight:700;border-radius:10px;padding:1px 6px;margin-left:4px;">${activeCount}</span>`
+      : '';
+    const chevron = expanded ? '&#x25B4;' : '&#x25BE;';
+
+    // Compact top row: search + filters pill + sort. Always visible, one line.
+    // Removed Refresh button (filter changes auto-refresh) and moved free-tab
+    // helper copy into the expanded panel.
+    const topRow = `<div style="display:flex;align-items:center;gap:6px;">
+      <input type="search" id="mktSearch" value="${escAttr(state.q)}" placeholder="Search gigs" oninput="_mktSetQuery(this.value)" style="flex:1;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;" />
+      <button onclick="_mktToggleFilters()" style="background:${activeCount>0?'var(--accent-dim,rgba(240,165,0,.12))':'var(--card)'};color:var(--text);border:1px solid ${activeCount>0?'var(--accent)':'var(--border)'};border-radius:8px;padding:7px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;">Filters${filtersBadge}<span style="margin-left:4px;font-size:9px;">${chevron}</span></button>
+      <select onchange="_mktSetSort(this.value)" title="Sort" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 6px;font-size:12px;max-width:110px;">${sortOpts}</select>
+    </div>`;
+
+    // Expanded body: hidden by default. All the rich filter controls live
+    // here so the common case (glance + scroll) is a single row of chrome.
+    const expandedBody = expanded ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+        <div style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Instruments</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">${chips}</div>
+
+        ${state.tab === 'paid' ? `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <span style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">Min fee</span>
+          <input type="number" min="0" step="10" value="${state.minFeePence == null ? '' : Math.round(state.minFeePence/100)}" placeholder="any (£30 floor)" id="mktMinFee" oninput="_mktSetMinFee(this.value)" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;" />
+        </div>` : `
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:10px;">Free posts only: charity, open mic, showcases, favours.</div>`}
+
+        <div style="font-size:10px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Date</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+          ${dateChip('any','Any date')}${dateChip('week','This week')}${dateChip('month','This month')}
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;cursor:pointer;padding:4px 0;" onclick="_mktToggleOutside()">
+          <span style="color:var(--text);">Include gigs outside my travel radius</span>
+          <span style="width:36px;height:20px;border-radius:10px;background:${outsideOn?'var(--accent)':'var(--border)'};position:relative;display:inline-block;flex-shrink:0;transition:background .15s;">
+            <span style="position:absolute;top:2px;left:${outsideOn?'18px':'2px'};width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s;"></span>
+          </span>
+        </div>
+      </div>` : '';
 
     return `<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-        <input type="search" id="mktSearch" value="${escAttr(state.q)}" placeholder="Search title or venue" oninput="_mktSetQuery(this.value)" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px;" />
-        ${state.q ? `<button onclick="_mktSetQuery('');document.getElementById('mktSearch').value='';" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--text-2);font-size:12px;cursor:pointer;">Clear</button>` : ''}
-      </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">${chips}</div>
-      ${feeRow}
-      <div style="display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;border-top:1px solid var(--border);">
-        ${dateChip('any','Any date')}${dateChip('week','This week')}${dateChip('month','This month')}
-        ${outsideBtn}
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;padding-top:6px;border-top:1px solid var(--border);">
-        <span style="font-size:11px;color:var(--text-2);">Sort</span>
-        <select onchange="_mktSetSort(this.value)" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12px;">${sortOpts}</select>
-        <button onclick="_mktReload()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--text);font-size:12px;cursor:pointer;">Refresh</button>
-      </div>
+      ${topRow}
+      ${expandedBody}
     </div>`;
   }
 
@@ -1011,6 +1045,22 @@
     state.showOutside = !state.showOutside;
     loadBrowse(true);
     render();
+  };
+  // Toggle the expanded filter panel. Purely a view-state flip; no network.
+  window._mktToggleFilters = function () {
+    state.filtersExpanded = !state.filtersExpanded;
+    render();
+    // Refocus the search input if the panel just collapsed and the user's
+    // next action is typing; if expanded, scroll the panel into view so the
+    // new controls don't sit below the fold.
+    if (state.filtersExpanded) {
+      requestAnimationFrame(() => {
+        const el = document.getElementById('mktMinFee');
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      });
+    }
   };
 
   window._mktApply = async function (gigId) {
