@@ -1343,21 +1343,18 @@ async function pushGigToGoogle(userId, gig) {
 async function removeGigFromGoogle(userId, gig) {
   try {
     if (!gig) return false;
-    // Delete-safety guard (2026-04-23). Refuse to delete the Google event
-    // when the gig was imported from Google AND has never been touched in
-    // TrackMyGigs. Rationale: a user tidying up TMG might click Delete on
-    // an imported-but-untouched gig to "remove it from TMG", expecting the
-    // source event in their calendar to stay. Without this guard, we would
-    // also nuke the Google event. Imported gigs the user HAS edited in TMG
-    // remain deleted in both places (existing behaviour) because the user's
-    // last action on that event happened inside TMG, so deleting both sides
-    // matches their intent.
-    const originatedInGoogle = Boolean(
-      gig.google_event_id ||
-      (gig.source && String(gig.source).startsWith('gcal:'))
-    );
-    const userHasEdited = !!gig.tmg_edited;
-    if (originatedInGoogle && !userHasEdited) {
+    // Delete-safety guard (2026-04-23, tightened). If the gig originated
+    // from Google (source starts with 'gcal:') we NEVER delete the Google
+    // event, regardless of whether the user later edited it in TMG.
+    // Rationale: some users will import, experiment, decide TMG isn't for
+    // them, and expect their Google Calendar untouched on the way out.
+    // Predictable rule: TMG only deletes Google events for gigs TMG
+    // created. Anything pulled in from Google is read-only on the delete
+    // side for life. The google_event_id alone isn't enough to decide,
+    // because TMG-created gigs pick up a google_event_id on first push.
+    // The 'gcal:<id>' source tag is the only reliable marker of origin.
+    const originatedInGoogle = Boolean(gig.source && String(gig.source).startsWith('gcal:'));
+    if (originatedInGoogle) {
       return false;
     }
 
