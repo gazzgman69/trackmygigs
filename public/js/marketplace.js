@@ -756,57 +756,104 @@
 
     const freeReasonOpts = FREE_REASONS.map(r => `<option value="${esc(r.value)}">${esc(r.label)}</option>`).join('');
 
-    body.innerHTML = `<div style="padding:14px 16px 80px;">
-      <div class="form-group"><label class="fl">Title *</label><input type="text" class="fi" id="mktCTitle" placeholder="e.g. Saxophone needed — wedding Saturday" /></div>
+    // Style tokens reused across the form so the inputs feel like native
+    // members of the app rather than browser defaults. The previous
+    // implementation leaned on .fl/.fi classes that were never defined in
+    // app.css, so labels rendered inline and inputs kept the browser's
+    // white-field default. Inline styles here match the onboarding and
+    // gig-wizard fields.
+    const lbl = 'display:block;font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.4px;';
+    const fld = 'width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;box-sizing:border-box;font-family:inherit;';
+    const grp = 'margin-bottom:16px;';
 
-      <div style="display:flex;gap:10px;margin:12px 0;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
-        <label style="flex:1;display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-          <input type="radio" name="mktCFeeKind" value="paid" checked onchange="_mktComposeFeeKind('paid')" /> Paid
-        </label>
-        <label style="flex:1;display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-          <input type="radio" name="mktCFeeKind" value="free" onchange="_mktComposeFeeKind('free')" /> Free
-        </label>
+    body.innerHTML = `<div style="padding:16px 16px 80px;">
+
+      <div style="${grp}">
+        <label for="mktCTitle" style="${lbl}">Title</label>
+        <input type="text" id="mktCTitle" placeholder="e.g. Saxophone needed for Saturday wedding" style="${fld}" />
       </div>
 
-      <div id="mktCPaidFields">
-        <div class="form-group"><label class="fl">Fee (£) *</label><input type="number" min="30" step="10" class="fi" id="mktCFee" placeholder="Minimum £30 for Paid" /></div>
-      </div>
-      <div id="mktCFreeFields" style="display:none;">
-        <div class="form-group"><label class="fl">Why is this free? *</label><select class="fi" id="mktCFreeReason">${freeReasonOpts}</select></div>
-      </div>
-
-      <div class="form-group"><label class="fl">Date *</label><input type="date" class="fi" id="mktCDate" value="${tomorrow}" /></div>
-      <div style="display:flex;gap:10px;">
-        <div class="form-group" style="flex:1;"><label class="fl">Start time</label><input type="time" class="fi" id="mktCStart" /></div>
-        <div class="form-group" style="flex:1;"><label class="fl">End time</label><input type="time" class="fi" id="mktCEnd" /></div>
-      </div>
-
-      <div class="form-group"><label class="fl">Venue name</label><input type="text" class="fi" id="mktCVenue" placeholder="e.g. The Grand Hotel" /></div>
-      <div class="form-group"><label class="fl">Postcode</label><input type="text" class="fi" id="mktCPostcode" placeholder="SW1A 1AA" /></div>
-
-      <div class="form-group">
-        <label class="fl">Instruments needed *</label>
-        <div id="mktCInstrChips" style="display:flex;flex-wrap:wrap;gap:0;margin-top:4px;">${instrChips}</div>
-        <div style="font-size:10px;color:var(--text-3);margin-top:6px;">Tap any that fit the slot.</div>
-      </div>
-
-      <div class="form-group"><label class="fl">Details</label><textarea class="fi" id="mktCDesc" style="resize:vertical;height:100px;" placeholder="Setlist vibe, dress code, load-in notes, anything else the dep needs to know."></textarea></div>
-
-      <div class="form-group">
-        <label class="fl">Mode</label>
-        <div style="display:flex;gap:10px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
-          <label style="flex:1;display:flex;align-items:flex-start;gap:8px;font-size:12px;cursor:pointer;">
-            <input type="radio" name="mktCMode" value="pick" checked style="margin-top:3px;" />
-            <div><div style="font-weight:600;color:var(--text);">You pick</div><div style="color:var(--text-2);font-size:11px;">See applicants, choose one. Default for paid.</div></div>
+      <div style="${grp}">
+        <label style="${lbl}">Fee type</label>
+        <div style="display:flex;gap:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:3px;">
+          <label id="mktCFeeKindPaidWrap" style="flex:1;text-align:center;padding:10px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;background:var(--accent);color:#000;">
+            <input type="radio" name="mktCFeeKind" value="paid" checked onchange="_mktComposeFeeKind('paid')" style="display:none;" />Paid
           </label>
-          <label style="flex:1;display:flex;align-items:flex-start;gap:8px;font-size:12px;cursor:pointer;">
-            <input type="radio" name="mktCMode" value="fcfs" style="margin-top:3px;" />
-            <div><div style="font-weight:600;color:var(--text);">FCFS</div><div style="color:var(--text-2);font-size:11px;">Auto-fills with first applicant. Good for free slots.</div></div>
+          <label id="mktCFeeKindFreeWrap" style="flex:1;text-align:center;padding:10px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text-2);">
+            <input type="radio" name="mktCFeeKind" value="free" onchange="_mktComposeFeeKind('free')" style="display:none;" />Free
           </label>
         </div>
       </div>
 
-      <button onclick="_mktComposeSubmit()" style="margin-top:12px;width:100%;background:var(--accent);color:#000;border:none;border-radius:24px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;">Post gig</button>
+      <div id="mktCPaidFields" style="${grp}">
+        <label for="mktCFee" style="${lbl}">Fee (£)</label>
+        <input type="number" min="30" step="10" id="mktCFee" placeholder="Minimum £30" style="${fld}" />
+      </div>
+      <div id="mktCFreeFields" style="${grp};display:none;">
+        <label for="mktCFreeReason" style="${lbl}">Why is this free?</label>
+        <select id="mktCFreeReason" style="${fld}">${freeReasonOpts}</select>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:16px;">
+        <div style="flex:1;">
+          <label for="mktCDate" style="${lbl}">Date</label>
+          <input type="date" id="mktCDate" value="${tomorrow}" style="${fld}color-scheme:dark;" />
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:16px;">
+        <div style="flex:1;">
+          <label for="mktCStart" style="${lbl}">Start time</label>
+          <input type="time" id="mktCStart" style="${fld}color-scheme:dark;" />
+        </div>
+        <div style="flex:1;">
+          <label for="mktCEnd" style="${lbl}">End time</label>
+          <input type="time" id="mktCEnd" style="${fld}color-scheme:dark;" />
+        </div>
+      </div>
+
+      <div style="${grp}">
+        <label for="mktCVenue" style="${lbl}">Venue name</label>
+        <input type="text" id="mktCVenue" placeholder="e.g. The Grand Hotel" style="${fld}" />
+      </div>
+
+      <div style="${grp}">
+        <label for="mktCPostcode" style="${lbl}">Postcode</label>
+        <input type="text" id="mktCPostcode" placeholder="SW1A 1AA" style="${fld}text-transform:uppercase;" />
+      </div>
+
+      <div style="${grp}">
+        <label style="${lbl}">Instruments needed</label>
+        <div id="mktCInstrChips" style="display:flex;flex-wrap:wrap;gap:6px;">${instrChips}</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:8px;">Tap any that fit the slot.</div>
+      </div>
+
+      <div style="${grp}">
+        <label for="mktCDesc" style="${lbl}">Details</label>
+        <textarea id="mktCDesc" rows="4" placeholder="Setlist vibe, dress code, load-in notes, anything else the dep needs to know." style="${fld}resize:vertical;min-height:96px;"></textarea>
+      </div>
+
+      <div style="${grp}">
+        <label style="${lbl}">Application mode</label>
+        <div style="display:flex;gap:8px;">
+          <label style="flex:1;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+              <input type="radio" name="mktCMode" value="pick" checked />
+              <div style="font-weight:600;color:var(--text);font-size:13px;">You pick</div>
+            </div>
+            <div style="color:var(--text-2);font-size:11px;line-height:1.4;">See applicants, choose one. Best for paid gigs.</div>
+          </label>
+          <label style="flex:1;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+              <input type="radio" name="mktCMode" value="fcfs" />
+              <div style="font-weight:600;color:var(--text);font-size:13px;">First come, first served</div>
+            </div>
+            <div style="color:var(--text-2);font-size:11px;line-height:1.4;">First applicant auto-fills the slot.</div>
+          </label>
+        </div>
+      </div>
+
+      <button onclick="_mktComposeSubmit()" style="margin-top:8px;width:100%;background:var(--accent);color:#000;border:none;border-radius:24px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;">Post gig</button>
       <div id="mktComposeError" style="margin-top:10px;color:var(--danger,#f85149);font-size:12px;text-align:center;display:none;"></div>
     </div>`;
 
@@ -829,6 +876,24 @@
   window._mktComposeFeeKind = function (kind) {
     document.getElementById('mktCPaidFields').style.display = kind === 'paid' ? 'block' : 'none';
     document.getElementById('mktCFreeFields').style.display = kind === 'free' ? 'block' : 'none';
+    // Flip the segmented-control styling so the active side reads as
+    // selected. Both wrappers start with matching padding/radius; we swap
+    // background and text colour only.
+    const paidWrap = document.getElementById('mktCFeeKindPaidWrap');
+    const freeWrap = document.getElementById('mktCFeeKindFreeWrap');
+    if (paidWrap && freeWrap) {
+      if (kind === 'paid') {
+        paidWrap.style.background = 'var(--accent)';
+        paidWrap.style.color = '#000';
+        freeWrap.style.background = 'transparent';
+        freeWrap.style.color = 'var(--text-2)';
+      } else {
+        freeWrap.style.background = 'var(--accent)';
+        freeWrap.style.color = '#000';
+        paidWrap.style.background = 'transparent';
+        paidWrap.style.color = 'var(--text-2)';
+      }
+    }
     // Default Free posts to FCFS (you typically don't curate a free slot).
     if (kind === 'free') {
       const fc = document.querySelector('input[name="mktCMode"][value="fcfs"]');
