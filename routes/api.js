@@ -750,6 +750,83 @@ router.post('/offers/:id/withdraw', async (req, res) => {
   }
 });
 
+// Nudge cap (2026-04-23): sender reminds the recipient about an already-sent
+// dep offer without creating a duplicate offer row. Hard cap of 2 nudges per
+// offer (so the total touches on a single gig per recipient is 3: one initial
+// send plus up to two nudges). After 2 nudges the endpoint returns 409 and
+// the sender must wait for a response (accept / decline) or withdraw.
+//
+// Authorization: caller must be the sender; offer must still be 'pending'.
+// If the recipient has blocked the sender (via user_blocks), the nudge is
+// silently refused as 404 so we don't leak block state.
+router.post('/offers/:id/nudge', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const row = await db.query(
+      `SELECT o.id, o.status, o.nudge_count, o.recipient_id, o.sender_id, o.gig_id
+         FROM offers o
+         WHERE o.id = $1 AND o.sender_id = $2
+         LIMIT 1`,
+      [id, req.user.id]
+    );
+    if (row.rows.length === 0) {
+      return res.status(404).json({ error: 'Offer not found' });
+    }
+    const offer = row.rows[0];
+
+    // Block-check: if recipient has blocked the sender (or vice versa), pretend
+    // the offer does not exist. Symmetric to how directory search handles blocks.
+    const blockCheck = await db.query(
+      `SELECT 1 FROM user_blocks
+         WHERE (blocker_id = $1 AND blocked_id = $2)
+            OR (blocker_id = $2 AND blocked_id = $1)
+         LIMIT 1`,
+      [offer.sender_id, offer.recipient_id]
+    );
+    if (blockCheck.rows.length > 0) {
+      return res.status(404).json({ error: 'Offer not found' });
+    }
+
+    if (offer.status !== 'pending') {
+      return res.status(409).json({
+        error: 'Offer is no longer pending',
+        status: offer.status,
+      });
+    }
+    if (offer.nudge_count >= 2) {
+      return res.status(409).json({
+        error: 'No nudges left',
+        nudge_count: offer.nudge_count,
+        nudges_remaining: 0,
+      });
+    }
+
+    const updated = await db.query(
+      `UPDATE offers
+         SET nudge_count = nudge_count + 1,
+             last_nudged_at = NOW()
+       WHERE id = $1 AND sender_id = $2 AND status = 'pending' AND nudge_count < 2
+       RETURNING id, nudge_count, last_nudged_at`,
+      [id, req.user.id]
+    );
+    if (updated.rows.length === 0) {
+      // Race: another request raced past the cap check. Treat as 409.
+      return res.status(409).json({ error: 'Nudge rejected by race-condition guard' });
+    }
+    const r = updated.rows[0];
+    res.json({
+      success: true,
+      offer_id: r.id,
+      nudge_count: r.nudge_count,
+      nudges_remaining: Math.max(0, 2 - r.nudge_count),
+      last_nudged_at: r.last_nudged_at,
+    });
+  } catch (error) {
+    console.error('Nudge offer error:', error);
+    res.status(500).json({ error: 'Failed to nudge offer' });
+  }
+});
+
 router.get('/user/profile', async (req, res) => {
   try {
     res.json(req.user);
@@ -1460,6 +1537,9 @@ router.post('/dep-offers', async (req, res) => {
     // summary modal. Broadcast ignores this payload; it only cares about
     // sent/unresolved counts.
     const outOfRangeContacts = [];
+    // Nudge cap (2026-04-23): contacts with a still-pending offer for this gig
+    // from this sender. Not counted as sent; UI should redirect to nudge.
+    const alreadySent = [];
 
     for (const c of contactRows) {
       // Resolve to a users.id
@@ -1492,6 +1572,22 @@ router.post('/dep-offers', async (req, res) => {
         }
       }
       if (!recipientId || recipientId === req.user.id) {
+        unresolved++;
+        continue;
+      }
+
+      // Block check (2026-04-23): if either side has blocked the other, the
+      // send is silently dropped. No leak to the sender that a block exists;
+      // the contact looks unresolved from their side. Mirrors directory and
+      // nudge endpoint symmetry.
+      const blockRow = await db.query(
+        `SELECT 1 FROM user_blocks
+           WHERE (blocker_id = $1 AND blocked_id = $2)
+              OR (blocker_id = $2 AND blocked_id = $1)
+           LIMIT 1`,
+        [req.user.id, recipientId]
+      );
+      if (blockRow.rows.length > 0) {
         unresolved++;
         continue;
       }
@@ -1534,6 +1630,27 @@ router.post('/dep-offers', async (req, res) => {
         }
       }
 
+      // Nudge cap (2026-04-23): if an offer for this (sender, recipient, gig)
+      // is already pending, do NOT create a duplicate row. The correct action
+      // is to nudge the existing offer via POST /api/offers/:id/nudge. Track
+      // as "already sent" on the response so pick-mode can surface "You've
+      // already offered this to X — nudge them instead?" inline.
+      const existing = await db.query(
+        `SELECT id, nudge_count FROM offers
+         WHERE sender_id = $1 AND recipient_id = $2 AND gig_id = $3 AND status = 'pending'
+         LIMIT 1`,
+        [req.user.id, recipientId, gig_id]
+      );
+      if (existing.rows.length > 0) {
+        alreadySent.push({
+          recipient_id: recipientId,
+          existing_offer_id: existing.rows[0].id,
+          nudge_count: existing.rows[0].nudge_count,
+          nudges_remaining: Math.max(0, 2 - existing.rows[0].nudge_count),
+        });
+        continue;
+      }
+
       await db.query(
         `INSERT INTO offers (sender_id, recipient_id, gig_id, offer_type, status, fee)
          VALUES ($1, $2, $3, 'dep', 'pending',
@@ -1550,6 +1667,7 @@ router.post('/dep-offers', async (req, res) => {
       total: contactRows.length,
       filtered_out_of_range: filteredOutOfRange,
       out_of_range_contacts: outOfRangeContacts,
+      already_sent: alreadySent,
     });
   } catch (error) {
     console.error('Create dep offer error:', error);

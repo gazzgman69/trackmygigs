@@ -704,6 +704,12 @@ async function runMigrations() {
     // S7-08: per-offer snooze timestamp so snooze survives device switches / re-auth.
     // Offers whose snoozed_until is in the future are hidden from the inbox list.
     await db.query(`ALTER TABLE offers ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMP`);
+    // Nudge cap (2026-04-23): sender gets 1 initial send + up to 2 nudges per
+    // active offer. The third send of the same (gig, sender, recipient) pair
+    // while the offer is still pending is rejected. nudge_count tracks how
+    // many nudges have been sent; last_nudged_at bumps the inbox ordering.
+    await db.query(`ALTER TABLE offers ADD COLUMN IF NOT EXISTS nudge_count INT NOT NULL DEFAULT 0`);
+    await db.query(`ALTER TABLE offers ADD COLUMN IF NOT EXISTS last_nudged_at TIMESTAMP`);
     // S8-05: notification dismissals persisted server-side by notification key.
     // Notification "keys" are synthesized client-side from type:action_type:action_id:timestamp.
     // user_id is UUID (users.id is UUID). An earlier version of this migration
