@@ -1359,6 +1359,148 @@ async function scenarioAI() {
   }
 }
 
+// ── Scenario N: premium flag + Stripe endpoint gating ──────────────────────
+// Covers the flag semantics that ship with the Stripe subscription plumbing
+// without needing real Stripe keys (which the harness environment doesn't
+// have). Three buckets:
+//   N-1..N-3  auth gating on the Stripe endpoints (401 without session)
+//   N-4..N-6  shape and error paths when the session IS present (tolerates
+//             503 when STRIPE_SECRET_KEY is unset, because that IS the
+//             correct response until Gareth drops the keys in Replit Secrets)
+//   N-7..N-9  premium flag round-trip via the dev toggle: flip on, read
+//             /api/user/profile, flip off, read again.
+async function scenarioPremium() {
+  const cat = 'premium';
+  const token = sessions.leader1.token;
+
+  // N-1: unauthenticated checkout call → 401
+  try {
+    const r = await http('POST', '/api/stripe/create-checkout-session', { body: { plan: 'monthly' } });
+    record(cat, 'N-1: unauth checkout → 401',
+      r.status === 401 ? 'pass' : 'fail',
+      `status=${r.status}`);
+  } catch (e) { record(cat, 'N-1: unauth checkout', 'fail', String(e).slice(0, 160)); }
+
+  // N-2: unauthenticated billing portal → 401
+  try {
+    const r = await http('POST', '/api/stripe/billing-portal', {});
+    record(cat, 'N-2: unauth billing-portal → 401',
+      r.status === 401 ? 'pass' : 'fail',
+      `status=${r.status}`);
+  } catch (e) { record(cat, 'N-2: unauth billing-portal', 'fail', String(e).slice(0, 160)); }
+
+  // N-3: authed checkout with valid plan. 200 means Stripe is live and returned
+  // a checkout URL; 503 means Stripe keys are not configured yet (expected
+  // until production secrets are set). Either is a pass — the endpoint and
+  // mount-order are correct.
+  try {
+    const r = await http('POST', '/api/stripe/create-checkout-session', {
+      token, body: { plan: 'monthly' },
+    });
+    if (r.status === 200 && r.json && r.json.url && /^https?:\/\//.test(r.json.url)) {
+      record(cat, 'N-3: authed checkout monthly → 200 url', 'pass', `url host=${new URL(r.json.url).host}`);
+    } else if (r.status === 503) {
+      record(cat, 'N-3: authed checkout monthly → 503 (Stripe not configured)', 'pass',
+        'STRIPE_SECRET_KEY not set in env; endpoint returns 503 cleanly');
+    } else {
+      record(cat, 'N-3: authed checkout monthly', 'fail', `unexpected status=${r.status}`);
+    }
+  } catch (e) { record(cat, 'N-3: authed checkout monthly', 'fail', String(e).slice(0, 160)); }
+
+  // N-4: authed checkout with invalid plan → 400 (or 503 if Stripe isn't configured).
+  try {
+    const r = await http('POST', '/api/stripe/create-checkout-session', {
+      token, body: { plan: 'lifetime' },
+    });
+    if (r.status === 400 || r.status === 503) {
+      record(cat, 'N-4: invalid plan rejected', 'pass', `status=${r.status}`);
+    } else {
+      record(cat, 'N-4: invalid plan rejected', 'fail', `unexpected status=${r.status}`);
+    }
+  } catch (e) { record(cat, 'N-4: invalid plan rejected', 'fail', String(e).slice(0, 160)); }
+
+  // N-5: authed billing-portal with no stripe_customer_id → 400 no_subscription
+  // (the [STRESS] leader has never paid) or 503 if Stripe is unconfigured.
+  try {
+    const r = await http('POST', '/api/stripe/billing-portal', { token });
+    const bodyErr = r.json && r.json.error;
+    if (r.status === 400 && bodyErr === 'no_subscription') {
+      record(cat, 'N-5: billing-portal without subscription → 400 no_subscription', 'pass', 'correct gate');
+    } else if (r.status === 503) {
+      record(cat, 'N-5: billing-portal → 503 (Stripe not configured)', 'pass', 'keys missing, handled cleanly');
+    } else {
+      record(cat, 'N-5: billing-portal without subscription', 'fail',
+        `unexpected status=${r.status} error=${bodyErr || 'none'}`);
+    }
+  } catch (e) { record(cat, 'N-5: billing-portal without subscription', 'fail', String(e).slice(0, 160)); }
+
+  // N-6: Stripe webhook mount order. A POST to /api/stripe/webhook without a
+  // valid Stripe-Signature should fail signature verification with 400 (when
+  // STRIPE_WEBHOOK_SECRET is set) or return 503 (when Stripe is unconfigured).
+  // Either is fine — both prove the route is reachable and NOT eaten by
+  // express.json() upstream.
+  try {
+    const r = await http('POST', '/api/stripe/webhook', { body: { type: 'ping' } });
+    if (r.status === 400 || r.status === 503) {
+      record(cat, 'N-6: webhook rejects unsigned payloads', 'pass', `status=${r.status}`);
+    } else {
+      record(cat, 'N-6: webhook rejects unsigned payloads', 'fail', `unexpected status=${r.status}`);
+    }
+  } catch (e) { record(cat, 'N-6: webhook unsigned', 'fail', String(e).slice(0, 160)); }
+
+  // N-7: flip premium ON via dev toggle, then read /api/user/profile back.
+  try {
+    const flip = await http('GET', '/auth/dev-set-premium?on=1', { token });
+    if (flip.status !== 200 || !flip.json || flip.json.premium !== true) {
+      record(cat, 'N-7: dev-set-premium on', 'fail',
+        `flip status=${flip.status} payload=${JSON.stringify(flip.json).slice(0, 120)}`);
+    } else {
+      const prof = await http('GET', '/api/user/profile', { token });
+      const p = prof.json || {};
+      if (prof.status === 200 && p.premium === true && p.premium_until) {
+        record(cat, 'N-7: profile reflects premium=true after flip', 'pass',
+          `premium_until=${String(p.premium_until).slice(0, 10)}`);
+      } else {
+        record(cat, 'N-7: profile reflects premium=true after flip', 'fail',
+          `profile status=${prof.status} premium=${p.premium} until=${p.premium_until}`);
+      }
+    }
+  } catch (e) { record(cat, 'N-7: premium flip on', 'fail', String(e).slice(0, 160)); }
+
+  // N-8: with premium on, billing-portal still returns no_subscription (no
+  // stripe_customer_id). Proves that the premium flag ALONE doesn't unlock
+  // the portal — the portal needs a real Stripe customer relationship.
+  try {
+    const r = await http('POST', '/api/stripe/billing-portal', { token });
+    const bodyErr = r.json && r.json.error;
+    if ((r.status === 400 && bodyErr === 'no_subscription') || r.status === 503) {
+      record(cat, 'N-8: premium=true alone does not unlock portal', 'pass', `status=${r.status}`);
+    } else {
+      record(cat, 'N-8: premium=true alone does not unlock portal', 'fail',
+        `unexpected status=${r.status} error=${bodyErr || 'none'}`);
+    }
+  } catch (e) { record(cat, 'N-8: premium without customer', 'fail', String(e).slice(0, 160)); }
+
+  // N-9: flip premium back OFF, verify profile reflects it. Important so
+  // [STRESS] accounts don't leak premium into later runs.
+  try {
+    const flip = await http('GET', '/auth/dev-set-premium?on=0', { token });
+    if (flip.status !== 200 || !flip.json || flip.json.premium !== false) {
+      record(cat, 'N-9: dev-set-premium off', 'fail',
+        `flip status=${flip.status} payload=${JSON.stringify(flip.json).slice(0, 120)}`);
+    } else {
+      const prof = await http('GET', '/api/user/profile', { token });
+      const p = prof.json || {};
+      if (prof.status === 200 && p.premium === false) {
+        record(cat, 'N-9: profile reflects premium=false after revert', 'pass', 'cleanup ok');
+      } else {
+        record(cat, 'N-9: profile reflects premium=false after revert', 'fail',
+          `profile status=${prof.status} premium=${p.premium}`);
+      }
+    }
+  } catch (e) { record(cat, 'N-9: premium flip off', 'fail', String(e).slice(0, 160)); }
+}
+
 // ── main runner ─────────────────────────────────────────────────────────────
 async function main() {
   console.log(`\n===== STRESS HARNESS starting @ ${BASE} =====\n`);
@@ -1384,6 +1526,7 @@ async function main() {
     await scenarioInvoice();
     await scenarioExpenses();
     await scenarioAI();
+    await scenarioPremium();
 
     // breadth
     await phase5Breadth();

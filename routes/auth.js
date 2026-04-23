@@ -560,6 +560,38 @@ router.get('/dev-login', async (req, res) => {
   }
 });
 
+// ---- DEV PREMIUM TOGGLE (harness support) ----
+// Flips users.premium without going through Stripe. Gated by the same
+// DISABLE_DEV_LOGIN guard so production deployments turn this off along with
+// dev-login. The harness needs this because it can't complete a real Stripe
+// checkout (no test cards over HTTP-only), but it still wants to verify that
+// premium-gated code paths respond correctly when the flag is toggled.
+router.get('/dev-set-premium', async (req, res) => {
+  if (process.env.DISABLE_DEV_LOGIN === 'true') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  try {
+    const token = req.cookies.sessionToken;
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+    const sess = await db.query(
+      'SELECT user_id FROM sessions WHERE token = $1 AND expires_at > NOW() LIMIT 1',
+      [token]
+    );
+    if (!sess.rows[0]) return res.status(401).json({ error: 'Session invalid' });
+    const userId = sess.rows[0].user_id;
+    const on = String(req.query.on || '1') === '1';
+    const until = on ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : null;
+    await db.query(
+      'UPDATE users SET premium = $1, premium_until = $2 WHERE id = $3',
+      [on, until, userId]
+    );
+    return res.json({ ok: true, premium: on, premium_until: until });
+  } catch (error) {
+    console.error('dev-set-premium error:', error);
+    return res.status(500).json({ error: 'failed' });
+  }
+});
+
 // ---- SESSION ----
 
 router.get('/me', async (req, res) => {
