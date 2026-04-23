@@ -201,7 +201,83 @@
     if (list.length === 0) {
       return filterBar + emptyBrowse();
     }
-    return filterBar + list.map(cardBrowse).join('');
+    // 2026-04-23: bucket into date sections with sticky headers so the feed
+    // reads as a timeline rather than a flat list. Buckets are computed off
+    // the server's ORDER BY gig_date ASC so within each group the soonest
+    // gig sits first. Non-soonest sort orders (fee_high, newest, nearest)
+    // still bucket the list but the visual ordering inside each bucket may
+    // be less intuitive; acceptable because the user explicitly picked a
+    // different sort in that case.
+    const buckets = groupByDateBucket(list);
+    const sections = buckets
+      .filter(b => b.rows.length > 0)
+      .map(b => {
+        const header = `<div style="position:sticky;top:0;z-index:2;background:var(--bg);padding:10px 4px 6px;margin-top:6px;display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid var(--border);">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-2);">${esc(b.label)}</div>
+          <div style="font-size:11px;color:var(--text-3);">${b.rows.length} gig${b.rows.length===1?'':'s'}</div>
+        </div>`;
+        return header + b.rows.map(cardBrowse).join('');
+      })
+      .join('');
+    return filterBar + sections;
+  }
+
+  // Group marketplace rows into labelled date buckets. Pure function; input
+  // is a list already sorted by gig_date ASC, output is a list of
+  // { label, rows } preserving that order. Bucket thresholds are computed
+  // once per call against the user's local "today".
+  function groupByDateBucket(rows) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const addDays = (d, n) => {
+      const out = new Date(d);
+      out.setDate(out.getDate() + n);
+      return out;
+    };
+    const todayEnd = addDays(today, 1);
+    const weekendStart = todayEnd; // anything past today up to end of week
+    const nextMonday = addDays(today, 7 - today.getDay() + 1); // start of next week (Mon)
+    const twoWeeksOut = addDays(today, 14);
+    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const buckets = [
+      { label: 'Today',             rows: [], lt: todayEnd },
+      { label: 'This week',         rows: [], lt: nextMonday },
+      { label: 'Next week',         rows: [], lt: twoWeeksOut },
+      { label: 'Later this month',  rows: [], lt: endOfMonth },
+      { label: 'Further out',       rows: [], lt: null },
+    ];
+    for (const r of rows) {
+      const d = r.gig_date ? new Date(r.gig_date) : null;
+      if (!d || isNaN(d)) {
+        buckets[buckets.length - 1].rows.push(r);
+        continue;
+      }
+      let placed = false;
+      for (let i = 0; i < buckets.length - 1; i++) {
+        if (d < buckets[i].lt) {
+          buckets[i].rows.push(r);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) buckets[buckets.length - 1].rows.push(r);
+    }
+    return buckets;
+  }
+
+  // Instrument-to-colour map for the left stripe + matching pill. Covers the
+  // instruments that show up in ~99% of posts; everything else falls back to
+  // a neutral gray so the card still renders cleanly.
+  function instrColour(instr) {
+    const s = String(instr || '').toLowerCase();
+    if (s.includes('guitar')) return { stripe: '#EF9F27', pillBg: '#FAEEDA', pillText: '#633806' };
+    if (s.includes('bass'))   return { stripe: '#1D9E75', pillBg: '#E1F5EE', pillText: '#085041' };
+    if (s.includes('drum'))   return { stripe: '#E24B4A', pillBg: '#FCEBEB', pillText: '#791F1F' };
+    if (s.includes('key') || s.includes('piano')) return { stripe: '#534AB7', pillBg: '#EEEDFE', pillText: '#3C3489' };
+    if (s.includes('vocal') || s.includes('sing')) return { stripe: '#D4537E', pillBg: '#FBEAF0', pillText: '#72243E' };
+    if (s.includes('horn') || s.includes('sax') || s.includes('trumpet') || s.includes('brass')) return { stripe: '#BA7517', pillBg: '#FAEEDA', pillText: '#633806' };
+    if (s.includes('strings') || s.includes('violin') || s.includes('cello')) return { stripe: '#378ADD', pillBg: '#E6F1FB', pillText: '#0C447C' };
+    return { stripe: '#888780', pillBg: 'rgba(136,135,128,0.15)', pillText: 'var(--text-2)' };
   }
 
   function emptyBrowse() {
@@ -261,36 +337,62 @@
   }
 
   function cardBrowse(gig) {
+    // Detect own posts — server now returns these inline in Browse. Own
+    // posts get a distinct blue outline + "YOUR POST" chip so the user
+    // can see how their listing reads to everyone else while still
+    // spotting it instantly.
+    const callerId = (typeof window !== 'undefined' && window._currentUser && window._currentUser.id) || null;
+    const isOwnPost = callerId && gig.poster_user_id && String(gig.poster_user_id) === String(callerId);
+
+    // Pick the stripe colour off the first listed instrument. Multi-
+    // instrument posts still show every pill below; the stripe just needs
+    // a single anchor for the eye.
+    const firstInstr = Array.isArray(gig.instruments) && gig.instruments.length > 0 ? gig.instruments[0] : '';
+    const colour = instrColour(firstInstr);
+
     const feeLine = gig.is_free
       ? `<span style="display:inline-block;padding:2px 8px;background:var(--card);border:1px solid var(--accent);color:var(--accent);border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">${esc(freeReasonLabel(gig.free_reason))}</span>`
       : `<span style="font-size:16px;font-weight:800;color:var(--accent);">${esc(fmtMoney(gig.fee_pence))}</span>`;
 
-    const instrLine = Array.isArray(gig.instruments) && gig.instruments.length
-      ? `<div style="font-size:11px;color:var(--text-2);margin-top:4px;">${gig.instruments.map(i=>esc(i)).join(' · ')}</div>` : '';
+    const instrPills = Array.isArray(gig.instruments) && gig.instruments.length
+      ? gig.instruments.map(i => {
+          const c = instrColour(i);
+          return `<span style="font-size:10px;background:${c.pillBg};color:${c.pillText};padding:2px 8px;border-radius:10px;font-weight:600;">${esc(i)}</span>`;
+        }).join('')
+      : '';
 
     const whenLine = `<span style="color:var(--text);font-weight:600;">${esc(fmtDate(gig.gig_date))}</span>${gig.start_time ? ' · ' + esc(fmtTime(gig.start_time)) : ''}`;
-    const whereLine = gig.venue_name ? `<div style="font-size:12px;color:var(--text-2);margin-top:2px;">${esc(gig.venue_name)}${gig.venue_postcode?' · '+esc(gig.venue_postcode):''}${gig.distance_miles!=null?' · '+esc(fmtDistance(gig.distance_miles)):''}</div>` : '';
+    const whereLine = gig.venue_name ? `<div style="font-size:12px;color:var(--text-2);margin-top:2px;">${esc(gig.venue_name)}${gig.venue_postcode?' · '+esc(gig.venue_postcode):''}${!isOwnPost && gig.distance_miles!=null?' · '+esc(fmtDistance(gig.distance_miles)):''}</div>` : '';
 
     const modeBadge = `<span style="font-size:10px;color:var(--text-2);padding:2px 6px;border:1px solid var(--border);border-radius:4px;">${esc(gig.mode === 'fcfs' ? 'FCFS' : 'Pick')}</span>`;
     const applicantBadge = gig.mode === 'pick' && gig.applicant_count > 0
       ? `<span style="font-size:10px;color:var(--accent);padding:2px 6px;border:1px solid var(--accent);border-radius:4px;">${gig.applicant_count} applicant${gig.applicant_count===1?'':'s'}</span>` : '';
-    const outsideBadge = gig.outside_radius
+    const outsideBadge = !isOwnPost && gig.outside_radius
       ? `<span style="font-size:10px;color:var(--text-2);padding:2px 6px;border:1px dashed var(--text-2);border-radius:4px;">Beyond radius</span>` : '';
 
-    return `<div onclick="_mktOpenDetail(${gig.id})" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;cursor:pointer;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:14px;font-weight:700;color:var(--text);">${esc(gig.title)}</div>
-          ${instrLine}
-          <div style="margin-top:6px;font-size:12px;">${whenLine}</div>
-          ${whereLine}
+    const ownChip = isOwnPost
+      ? `<div style="margin-bottom:6px;"><span style="font-size:9px;background:rgba(86,156,214,0.12);color:#378ADD;padding:2px 8px;border-radius:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Your post</span></div>`
+      : '';
+
+    const outerBorder = isOwnPost ? '2px solid #378ADD' : '1px solid var(--border)';
+
+    return `<div onclick="_mktOpenDetail(${gig.id})" style="background:var(--card);border:${outerBorder};border-radius:12px;margin-bottom:10px;cursor:pointer;overflow:hidden;display:flex;">
+      <div style="width:4px;background:${colour.stripe};flex-shrink:0;"></div>
+      <div style="flex:1;min-width:0;padding:12px;">
+        ${ownChip}
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:700;color:var(--text);">${esc(gig.title)}</div>
+            <div style="margin-top:6px;font-size:12px;">${whenLine}</div>
+            ${whereLine}
+          </div>
+          <div style="text-align:right;flex-shrink:0;">${feeLine}</div>
         </div>
-        <div style="text-align:right;flex-shrink:0;">${feeLine}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);flex-wrap:wrap;">
-        ${modeBadge}${applicantBadge}${outsideBadge}
-        <span style="flex:1;"></span>
-        <span style="font-size:10px;color:var(--text-3);">${esc(fmtRelative(gig.created_at))}</span>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);flex-wrap:wrap;">
+          ${instrPills}${modeBadge}${applicantBadge}${outsideBadge}
+          <span style="flex:1;"></span>
+          <span style="font-size:10px;color:var(--text-3);">${esc(fmtRelative(gig.created_at))}</span>
+        </div>
       </div>
     </div>`;
   }

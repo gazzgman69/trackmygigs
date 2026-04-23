@@ -4567,7 +4567,11 @@ router.get('/marketplace', async (req, res) => {
       : (u.travel_radius_miles || 50);
     const showOutside = String(show_outside_radius || '').toLowerCase() === 'true';
 
-    const clauses = [`mg.status = 'open'`, `mg.poster_user_id <> $1`];
+    // Browse now includes the caller's own open posts (2026-04-23). Seeing
+    // your own listing alongside everyone else's confirms it went live and
+    // lets you eyeball how it reads to others. The client renders own posts
+    // with a distinct "YOUR POST" chip.
+    const clauses = [`mg.status = 'open'`];
     const params = [userId];
     let p = 2;
 
@@ -4612,19 +4616,23 @@ router.get('/marketplace', async (req, res) => {
     // Distance is computed post-query because the haversine would need a
     // PostGIS extension to run in SQL. For the typical case (a few hundred
     // open posts at a time) the in-JS pass is fine.
+    // Default sort is now 'soonest' (gig_date ASC). The Browse list reads as
+    // a timeline: the next thing you could apply to sits at the top. The
+    // client groups the rows into date buckets with sticky headers on top of
+    // this ordering.
     const sortKey = MARKETPLACE_SORTS.has(String(sort || '').toLowerCase())
       ? String(sort).toLowerCase()
-      : 'nearest';
+      : 'soonest';
 
     // SQL ORDER BY covers what we can do without distance. Distance-based
     // sorts ("nearest") are applied in JS after attachDistance.
     let orderSql = '';
     switch (sortKey) {
       case 'newest':   orderSql = 'ORDER BY mg.created_at DESC'; break;
-      case 'fee_high': orderSql = 'ORDER BY mg.fee_pence DESC, mg.created_at DESC'; break;
-      case 'fee_low':  orderSql = 'ORDER BY mg.fee_pence ASC, mg.created_at DESC'; break;
+      case 'fee_high': orderSql = 'ORDER BY mg.fee_pence DESC, mg.gig_date ASC'; break;
+      case 'fee_low':  orderSql = 'ORDER BY mg.fee_pence ASC, mg.gig_date ASC'; break;
       case 'soonest':  orderSql = 'ORDER BY mg.gig_date ASC, mg.start_time ASC NULLS LAST'; break;
-      default:         orderSql = 'ORDER BY mg.created_at DESC';
+      default:         orderSql = 'ORDER BY mg.gig_date ASC, mg.start_time ASC NULLS LAST';
     }
 
     const sql = `${MARKETPLACE_SELECT}
