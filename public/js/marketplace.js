@@ -167,7 +167,7 @@
       <div class="mkt-tabs" style="display:flex;gap:0;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2;background:var(--bg);">
         ${tabBtn('paid', 'Paid')}${tabBtn('free', 'Free')}
       </div>
-      <div class="mkt-view-rail" style="display:flex;gap:0;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg);">
+      <div class="mkt-view-rail" style="display:flex;justify-content:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg);">
         ${viewPill('browse', 'Browse')}${viewPill('posts', 'My posts')}${viewPill('applications', 'My applications')}
       </div>`;
 
@@ -185,7 +185,7 @@
   }
   function viewPill(id, label) {
     const active = state.view === id;
-    return `<button onclick="_mktSetView('${id}')" style="padding:6px 12px;margin-right:6px;background:${active?'var(--accent)':'var(--card)'};color:${active?'#000':'var(--text)'};border:1px solid ${active?'var(--accent)':'var(--border)'};border-radius:14px;font-size:12px;font-weight:600;cursor:pointer;">${esc(label)}</button>`;
+    return `<button onclick="_mktSetView('${id}')" style="padding:6px 14px;background:${active?'var(--accent)':'var(--card)'};color:${active?'#000':'var(--text)'};border:1px solid ${active?'var(--accent)':'var(--border)'};border-radius:14px;font-size:12px;font-weight:600;cursor:pointer;">${esc(label)}</button>`;
   }
 
   // ---------- BROWSE ------------------------------------------------------
