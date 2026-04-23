@@ -31,6 +31,24 @@ indexHtml = indexHtml
   .replace(/(href="\/css\/[^"]+\.css)(\?[^"]*)?"/g, `$1?v=${BUILD_ID}"`)
   .replace(/(src="\/js\/[^"]+\.js)(\?[^"]*)?"/g, `$1?v=${BUILD_ID}"`);
 
+// Read the landing page once at startup. Served at / for unauthenticated
+// visitors; authenticated visitors fall through to /app which serves the SPA.
+const LANDING_HTML_PATH = path.join(__dirname, 'public', 'landing.html');
+let landingHtml = '';
+try {
+  landingHtml = fs.readFileSync(LANDING_HTML_PATH, 'utf8');
+} catch (err) {
+  console.warn('[server] landing.html not found yet:', err.message);
+}
+
+// Stripe webhook MUST be registered before express.json() so the raw
+// payload survives for signature verification. Mount just the webhook
+// path early; the rest of the Stripe routes go after body-parsing.
+const stripeWebhook = require('./routes/stripe');
+if (stripeWebhook.webhookHandler && stripeWebhook.rawJsonParser) {
+  app.post('/api/stripe/webhook', stripeWebhook.rawJsonParser, stripeWebhook.webhookHandler);
+}
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -231,6 +249,13 @@ async function handleCleanupSecTest(req, res) {
 }
 app.get('/api/admin/cleanup-sec-test', handleCleanupSecTest);
 app.post('/api/admin/cleanup-sec-test', handleCleanupSecTest);
+
+// Stripe routes. The webhook inside stripeRoutes uses express.raw() itself
+// so mounting here (after express.json) is fine: Express matches the first
+// body-parser that accepts the content-type and the raw parser short-circuits
+// the JSON parser for the webhook path specifically.
+const stripeRoutes = require('./routes/stripe');
+app.use('/api/stripe', stripeRoutes);
 
 app.use('/api/ai', aiRoutes);
 app.use('/api', apiRoutes);
@@ -574,6 +599,19 @@ app.get('*', (req, res) => {
     res.status(404).send('Not found');
     return;
   }
+  // Landing page at / for anonymous visitors. Authenticated users (those
+  // with a sessionToken cookie) fall through to the SPA so bookmarked-root
+  // returns don't bump them back out to marketing. The session cookie is
+  // a UUID; we don't validate it here (the SPA's /auth/me check handles
+  // actual auth), just detect presence for the routing flip.
+  const isRoot = req.path === '/';
+  const hasSession = !!(req.cookies && req.cookies.sessionToken);
+  if (isRoot && !hasSession && landingHtml) {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, private');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(landingHtml);
+    return;
+  }
   // Serve the pre-built index.html with injected BUILD_ID — never cached
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, private');
   res.setHeader('Pragma', 'no-cache');
@@ -704,6 +742,16 @@ async function runMigrations() {
     // S7-08: per-offer snooze timestamp so snooze survives device switches / re-auth.
     // Offers whose snoozed_until is in the future are hidden from the inbox list.
     await db.query(`ALTER TABLE offers ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMP`);
+    // Premium subscription columns (2026-04-23). premium is the live flag
+    // used to gate premium features; premium_until mirrors the Stripe
+    // current_period_end so we can show the user when their billing cycle
+    // rolls over. stripe_customer_id persists across subscription cycles
+    // (one customer, many subscriptions over time). stripe_subscription_id
+    // is the current active subscription, cleared when cancelled.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS premium BOOLEAN NOT NULL DEFAULT FALSE`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`);
     // Nudge cap (2026-04-23): sender gets 1 initial send + up to 2 nudges per
     // active offer. The third send of the same (gig, sender, recipient) pair
     // while the offer is still pending is rejected. nudge_count tracks how

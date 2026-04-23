@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrackMyGigs — Your gigs, your money, sorted.</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;
+  --accent:#F0A500;--accent-dim:rgba(240,165,0,.15);
+  --text:#E6EDF3;--text-2:#8B949E;--text-3:#484F58;
+  --success:#3FB950;--danger:#F85149;--info:#58A6FF;
+  --r:14px;--rs:8px;
+  --max-w:1100px;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;}
+a{color:var(--accent);text-decoration:none;}
+
+/* ===== NAV ===== */
+nav{position:sticky;top:0;z-index:100;background:rgba(13,17,23,.85);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);}
+.nav-inner{max-width:var(--max-w);margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;}
+.logo{font-size:22px;font-weight:800;color:var(--text);letter-spacing:-.5px;}
+.logo span{color:var(--accent);}
+.nav-links{display:flex;gap:28px;align-items:center;}
+.nav-links a{color:var(--text-2);font-size:14px;font-weight:500;transition:color .2s;}
+.nav-links a:hover{color:var(--text);}
+.btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 24px;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;border:none;transition:all .2s;}
+.btn-primary{background:var(--accent);color:#000;}
+.btn-primary:hover{background:#FFB820;transform:translateY(-1px);box-shadow:0 8px 24px rgba(240,165,0,.3);}
+.btn-outline{background:transparent;color:var(--accent);border:1px solid var(--accent);}
+.btn-outline:hover{background:var(--accent-dim);}
+.btn-large{padding:16px 36px;font-size:16px;border-radius:16px;}
+.btn-ghost{background:rgba(255,255,255,.06);color:var(--text);border:1px solid var(--border);}
+.btn-ghost:hover{background:rgba(255,255,255,.1);}
+
+/* ===== HERO ===== */
+.hero{text-align:center;padding:100px 24px 60px;max-width:var(--max-w);margin:0 auto;}
+.hero-badge{display:inline-flex;align-items:center;gap:8px;background:var(--accent-dim);border:1px solid rgba(240,165,0,.2);border-radius:100px;padding:6px 16px;font-size:13px;color:var(--accent);font-weight:600;margin-bottom:32px;}
+.hero h1{font-size:clamp(40px,6vw,72px);font-weight:800;line-height:1.05;letter-spacing:-2px;margin-bottom:24px;background:linear-gradient(135deg,var(--text) 0%,var(--text-2) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.hero h1 em{font-style:normal;-webkit-text-fill-color:var(--accent);background:none;}
+.hero-sub{font-size:18px;color:var(--text-2);max-width:600px;margin:0 auto 40px;line-height:1.7;}
+.hero-ctas{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:32px;}
+.trust-row{display:flex;gap:20px;justify-content:center;flex-wrap:wrap;margin-bottom:24px;}
+.trust-chip{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2);}
+.trust-chip svg{width:16px;height:16px;color:var(--success);}
+.social-proof{display:flex;align-items:center;gap:10px;justify-content:center;font-size:14px;color:var(--text-2);}
+.avatar-stack{display:flex;}
+.avatar-stack span{width:28px;height:28px;border-radius:50%;border:2px solid var(--bg);margin-left:-8px;display:flex;align-items:center;justify-content:center;font-size:12px;background:var(--card);}
+.avatar-stack span:first-child{margin-left:0;}
+
+/* ===== PHONE SHOWCASE ===== */
+.phone-showcase{text-align:center;padding:40px 24px 80px;position:relative;overflow:hidden;}
+.phone-showcase::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:600px;height:600px;background:radial-gradient(circle,rgba(240,165,0,.12) 0%,transparent 70%);pointer-events:none;}
+.phone-frame{width:280px;height:580px;background:var(--bg);border-radius:40px;box-shadow:0 40px 80px rgba(0,0,0,.5),0 0 0 1px var(--border);margin:0 auto;overflow:hidden;position:relative;}
+.phone-notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:100px;height:30px;background:#000;border-radius:0 0 16px 16px;z-index:2;}
+.phone-screen{padding:40px 16px 16px;height:100%;display:flex;flex-direction:column;gap:8px;overflow:hidden;}
+.ph-bar{height:36px;background:var(--surface);border-radius:var(--rs);display:flex;align-items:center;padding:0 10px;gap:6px;}
+.ph-bar .dot{width:6px;height:6px;border-radius:3px;}
+.ph-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px;}
+.ph-line{height:8px;background:var(--border);border-radius:4px;margin:4px 0;}
+.ph-line.short{width:60%;}
+.ph-line.accent{background:var(--accent-dim);border:1px solid rgba(240,165,0,.2);}
+.floating-labels{position:absolute;width:100%;height:100%;top:0;left:0;pointer-events:none;}
+.fl{position:absolute;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px 12px;font-size:11px;font-weight:600;white-space:nowrap;animation:float 6s ease-in-out infinite;}
+.fl:nth-child(1){top:15%;left:-40px;animation-delay:0s;}
+.fl:nth-child(2){top:30%;right:-50px;animation-delay:1s;}
+.fl:nth-child(3){top:50%;left:-60px;animation-delay:2s;}
+.fl:nth-child(4){top:65%;right:-30px;animation-delay:3s;}
+.fl:nth-child(5){top:80%;left:-20px;animation-delay:4s;}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+
+/* ===== SECTIONS ===== */
+section{padding:80px 24px;}
+.section-inner{max-width:var(--max-w);margin:0 auto;}
+.section-label{font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--accent);margin-bottom:12px;}
+.section-title{font-size:clamp(28px,4vw,44px);font-weight:800;line-height:1.15;letter-spacing:-1px;margin-bottom:16px;}
+.section-sub{font-size:16px;color:var(--text-2);max-width:560px;line-height:1.7;}
+
+/* ===== PROBLEM SECTION ===== */
+.problem{background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);}
+.problem-grid{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;margin-top:48px;}
+.chaos-list{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:32px;}
+.chaos-chip{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.2);color:var(--danger);padding:8px 16px;border-radius:100px;font-size:13px;font-weight:600;}
+.pain-list{display:flex;flex-direction:column;gap:16px;}
+.pain-item{display:flex;gap:12px;align-items:flex-start;}
+.pain-icon{width:32px;height:32px;border-radius:10px;background:rgba(248,81,73,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;}
+.pain-text{font-size:15px;color:var(--text-2);line-height:1.5;}
+.pain-text strong{color:var(--text);font-weight:600;}
+.cost-callout{background:rgba(248,81,73,.06);border:1px solid rgba(248,81,73,.15);border-radius:var(--r);padding:20px 24px;margin-top:24px;}
+.cost-callout p{font-size:16px;color:var(--danger);font-weight:600;line-height:1.5;}
+
+/* ===== ECOSYSTEM / STORY ===== */
+.ecosystem-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:48px;}
+.eco-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:28px 24px;text-align:center;transition:all .3s;}
+.eco-card:hover{border-color:var(--accent);transform:translateY(-4px);box-shadow:0 16px 40px rgba(0,0,0,.3);}
+.eco-card.highlight{border-color:var(--accent);background:var(--accent-dim);}
+.eco-icon{font-size:40px;margin-bottom:16px;}
+.eco-card h3{font-size:18px;font-weight:700;margin-bottom:8px;}
+.eco-card p{font-size:13px;color:var(--text-2);line-height:1.6;}
+.eco-card .badge{display:inline-block;background:var(--accent);color:#000;font-size:10px;font-weight:800;padding:3px 8px;border-radius:4px;margin-bottom:12px;letter-spacing:.5px;}
+.connector{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:32px;font-size:14px;color:var(--text-2);}
+.connector .arrow{color:var(--accent);font-size:20px;}
+
+/* ===== STATS ===== */
+.stats{background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:32px;text-align:center;}
+.stat h3{font-size:clamp(28px,4vw,44px);font-weight:800;color:var(--accent);line-height:1;}
+.stat p{font-size:13px;color:var(--text-2);margin-top:6px;}
+
+/* ===== TESTIMONIALS ===== */
+.testimonials-scroll{display:flex;gap:20px;overflow-x:auto;padding:32px 0 16px;scroll-snap-type:x mandatory;-ms-overflow-style:none;scrollbar-width:none;}
+.testimonials-scroll::-webkit-scrollbar{display:none;}
+.testimonial{min-width:340px;max-width:340px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:24px;scroll-snap-align:start;flex-shrink:0;}
+.testimonial .stars{color:var(--accent);font-size:14px;margin-bottom:12px;letter-spacing:2px;}
+.testimonial blockquote{font-size:14px;color:var(--text-2);line-height:1.7;margin-bottom:16px;font-style:italic;}
+.testimonial .author{display:flex;align-items:center;gap:10px;}
+.testimonial .avatar{width:36px;height:36px;border-radius:50%;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:var(--accent);}
+.testimonial .name{font-size:13px;font-weight:700;color:var(--text);}
+.testimonial .role{font-size:11px;color:var(--text-3);}
+
+/* ===== STEPS ===== */
+.steps-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:48px;}
+.step{position:relative;}
+.step-num{width:40px;height:40px;border-radius:50%;background:var(--accent);color:#000;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;margin-bottom:16px;}
+.step h3{font-size:18px;font-weight:700;margin-bottom:8px;}
+.step p{font-size:14px;color:var(--text-2);line-height:1.6;}
+
+/* ===== FEATURES (What if) ===== */
+.feature-block{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;padding:60px 0;border-bottom:1px solid var(--border);}
+.feature-block:last-child{border-bottom:none;}
+.feature-block.reverse{direction:rtl;}
+.feature-block.reverse > *{direction:ltr;}
+.feature-visual{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:32px;min-height:300px;display:flex;align-items:center;justify-content:center;}
+.feature-visual .mini-ui{width:100%;max-width:300px;}
+.mini-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);padding:12px;margin-bottom:8px;}
+.mini-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;}
+.mini-row .label{color:var(--text-2);}
+.mini-row .val{font-weight:700;color:var(--text);}
+.mini-row .val.green{color:var(--success);}
+.mini-row .val.amber{color:var(--accent);}
+.mini-row .val.red{color:var(--danger);}
+.mini-bar{height:6px;border-radius:3px;background:var(--border);margin-top:8px;}
+.mini-bar .fill{height:100%;border-radius:3px;}
+.feature-text h2{font-size:clamp(24px,3vw,36px);font-weight:800;line-height:1.2;letter-spacing:-.5px;margin-bottom:16px;}
+.feature-text p{font-size:15px;color:var(--text-2);line-height:1.7;margin-bottom:20px;}
+.feature-bullets{list-style:none;display:flex;flex-direction:column;gap:8px;margin-bottom:24px;}
+.feature-bullets li{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-2);}
+.feature-bullets li::before{content:'✓';color:var(--success);font-weight:700;font-size:13px;}
+
+/* ===== MTD ===== */
+.mtd{background:linear-gradient(135deg,rgba(248,81,73,.06) 0%,rgba(240,165,0,.06) 100%);border-top:1px solid rgba(248,81,73,.15);border-bottom:1px solid rgba(240,165,0,.15);}
+.mtd-timeline{display:flex;gap:24px;margin-top:32px;margin-bottom:32px;}
+.mtd-year{flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:20px;text-align:center;}
+.mtd-year.active{border-color:var(--danger);background:rgba(248,81,73,.06);}
+.mtd-year .year{font-size:24px;font-weight:800;margin-bottom:4px;}
+.mtd-year .threshold{font-size:14px;color:var(--text-2);}
+.mtd-year.active .year{color:var(--danger);}
+.mtd-year.active .threshold{color:var(--danger);}
+.mtd-year .status{font-size:11px;font-weight:700;margin-top:8px;padding:3px 8px;border-radius:4px;display:inline-block;}
+.mtd-year.active .status{background:rgba(248,81,73,.15);color:var(--danger);}
+
+/* ===== PRICING ===== */
+.pricing-toggle{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:40px;}
+.pricing-toggle span{font-size:14px;color:var(--text-2);}
+.pricing-toggle .active{color:var(--text);font-weight:600;}
+.toggle-track{width:44px;height:24px;border-radius:12px;background:var(--accent);cursor:pointer;position:relative;}
+.toggle-knob{width:20px;height:20px;border-radius:10px;background:#000;position:absolute;top:2px;left:22px;transition:left .2s;}
+.pricing-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;max-width:800px;margin:0 auto;}
+.price-card{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:32px;position:relative;}
+.price-card.featured{border-color:var(--accent);box-shadow:0 0 60px rgba(240,165,0,.1);}
+.price-card.featured::before{content:'BEST VALUE';position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--accent);color:#000;font-size:10px;font-weight:800;padding:4px 12px;border-radius:6px;letter-spacing:1px;}
+.price-name{font-size:18px;font-weight:700;margin-bottom:4px;}
+.price-desc{font-size:13px;color:var(--text-2);margin-bottom:20px;line-height:1.5;}
+.price-amount{font-size:48px;font-weight:800;line-height:1;}
+.price-amount .currency{font-size:24px;vertical-align:top;line-height:1.8;}
+.price-amount .period{font-size:14px;font-weight:400;color:var(--text-2);}
+.price-features{list-style:none;margin:24px 0;display:flex;flex-direction:column;gap:10px;}
+.price-features li{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2);}
+.price-features li::before{content:'✓';color:var(--success);font-weight:700;}
+.price-features li.pro::before{content:'★';color:var(--accent);}
+
+/* ===== FAQ ===== */
+.faq-list{max-width:700px;margin:40px auto 0;}
+.faq-item{border-bottom:1px solid var(--border);}
+.faq-q{padding:20px 0;font-size:16px;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;color:var(--text);}
+.faq-q:hover{color:var(--accent);}
+.faq-q .icon{font-size:20px;color:var(--text-3);transition:transform .2s;}
+.faq-a{max-height:0;overflow:hidden;transition:max-height .3s ease;font-size:14px;color:var(--text-2);line-height:1.7;}
+.faq-a-inner{padding:0 0 20px;}
+.faq-item.open .faq-a{max-height:300px;}
+.faq-item.open .icon{transform:rotate(45deg);}
+
+/* ===== FINAL CTA ===== */
+.final-cta{text-align:center;background:linear-gradient(180deg,var(--bg) 0%,var(--surface) 100%);padding:100px 24px;}
+.final-cta h2{font-size:clamp(28px,4vw,44px);font-weight:800;line-height:1.15;letter-spacing:-1px;margin-bottom:16px;}
+.final-cta p{font-size:16px;color:var(--text-2);margin-bottom:32px;}
+
+/* ===== FOOTER ===== */
+footer{background:var(--surface);border-top:1px solid var(--border);padding:48px 24px 32px;}
+.footer-inner{max-width:var(--max-w);margin:0 auto;}
+.footer-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:40px;margin-bottom:40px;}
+.footer-brand p{font-size:13px;color:var(--text-3);line-height:1.6;margin-top:12px;}
+.footer-col h4{font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-2);margin-bottom:12px;}
+.footer-col a{display:block;font-size:13px;color:var(--text-3);margin-bottom:8px;transition:color .2s;}
+.footer-col a:hover{color:var(--accent);}
+.footer-bottom{border-top:1px solid var(--border);padding-top:24px;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-3);}
+
+/* ===== RESPONSIVE ===== */
+@media(max-width:768px){
+  .nav-links a:not(.btn){display:none;}
+  .hero{padding:60px 20px 40px;}
+  .problem-grid,.feature-block,.feature-block.reverse{grid-template-columns:1fr;gap:32px;}
+  .feature-block.reverse{direction:ltr;}
+  .ecosystem-grid{grid-template-columns:1fr;}
+  .stats-grid{grid-template-columns:1fr 1fr;gap:20px;}
+  .steps-grid{grid-template-columns:1fr;}
+  .pricing-grid{grid-template-columns:1fr;}
+  .footer-grid{grid-template-columns:1fr 1fr;gap:24px;}
+  .mtd-timeline{flex-direction:column;}
+}
+</style>
+</head>
+<body>
+
+<!-- ===== NAVIGATION ===== -->
+<nav>
+  <div class="nav-inner">
+    <div class="logo">Gig<span>Flow</span></div>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#mtd">MTD</a>
+      <a href="#faq">FAQ</a>
+      <a href="#" class="btn btn-primary" style="font-size:13px;padding:8px 18px;">Log in</a>
+      <a href="/app" class="btn btn-primary" style="font-size:13px;padding:8px 18px;">Start free →</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ===== HERO ===== -->
+<div class="hero">
+  <div class="hero-badge">🎵 Built for UK gigging musicians</div>
+  <h1>Your gigs. Your money.<br><em>Sorted.</em></h1>
+  <p class="hero-sub">Track gigs, send invoices, claim every mile, and finally know what you're actually earning — all from your phone, between soundcheck and set time.</p>
+  <div class="hero-ctas">
+    <a href="/app" class="btn btn-primary btn-large">Start free — no card needed</a>
+    <a href="#features" class="btn btn-ghost btn-large">See how it works</a>
+  </div>
+  <div class="trust-row">
+    <div class="trust-chip"><svg viewBox="0 0 16 16" fill="none"><path d="M13.3 4.3L6.3 11.3 2.7 7.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> HMRC-ready</div>
+    <div class="trust-chip"><svg viewBox="0 0 16 16" fill="none"><path d="M13.3 4.3L6.3 11.3 2.7 7.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Encrypted &amp; secure</div>
+    <div class="trust-chip"><svg viewBox="0 0 16 16" fill="none"><path d="M13.3 4.3L6.3 11.3 2.7 7.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Works on your phone</div>
+    <div class="trust-chip"><svg viewBox="0 0 16 16" fill="none"><path d="M13.3 4.3L6.3 11.3 2.7 7.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Free to start</div>
+  </div>
+</div>
+
+<!-- ===== PHONE SHOWCASE ===== -->
+<div class="phone-showcase">
+  <div style="position:relative;display:inline-block;">
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="ph-bar"><div class="dot" style="background:var(--accent);"></div><span style="font-size:11px;font-weight:700;color:var(--text);">Dashboard</span></div>
+        <div class="ph-card">
+          <div class="mini-row"><span class="label">This month</span><span class="val" style="color:var(--accent);">£2,480</span></div>
+          <div class="mini-bar"><div class="fill" style="width:72%;background:var(--accent);"></div></div>
+        </div>
+        <div class="ph-card">
+          <div class="mini-row"><span class="label">Upcoming gigs</span><span class="val">4</span></div>
+          <div style="margin-top:6px;">
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);padding:4px 0;border-bottom:1px solid var(--border);"><span>Sat 19 Apr — The Grand Hotel</span><span style="color:var(--success);">£350</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);padding:4px 0;border-bottom:1px solid var(--border);"><span>Fri 25 Apr — Hilton Birmingham</span><span style="color:var(--success);">£280</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);padding:4px 0;"><span>Sat 3 May — Aston Hall</span><span style="color:var(--accent);">£420</span></div>
+          </div>
+        </div>
+        <div class="ph-card">
+          <div class="mini-row"><span class="label">Mileage this year</span><span class="val green">£412 claimable</span></div>
+        </div>
+        <div class="ph-card">
+          <div class="mini-row"><span class="label">Outstanding invoices</span><span class="val red">2 overdue</span></div>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:4px;">
+          <div style="flex:1;background:var(--accent);border-radius:8px;padding:8px;text-align:center;font-size:10px;font-weight:700;color:#000;">+ Log gig</div>
+          <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center;font-size:10px;color:var(--text-2);">Send invoice</div>
+        </div>
+      </div>
+    </div>
+    <div class="floating-labels">
+      <div class="fl" style="color:var(--success);">✓ Invoice sent</div>
+      <div class="fl" style="color:var(--accent);">🚗 Mileage tracked</div>
+      <div class="fl" style="color:var(--info);">📅 Gig confirmed</div>
+      <div class="fl" style="color:var(--success);">💷 Payment received</div>
+      <div class="fl" style="color:var(--accent);">📊 Tax ready</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== PROBLEM SECTION ===== -->
+<section class="problem" id="problem">
+  <div class="section-inner">
+    <div class="problem-grid">
+      <div>
+        <div class="section-label">Sound familiar?</div>
+        <div class="section-title">Most musicians are losing money to their "system"</div>
+        <div class="chaos-list">
+          <div class="chaos-chip">Messy spreadsheets</div>
+          <div class="chaos-chip">WhatsApp threads</div>
+          <div class="chaos-chip">iPhone Notes</div>
+          <div class="chaos-chip">Memory</div>
+          <div class="chaos-chip">Shoeboxes of receipts</div>
+        </div>
+        <div class="cost-callout">
+          <p>It's not just disorganised — it's costing you real money every single month.</p>
+        </div>
+      </div>
+      <div>
+        <div class="pain-list">
+          <div class="pain-item">
+            <div class="pain-icon">💸</div>
+            <div class="pain-text"><strong>Forgetting to invoice</strong> — gigs slip through the cracks and you never chase the money</div>
+          </div>
+          <div class="pain-item">
+            <div class="pain-icon">🚗</div>
+            <div class="pain-text"><strong>Under-claiming mileage</strong> — guessing your miles means leaving hundreds on the table at tax time</div>
+          </div>
+          <div class="pain-item">
+            <div class="pain-icon">🏦</div>
+            <div class="pain-text"><strong>Not tracking commission properly</strong> — you know the headline fee, not what you actually take home</div>
+          </div>
+          <div class="pain-item">
+            <div class="pain-icon">😰</div>
+            <div class="pain-text"><strong>Guessing at tax time</strong> — a weekend of dread, digging through texts and bank statements</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== THREE-APP ECOSYSTEM ===== -->
+<section id="ecosystem">
+  <div class="section-inner" style="text-align:center;">
+    <div class="section-label">More than a gig tracker</div>
+    <div class="section-title" style="max-width:700px;margin:0 auto 8px;">One platform. Three apps.<br>The entire gig lifecycle, connected.</div>
+    <div class="section-sub" style="max-width:600px;margin:0 auto;">TrackMyGigs is part of a connected ecosystem built for the live music industry. Gigs flow between apps automatically — no double-entry, no miscommunication.</div>
+    <div class="ecosystem-grid">
+      <div class="eco-card">
+        <div class="eco-icon">🎤</div>
+        <h3>Musician Tracker</h3>
+        <p>For band leaders and MDs. Manage your musicians, send gig offers, track who's confirmed, and build your go-to lineups.</p>
+      </div>
+      <div class="eco-card highlight">
+        <div class="badge">YOU ARE HERE</div>
+        <div class="eco-icon">🎵</div>
+        <h3>TrackMyGigs</h3>
+        <p>For musicians. Track your gigs, money, mileage, and tax. Accept offers from band leaders. Invoice with one tap. Know exactly what you earn.</p>
+      </div>
+      <div class="eco-card">
+        <div class="eco-icon">🏢</div>
+        <h3>ClientFlow</h3>
+        <p>For agencies and bookers. Manage clients, dispatch gigs to bands, track payments, and keep your business running smoothly.</p>
+      </div>
+    </div>
+    <div class="connector">
+      Agency books gig in ClientFlow <span class="arrow">→</span> Band leader assigns in Musician Tracker <span class="arrow">→</span> Musician sees it in TrackMyGigs
+    </div>
+  </div>
+</section>
+
+<!-- ===== STATS ===== -->
+<section class="stats">
+  <div class="section-inner">
+    <div class="stats-grid">
+      <div class="stat"><h3>10k+</h3><p>gigs tracked</p></div>
+      <div class="stat"><h3>£500k+</h3><p>income managed</p></div>
+      <div class="stat"><h3>£85k+</h3><p>in HMRC mileage claims</p></div>
+      <div class="stat"><h3>500+</h3><p>musicians on the platform</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== TESTIMONIALS ===== -->
+<section>
+  <div class="section-inner">
+    <div class="section-label">What musicians say</div>
+    <div class="section-title">Trusted by gigging musicians across the UK</div>
+    <div class="testimonials-scroll">
+      <div class="testimonial">
+        <div class="stars">★★★★★</div>
+        <blockquote>"I used to dread January. Now my tax numbers are ready in minutes. Genuinely life-changing for any working musician."</blockquote>
+        <div class="author"><div class="avatar">J</div><div><div class="name">James R.</div><div class="role">Session guitarist, West Midlands</div></div></div>
+      </div>
+      <div class="testimonial">
+        <div class="stars">★★★★★</div>
+        <blockquote>"The mileage tracking alone saves me hundreds a year. I was massively under-claiming before TrackMyGigs showed me the real numbers."</blockquote>
+        <div class="author"><div class="avatar">S</div><div><div class="name">Sarah T.</div><div class="role">Vocalist, East Yorkshire</div></div></div>
+      </div>
+      <div class="testimonial">
+        <div class="stars">★★★★★</div>
+        <blockquote>"I play for 3 different bands with different agencies. TrackMyGigs tracks the commission on each one properly — nothing else did that."</blockquote>
+        <div class="author"><div class="avatar">M</div><div><div class="name">Mike D.</div><div class="role">Drummer & dep musician, Manchester</div></div></div>
+      </div>
+      <div class="testimonial">
+        <div class="stars">★★★★★</div>
+        <blockquote>"Getting offers from my band leader straight in the app and accepting with one tap is a game changer. No more missed WhatsApp messages."</blockquote>
+        <div class="author"><div class="avatar">L</div><div><div class="name">Laura K.</div><div class="role">Keys player, London</div></div></div>
+      </div>
+      <div class="testimonial">
+        <div class="stars">★★★★★</div>
+        <blockquote>"The invoicing is brilliant. One tap after the gig and it's sent. I actually get paid on time now because I stopped putting it off."</blockquote>
+        <div class="author"><div class="avatar">D</div><div><div class="name">Dan W.</div><div class="role">Function band vocalist, Bristol</div></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== GETTING STARTED ===== -->
+<section style="background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+  <div class="section-inner" style="text-align:center;">
+    <div class="section-label">How it works</div>
+    <div class="section-title">Up and running in under 2 minutes</div>
+    <div class="steps-grid">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Log your gig</h3>
+        <p>Add the venue, date, fee, and agency. TrackMyGigs auto-calculates your mileage, commission, and take-home pay. Or accept a gig that's been sent to you from a band leader — it arrives pre-filled.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Track your money</h3>
+        <p>See what's confirmed, paid, and outstanding at a glance. Send invoices with one tap. Chase late payments automatically. No more scrolling through WhatsApp to work out who owes you.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Know your tax</h3>
+        <p>TrackMyGigs generates HMRC-ready tax reports covering income, mileage, and expenses — broken down exactly how your accountant wants it. Tax time takes minutes, not a weekend.</p>
+      </div>
+    </div>
+    <div style="margin-top:40px;"><a href="/app" class="btn btn-primary btn-large">Start free — no card needed</a></div>
+  </div>
+</section>
+
+<!-- ===== FEATURE SECTIONS (What if...) ===== -->
+<section id="features">
+  <div class="section-inner">
+    <div style="text-align:center;margin-bottom:48px;">
+      <div class="section-label">Features</div>
+      <div class="section-title">Everything a gigging musician needs. Nothing you don't.</div>
+    </div>
+
+    <!-- Feature 1: Gig tracking -->
+    <div class="feature-block">
+      <div class="feature-visual">
+        <div class="mini-ui">
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);margin-bottom:8px;">UPCOMING GIGS</div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">Sat 19 Apr</span><span class="val">The Grand Hotel</span></div>
+            <div class="mini-row" style="margin-top:4px;"><span class="label">Fee</span><span class="val green">£350</span></div>
+            <div class="mini-row" style="margin-top:4px;"><span class="label">Status</span><span class="val" style="color:var(--success);font-size:11px;">✓ Confirmed</span></div>
+          </div>
+          <div class="mini-card" style="border-color:var(--accent);">
+            <div class="mini-row"><span class="label">Fri 25 Apr</span><span class="val">Hilton Birmingham</span></div>
+            <div class="mini-row" style="margin-top:4px;"><span class="label">Fee</span><span class="val amber">£280</span></div>
+            <div class="mini-row" style="margin-top:4px;"><span class="label">Status</span><span class="val" style="color:var(--accent);font-size:11px;">⏳ Pencilled</span></div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">Sat 3 May</span><span class="val">Aston Hall</span></div>
+            <div class="mini-row" style="margin-top:4px;"><span class="label">Fee</span><span class="val green">£420</span></div>
+            <div class="mini-row" style="margin-top:4px;"><span class="label">Via</span><span class="val" style="font-size:11px;">Alive Network (15%)</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="feature-text">
+        <h2>What if every gig was tracked in one place?</h2>
+        <p>Add a gig once — venue, fee, agency, notes. Or accept one that's been sent to you from a band leader. TrackMyGigs remembers venues, calculates mileage automatically, and shows your real take-home after commission.</p>
+        <ul class="feature-bullets">
+          <li>Gigs arrive pre-filled from Musician Tracker</li>
+          <li>Google Places venue search with full address</li>
+          <li>Agency commission calculated automatically</li>
+          <li>Calendar view with personal events alongside gigs</li>
+        </ul>
+        <a href="/app" class="btn btn-primary">Start free — no card needed</a>
+      </div>
+    </div>
+
+    <!-- Feature 2: Mileage -->
+    <div class="feature-block reverse">
+      <div class="feature-visual">
+        <div class="mini-ui">
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);margin-bottom:8px;">MILEAGE THIS TAX YEAR</div>
+          <div style="text-align:center;padding:16px 0;">
+            <div style="font-size:36px;font-weight:800;color:var(--accent);">1,840</div>
+            <div style="font-size:12px;color:var(--text-2);">miles tracked</div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">HMRC rate (first 10k)</span><span class="val">45p/mile</span></div>
+          </div>
+          <div class="mini-card" style="border-color:var(--success);">
+            <div class="mini-row"><span class="label">Total claimable</span><span class="val green" style="font-size:16px;">£828.00</span></div>
+          </div>
+          <div style="font-size:10px;color:var(--text-3);text-align:center;margin-top:8px;">Auto-calculated from your home postcode to each venue</div>
+        </div>
+      </div>
+      <div class="feature-text">
+        <h2>What if your mileage was calculated automatically at HMRC rates?</h2>
+        <p>Set your home postcode once. TrackMyGigs calculates the round-trip distance to every venue and applies HMRC's approved rate — 45p per mile for the first 10,000, 25p after that.</p>
+        <ul class="feature-bullets">
+          <li>No manual logging or guessing</li>
+          <li>Round-trip calculated via Google Maps</li>
+          <li>Running total visible on your dashboard</li>
+          <li>Tax-year breakdown ready for your accountant</li>
+        </ul>
+        <a href="/app" class="btn btn-primary">Start free — no card needed</a>
+      </div>
+    </div>
+
+    <!-- Feature 3: Invoicing -->
+    <div class="feature-block">
+      <div class="feature-visual">
+        <div class="mini-ui">
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);margin-bottom:8px;">INVOICE #GF-0047</div>
+          <div class="mini-card" style="border-color:var(--success);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <span style="font-size:14px;font-weight:700;color:var(--text);">£350.00</span>
+              <span style="font-size:10px;font-weight:700;color:var(--success);background:rgba(63,185,80,.15);padding:3px 8px;border-radius:4px;">PAID</span>
+            </div>
+            <div class="mini-row"><span class="label">Client</span><span class="val" style="font-size:11px;">The Grand Hotel</span></div>
+            <div class="mini-row" style="margin-top:2px;"><span class="label">Date</span><span class="val" style="font-size:11px;">19 Apr 2026</span></div>
+          </div>
+          <div class="mini-card" style="border-color:var(--danger);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <span style="font-size:14px;font-weight:700;color:var(--text);">£280.00</span>
+              <span style="font-size:10px;font-weight:700;color:var(--danger);background:rgba(248,81,73,.15);padding:3px 8px;border-radius:4px;">OVERDUE</span>
+            </div>
+            <div class="mini-row"><span class="label">Client</span><span class="val" style="font-size:11px;">Hilton Birmingham</span></div>
+            <div class="mini-row" style="margin-top:2px;"><span class="label">Chase sent</span><span class="val" style="font-size:11px;color:var(--accent);">Chase 1 · Next in 3d</span></div>
+          </div>
+          <div style="background:var(--accent);border-radius:8px;padding:10px;text-align:center;font-size:12px;font-weight:700;color:#000;margin-top:8px;cursor:pointer;">Send invoice with one tap</div>
+        </div>
+      </div>
+      <div class="feature-text">
+        <h2>What if your invoices wrote themselves?</h2>
+        <p>Gig done? Tap once. TrackMyGigs generates a professional invoice with the venue, date, fee, and your bank details pre-filled. Send it by email, download as PDF, or both. Then let TrackMyGigs chase late payments for you.</p>
+        <ul class="feature-bullets">
+          <li>One-tap invoice generation after any gig</li>
+          <li>Automatic payment chasing via your Gmail</li>
+          <li>Track paid, pending, and overdue at a glance</li>
+          <li>Professional PDF invoices with your branding</li>
+        </ul>
+        <a href="/app" class="btn btn-primary">Start free — no card needed</a>
+      </div>
+    </div>
+
+    <!-- Feature 4: Commission -->
+    <div class="feature-block reverse">
+      <div class="feature-visual">
+        <div class="mini-ui">
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);margin-bottom:8px;">FEE BREAKDOWN</div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">Gross fee</span><span class="val">£350.00</span></div>
+            <div class="mini-row" style="margin-top:6px;"><span class="label">Agency: Alive Network (15%)</span><span class="val red">-£52.50</span></div>
+            <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;">
+              <div class="mini-row"><span class="label" style="font-weight:700;color:var(--text);">Your take-home</span><span class="val green" style="font-size:16px;">£297.50</span></div>
+            </div>
+          </div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);margin:12px 0 8px;">YOUR AGENCIES</div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">Alive Network</span><span class="val">15%</span></div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">Warble Entertainment</span><span class="val">12%</span></div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">Direct bookings</span><span class="val green">0%</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="feature-text">
+        <h2>What if you always knew what you're actually earning?</h2>
+        <p>Set each agency's commission rules once. TrackMyGigs instantly shows your real take-home for every gig — not just the headline fee. Finally see what you're actually making after everyone takes their cut.</p>
+        <ul class="feature-bullets">
+          <li>Multiple agencies with different rates</li>
+          <li>Commission tracked as allowable expense for tax</li>
+          <li>See real take-home before accepting a gig</li>
+          <li>Annual commission summary for your tax return</li>
+        </ul>
+        <a href="/app" class="btn btn-primary">Start free — no card needed</a>
+      </div>
+    </div>
+
+    <!-- Feature 5: Tax -->
+    <div class="feature-block">
+      <div class="feature-visual">
+        <div class="mini-ui">
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);margin-bottom:8px;">TAX YEAR 2025/26 SUMMARY</div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">Total income</span><span class="val">£18,420</span></div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">Mileage allowance</span><span class="val green">-£828</span></div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">Agency commission</span><span class="val green">-£2,240</span></div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-row"><span class="label">Other expenses</span><span class="val green">-£1,150</span></div>
+          </div>
+          <div class="mini-card" style="border-color:var(--accent);">
+            <div class="mini-row"><span class="label" style="font-weight:700;color:var(--text);">Taxable profit</span><span class="val amber" style="font-size:16px;">£14,202</span></div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <div style="flex:1;background:var(--accent);border-radius:6px;padding:8px;text-align:center;font-size:10px;font-weight:700;color:#000;">Export PDF</div>
+            <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center;font-size:10px;color:var(--text-2);">Export CSV</div>
+          </div>
+        </div>
+      </div>
+      <div class="feature-text">
+        <h2>What if your tax return was ready in minutes?</h2>
+        <p>When your accountant asks for numbers, you're ready. TrackMyGigs generates UK tax-year reports covering income, mileage, expenses, and commission — broken down exactly how HMRC wants it. Export as PDF or CSV.</p>
+        <ul class="feature-bullets">
+          <li>Tax-year income breakdown (April to April)</li>
+          <li>HMRC-format mileage summary</li>
+          <li>Expense tracking with receipt capture</li>
+          <li>MTD quarterly summaries included</li>
+        </ul>
+        <a href="/app" class="btn btn-primary">Start free — no card needed</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== MTD SECTION ===== -->
+<section class="mtd" id="mtd">
+  <div class="section-inner" style="text-align:center;">
+    <div class="section-label" style="color:var(--danger);">Important</div>
+    <div class="section-title">Making Tax Digital is here. Are you ready?</div>
+    <div class="section-sub" style="max-width:600px;margin:0 auto;">From April 2026, sole traders earning over £50,000 must keep digital records and submit quarterly updates to HMRC. The threshold drops every year.</div>
+    <div class="mtd-timeline">
+      <div class="mtd-year active">
+        <div class="year">2026</div>
+        <div class="threshold">£50,000+ income</div>
+        <div class="status">LIVE NOW</div>
+      </div>
+      <div class="mtd-year">
+        <div class="year">2027</div>
+        <div class="threshold">£30,000+ income</div>
+      </div>
+      <div class="mtd-year">
+        <div class="year">2028</div>
+        <div class="threshold">£20,000+ income</div>
+      </div>
+    </div>
+    <p style="font-size:15px;color:var(--text-2);margin-bottom:32px;max-width:500px;margin-left:auto;margin-right:auto;">TrackMyGigs keeps your records organised automatically. When the deadline hits, you're already sorted. No scrambles. No shoeboxes.</p>
+    <a href="/app" class="btn btn-primary btn-large">Get MTD-ready for free</a>
+  </div>
+</section>
+
+<!-- ===== WHY GIGFLOW ===== -->
+<section>
+  <div class="section-inner" style="text-align:center;max-width:700px;">
+    <div class="section-label">The difference</div>
+    <div class="section-title">Finance apps don't understand gigs.<br>Gig apps don't understand money.</div>
+    <div class="section-sub" style="max-width:500px;margin:0 auto 32px;text-align:center;">TrackMyGigs understands both — because it was built by people in the industry, for people in the industry.</div>
+    <div style="display:flex;flex-direction:column;gap:12px;text-align:left;">
+      <div style="display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;">
+        <span style="font-size:20px;">🇬🇧</span>
+        <span style="font-size:14px;color:var(--text-2);">Built for UK performers — HMRC rates, UK tax years, MTD-ready</span>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;">
+        <span style="font-size:20px;">🏦</span>
+        <span style="font-size:14px;color:var(--text-2);">Handles agency commission properly — most apps completely ignore this</span>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;">
+        <span style="font-size:20px;">🔗</span>
+        <span style="font-size:14px;color:var(--text-2);">Connected to the live music ecosystem — gigs arrive from band leaders and agencies automatically</span>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;">
+        <span style="font-size:20px;">📱</span>
+        <span style="font-size:14px;color:var(--text-2);">Designed for phones, used between gigs — not a desktop app that expects you at a desk</span>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;">
+        <span style="font-size:20px;">🌙</span>
+        <span style="font-size:14px;color:var(--text-2);">Calm, simple, and fast — works at 11pm after a long gig when you just want to log it and go to bed</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== PRICING ===== -->
+<section id="pricing" style="background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+  <div class="section-inner" style="text-align:center;">
+    <div class="section-label">Pricing</div>
+    <div class="section-title">Free forever on the essentials. Premium when you want more.</div>
+    <p style="font-size:15px;color:var(--text-2);margin-bottom:32px;">Gig tracking, invoicing, expenses, and your own data export stay free for every musician. Premium unlocks the AI tools and the dep-send cascade.</p>
+
+    <div class="pricing-toggle" role="tablist" aria-label="Billing period">
+      <button id="billMonthly" onclick="setBillingPeriod('monthly')" class="active" style="background:var(--card);border:1px solid var(--accent);color:var(--text);border-radius:999px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;">Monthly</button>
+      <button id="billAnnual" onclick="setBillingPeriod('annual')" style="background:transparent;border:1px solid var(--border);color:var(--text-2);border-radius:999px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;">Annual <span style="background:var(--accent-dim);color:var(--accent);font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;margin-left:4px;letter-spacing:0.4px;">SAVE &pound;50</span></button>
+    </div>
+
+    <div class="pricing-grid">
+      <div class="price-card">
+        <div class="price-name">Free</div>
+        <div class="price-desc">Everything you need to run the gig-side of your business. Forever. No credit card.</div>
+        <div class="price-amount">Free</div>
+        <a href="/app" class="btn btn-outline" style="width:100%;margin-top:20px;">Start free</a>
+        <ul class="price-features">
+          <li>Unlimited gig tracking</li>
+          <li>Invoicing with PDF download</li>
+          <li>Expense + receipt capture</li>
+          <li>Mileage + HMRC categorisation</li>
+          <li>Public availability calendar</li>
+          <li>EPK page for enquiries</li>
+          <li>Your own data, exportable any time</li>
+        </ul>
+      </div>
+      <div class="price-card featured">
+        <div class="price-name">Premium</div>
+        <div class="price-desc">AI assistant, dep-send cascade, and the marketplace power tools for musicians who gig often.</div>
+        <div class="price-amount"><span id="priceCurrency" class="currency">&pound;</span><span id="priceAmount">14.99</span><span id="pricePeriod" class="period">/month</span></div>
+        <button onclick="goPremium()" class="btn btn-primary" style="width:100%;margin-top:20px;cursor:pointer;">Start 14-day free trial</button>
+        <ul class="price-features">
+          <li class="pro">Top-5 dep-send cascade with auto-advance</li>
+          <li class="pro">Configurable response windows per send</li>
+          <li class="pro">Smart Paste to gig wizard (AI)</li>
+          <li class="pro">Invoice chase drafter (AI)</li>
+          <li class="pro">Dep offer reply drafter (AI)</li>
+          <li class="pro">Set list generator (AI)</li>
+          <li class="pro">EPK bio writer (AI)</li>
+          <li class="pro">Monthly insights + calendar sanity checks (AI)</li>
+          <li class="pro">Receipt OCR + HMRC categoriser (AI)</li>
+          <li class="pro">ChordPro normaliser (AI)</li>
+        </ul>
+        <p id="priceSub" style="font-size:11px;color:var(--text-3);margin-top:12px;">14-day free trial. Cancel any time. Switch to annual and save &pound;50.</p>
+      </div>
+    </div>
+    <p style="font-size:13px;color:var(--text-3);margin-top:24px;">One extra gig a year covers premium for twelve months. Most musicians save that back in admin time alone.</p>
+  </div>
+</section>
+
+<script>
+  // Landing pricing toggle + Go premium CTA. No localStorage so the service
+  // worker doesn't cache user state across sessions.
+  window._tmgBilling = 'monthly';
+  function setBillingPeriod(p) {
+    window._tmgBilling = p;
+    var amt = document.getElementById('priceAmount');
+    var per = document.getElementById('pricePeriod');
+    var sub = document.getElementById('priceSub');
+    var mBtn = document.getElementById('billMonthly');
+    var aBtn = document.getElementById('billAnnual');
+    if (p === 'annual') {
+      amt.textContent = '129';
+      per.textContent = '/year';
+      sub.innerHTML = '14-day free trial. \u00a3129 billed yearly, works out to \u00a310.75 / month. Cancel any time.';
+      aBtn.style.background = 'var(--card)'; aBtn.style.border = '1px solid var(--accent)'; aBtn.style.color = 'var(--text)';
+      mBtn.style.background = 'transparent'; mBtn.style.border = '1px solid var(--border)'; mBtn.style.color = 'var(--text-2)';
+    } else {
+      amt.textContent = '14.99';
+      per.textContent = '/month';
+      sub.innerHTML = '14-day free trial. Cancel any time. Switch to annual and save \u00a350.';
+      mBtn.style.background = 'var(--card)'; mBtn.style.border = '1px solid var(--accent)'; mBtn.style.color = 'var(--text)';
+      aBtn.style.background = 'transparent'; aBtn.style.border = '1px solid var(--border)'; aBtn.style.color = 'var(--text-2)';
+    }
+  }
+  async function goPremium() {
+    // Unauth users go to /app with an intent flag so the app kicks off
+    // checkout after sign-in. Keeps the landing stateless.
+    try {
+      var res = await fetch('/api/stripe/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: window._tmgBilling }),
+      });
+      if (res.status === 401 || res.status === 403) {
+        window.location.href = '/app?intent=premium&plan=' + encodeURIComponent(window._tmgBilling);
+        return;
+      }
+      var data = await res.json();
+      if (data && data.url) { window.location.href = data.url; return; }
+      if (data && data.error) alert(data.error);
+    } catch (err) {
+      window.location.href = '/app?intent=premium&plan=' + encodeURIComponent(window._tmgBilling);
+    }
+  }
+</script>
+
+<!-- ===== FAQ ===== -->
+<section id="faq">
+  <div class="section-inner">
+    <div style="text-align:center;">
+      <div class="section-label">FAQ</div>
+      <div class="section-title">Frequently asked questions</div>
+    </div>
+    <div class="faq-list">
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Is TrackMyGigs free? <span class="icon">+</span></div>
+        <div class="faq-a"><div class="faq-a-inner">Yes. The free plan lets you track up to 10 gigs with full access to mileage tracking, invoicing, and commission calculations. No card required to start.</div></div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Can I cancel anytime? <span class="icon">+</span></div>
+        <div class="faq-a"><div class="faq-a-inner">Yes. No contracts, no cancellation fees. Cancel from your account settings whenever you want.</div></div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Does TrackMyGigs calculate mileage automatically? <span class="icon">+</span></div>
+        <div class="faq-a"><div class="faq-a-inner">Yes. Set your home postcode once, and TrackMyGigs calculates the round-trip distance to every venue using HMRC's approved 45p per mile rate. No manual logging.</div></div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">How does TrackMyGigs handle agency commission? <span class="icon">+</span></div>
+        <div class="faq-a"><div class="faq-a-inner">When you log a gig, enter your gross fee and the agency. TrackMyGigs applies the commission rate you've set and shows your actual take-home instantly. Commission is tracked separately in your tax reports as an allowable expense.</div></div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Does TrackMyGigs work with Making Tax Digital? <span class="icon">+</span></div>
+        <div class="faq-a"><div class="faq-a-inner">TrackMyGigs keeps your income, mileage, and expenses organised automatically with quarterly summaries. When MTD quarterly reporting becomes mandatory for your income level, you'll already have everything in order.</div></div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Is TrackMyGigs only for singers? <span class="icon">+</span></div>
+        <div class="faq-a"><div class="faq-a-inner">No. TrackMyGigs works for any self-employed UK performer — singers, session musicians, DJs, pianists, guitarists, tribute acts, wedding bands, function musicians, entertainers. If you do gigs and need to track income and expenses for tax, TrackMyGigs is for you.</div></div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Can gigs be sent to me from band leaders or agencies? <span class="icon">+</span></div>
+        <div class="faq-a"><div class="faq-a-inner">Yes — this is one of TrackMyGigs's unique features. If your band leader uses Musician Tracker or your agency uses ClientFlow, gigs can arrive in your TrackMyGigs app pre-filled with all the details. Accept with one tap.</div></div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Can I use TrackMyGigs for my Self Assessment tax return? <span class="icon">+</span></div>
+        <div class="faq-a"><div class="faq-a-inner">Absolutely. TrackMyGigs generates a tax summary showing total income, mileage allowance, commission, and expenses — broken down exactly how HMRC wants it. Export and hand it to your accountant, or use it to file yourself.</div></div>
+      </div>
+      <div class="faq-item" onclick="this.classList.toggle('open')">
+        <div class="faq-q">Is my data secure? <span class="icon">+</span></div>
+        <div class="faq-a"><div class="faq-a-inner">Yes. TrackMyGigs uses encrypted connections and secure cloud storage. Your financial data stays yours — we never share it with third parties.</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== FINAL CTA ===== -->
+<div class="final-cta">
+  <h2>If gig admin is quietly stressing you out, this is for you.</h2>
+  <p>Join hundreds of UK musicians who stopped guessing and started knowing.</p>
+  <a href="/app" class="btn btn-primary btn-large">Start free — no card needed</a>
+  <div style="margin-top:16px;font-size:12px;color:var(--text-3);">🔒 Encrypted and secure · No spam · Cancel anytime</div>
+</div>
+
+<!-- ===== FOOTER ===== -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <div class="logo">Gig<span>Flow</span></div>
+        <p>Gig tracking, invoicing, mileage and tax for UK freelance musicians. Part of the live music industry's connected platform.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Product</h4>
+        <a href="#features">Features</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#mtd">Making Tax Digital</a>
+        <a href="#">Updates</a>
+      </div>
+      <div class="footer-col">
+        <h4>Ecosystem</h4>
+        <a href="#">Musician Tracker</a>
+        <a href="#">ClientFlow</a>
+        <a href="#">For agencies</a>
+        <a href="#">For band leaders</a>
+      </div>
+      <div class="footer-col">
+        <h4>Legal</h4>
+        <a href="#">Privacy policy</a>
+        <a href="#">Terms & conditions</a>
+        <a href="#">Contact</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 TrackMyGigs. All rights reserved.</span>
+      <span>🇬🇧 Built in the UK for UK musicians</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
