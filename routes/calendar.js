@@ -111,7 +111,10 @@ function eventSummaryForAI(event, index) {
     `    Start: ${startStr} (${day})${allDay ? ' [all-day]' : ''}`,
     durationHours ? `    Duration: ${durationHours}h` : null,
     event.location ? `    Location: ${event.location}` : null,
-    event.description ? `    Description: ${String(event.description).slice(0, 200)}` : null,
+    // Raised from 200 to 800 chars so the classifier can see fee mentions,
+    // dress code, load-in times, and client contact details that typically
+    // land in the middle/end of a booking description.
+    event.description ? `    Description: ${String(event.description).slice(0, 800)}` : null,
   ].filter(Boolean);
   return lines.join('\n');
 }
@@ -122,7 +125,7 @@ async function classifyEventsBatch(events) {
 
   const systemPrompt = `You are a gig detection classifier for a working musician's calendar.
 
-Given a list of calendar events, decide which are professional music work: performances, rehearsals, recording sessions, teaching, dep (depp/sub) work, or similar paid music activity.
+Given a list of calendar events, decide which are professional music work: performances, rehearsals, recording sessions, teaching, dep (depp/sub) work, or similar paid music activity. Also extract any booking details you can see in the event title, location, or description.
 
 Return a JSON array, one object per input event, in the SAME ORDER as input. Use this shape exactly:
 
@@ -134,17 +137,33 @@ Return a JSON array, one object per input event, in the SAME ORDER as input. Use
     "gig_type": "performance" | "rehearsal" | "session" | "teaching" | "dep" | "other" | null,
     "reasons": [<short phrases explaining the decision>],
     "suggested_band_name": <string or null>,
-    "suggested_venue": <string or null>
+    "suggested_venue": <string or null>,
+    "suggested_fee": <integer GBP amount or null>,
+    "suggested_client_name": <string or null>,
+    "suggested_client_email": <string or null>,
+    "suggested_client_phone": <string or null>,
+    "suggested_dress_code": "Black tie" | "Smart" | "All black" | "Casual" | "Other" | null,
+    "suggested_load_in_time": <HH:MM 24h string or null>,
+    "suggested_notes": <string or null>
   }
 ]
 
-Signal guidance:
+Signal guidance for classification:
 - Weddings, functions, corporate events, pub gigs, private parties at hotels/halls/restaurants are performances
 - Band names, soundcheck, setlist, load-in, dep, function, reception, ceremony, residency are strong signals
 - Pub/hotel/venue/church/hall/club names in location are strong signals
 - Evening (17:00+) and weekend timing increase confidence but are not required
 - All-day events are usually NOT gigs unless title says festival, tour day, residency
 - Medical, personal, holiday, family, business meetings, commutes, admin = confidence below 20
+
+Field extraction guidance:
+- suggested_fee: parse amounts like "£350", "350 quid", "Fee: 400", "£250 cash", "£180 + expenses". Return the integer GBP value. Null if no fee mentioned.
+- suggested_client_email: any @ address in the description. Null if none.
+- suggested_client_phone: UK phone number in the description (07... or +44...). Null if none.
+- suggested_client_name: the person/agency/band-leader name in the description, often preceded by "booker", "agent", "from", "contact", or in a signature. Null if unclear.
+- suggested_dress_code: map "black tie" / "formal" / "DJ" to "Black tie"; "smart", "suit", "shirt" to "Smart"; "all black" / "wedding black" to "All black"; "casual" / "t-shirt" to "Casual"; anything else specific to "Other". Null if not mentioned.
+- suggested_load_in_time: look for "load in at 5pm", "setup 18:00", "arrive by 17:30". Return 24h HH:MM. Null if absent.
+- suggested_notes: any other useful details not captured above (setlist preferences, parking info, PA provided, etc). Keep under 200 chars. Null if nothing worth noting.
 
 Return ONLY the JSON array. No markdown fences. No prose. No explanation.`;
 
@@ -531,21 +550,67 @@ router.get('/events', async (req, res) => {
 
     const calendar = google.calendar({ version: 'v3', auth });
 
-    // Window: now to 60 days ahead
+    // Window selection (2026-04-23). Default 'future' preserves the original
+    // "next 60 days" behaviour for the ongoing Calendar screen. The explicit
+    // values cover the first-import flows:
+    //   current_tax_year - from 6 Apr of this UK tax year to +60d future
+    //   all              - from 6 Apr two tax years ago forward (safety floor)
+    //   custom           - requires ?from=YYYY-MM-DD and ?to=YYYY-MM-DD
+    const windowMode = String(req.query.window || 'future').toLowerCase();
     const now = new Date();
-    const future = new Date();
-    future.setDate(future.getDate() + 60);
+    let timeMin;
+    let timeMax;
 
-    const response = await calendar.events.list({
-      calendarId,
-      timeMin: now.toISOString(),
-      timeMax: future.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-      maxResults: 50,
-    });
+    if (windowMode === 'custom' && req.query.from && req.query.to) {
+      timeMin = new Date(String(req.query.from));
+      timeMax = new Date(String(req.query.to));
+    } else if (windowMode === 'current_tax_year') {
+      // UK tax year runs 6 April - 5 April. If we're past 6 April of this
+      // calendar year, the current TY started in April of this year. If we
+      // haven't hit 6 April yet, the current TY started in April last year.
+      const y = now.getFullYear();
+      const taxYearStart = (now.getMonth() > 3 || (now.getMonth() === 3 && now.getDate() >= 6))
+        ? new Date(y, 3, 6)           // 6 April this year
+        : new Date(y - 1, 3, 6);      // 6 April last year
+      timeMin = taxYearStart;
+      const future = new Date(now);
+      future.setDate(future.getDate() + 60);
+      timeMax = future;
+    } else if (windowMode === 'all') {
+      const twoYearsAgoTaxYear = new Date(now.getFullYear() - 2, 3, 6);
+      timeMin = twoYearsAgoTaxYear;
+      const future = new Date(now);
+      future.setDate(future.getDate() + 365);
+      timeMax = future;
+    } else {
+      // 'future' (default): next 60 days, matches the ongoing nudge bar.
+      timeMin = now;
+      const future = new Date(now);
+      future.setDate(future.getDate() + 60);
+      timeMax = future;
+    }
 
-    const items = response.data.items || [];
+    // Google Calendar caps page size at 2500; paginate until exhausted so
+    // a full-history pull doesn't silently truncate. For most users this is
+    // still one page.
+    const items = [];
+    let pageToken = undefined;
+    let pagesFetched = 0;
+    const MAX_PAGES = 6; // 15000 events cap - plenty for any real user
+    do {
+      const response = await calendar.events.list({
+        calendarId,
+        timeMin: timeMin.toISOString(),
+        timeMax: timeMax.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime',
+        maxResults: 2500,
+        pageToken,
+      });
+      items.push(...(response.data.items || []));
+      pageToken = response.data.nextPageToken;
+      pagesFetched++;
+    } while (pageToken && pagesFetched < MAX_PAGES);
 
     // Already-linked Google event ids. Covers both directions:
     //   (1) Gigs pulled IN from Google Calendar (source = 'gcal:<id>')
@@ -596,6 +661,14 @@ router.get('/events', async (req, res) => {
       let suggested_band_name = null;
       let suggested_venue_name = null;
 
+      let suggested_fee = null;
+      let suggested_client_name = null;
+      let suggested_client_email = null;
+      let suggested_client_phone = null;
+      let suggested_dress_code = null;
+      let suggested_load_in_time = null;
+      let suggested_notes = null;
+
       if (aiResults && aiResults[i]) {
         const ai = aiResults[i];
         score = ai.is_gig ? (typeof ai.confidence === 'number' ? ai.confidence : 50) : Math.min(ai.confidence || 0, 10);
@@ -603,6 +676,16 @@ router.get('/events', async (req, res) => {
         gig_type = ai.gig_type || null;
         suggested_band_name = ai.suggested_band_name || null;
         suggested_venue_name = ai.suggested_venue || null;
+        // Booking-detail extraction (2026-04-23). Anything the AI finds in
+        // the title/location/description gets surfaced to the client so the
+        // first-import flow can land gigs with as much pre-fill as possible.
+        suggested_fee = Number.isFinite(parseInt(ai.suggested_fee, 10)) ? parseInt(ai.suggested_fee, 10) : null;
+        suggested_client_name = ai.suggested_client_name || null;
+        suggested_client_email = ai.suggested_client_email || null;
+        suggested_client_phone = ai.suggested_client_phone || null;
+        suggested_dress_code = ai.suggested_dress_code || null;
+        suggested_load_in_time = ai.suggested_load_in_time || null;
+        suggested_notes = ai.suggested_notes || null;
       } else {
         const kw = scoreEvent(ev);
         score = kw.score;
@@ -630,6 +713,13 @@ router.get('/events', async (req, res) => {
         gig_type,
         suggested_band_name,
         suggested_venue_name,
+        suggested_fee,
+        suggested_client_name,
+        suggested_client_email,
+        suggested_client_phone,
+        suggested_dress_code,
+        suggested_load_in_time,
+        suggested_notes,
         classifier_used: aiResults ? 'ai' : 'keyword',
         source: 'google_calendar',
         already_imported: false,
@@ -850,6 +940,149 @@ router.post('/import', async (req, res) => {
   } catch (error) {
     console.error('Import calendar event error:', error);
     res.status(500).json({ error: 'Failed to import event' });
+  }
+});
+
+// POST /calendar/import-bulk — create many gig rows in one call.
+//
+// Body: { events: [{ event_id, title, location, start, end, fee,
+//                     band_name, venue_name, dress_code, load_in_time,
+//                     client_name, client_email, client_phone, notes }, ...] }
+//
+// The client sends enriched events (already classified via /events), we
+// iterate and UPSERT by google_event_id. Used by the first-import modal
+// so someone with 187 gigs in their calendar can one-tap ingest them
+// instead of reviewing each nudge individually.
+//
+// Returns:
+//   { imported: <count inserted>, merged: <count already existed and merged>,
+//     errors: [{ event_id, message }, ...], gigs: [full-rows] }
+router.post('/import-bulk', async (req, res) => {
+  try {
+    const list = Array.isArray(req.body && req.body.events) ? req.body.events : [];
+    if (list.length === 0) {
+      return res.status(400).json({ error: 'No events provided' });
+    }
+    if (list.length > 1500) {
+      return res.status(413).json({ error: 'Too many events in one batch (max 1500)' });
+    }
+
+    let imported = 0;
+    let merged = 0;
+    const errors = [];
+    const gigs = [];
+
+    for (const ev of list) {
+      try {
+        if (!ev || !ev.event_id) {
+          errors.push({ event_id: ev && ev.event_id, message: 'event_id required' });
+          continue;
+        }
+        const isAllDayStart = typeof ev.start === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ev.start);
+        const startParts = ev.start
+          ? (isAllDayStart ? { date: ev.start, time: null } : londonDateTime(ev.start))
+          : { date: null, time: null };
+        const isAllDayEnd = typeof ev.end === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ev.end);
+        const endParts = ev.end
+          ? (isAllDayEnd ? { date: ev.end, time: null } : londonDateTime(ev.end))
+          : { date: null, time: null };
+        if (!startParts.date) {
+          errors.push({ event_id: ev.event_id, message: 'missing start date' });
+          continue;
+        }
+
+        const existing = await db.query(
+          'SELECT * FROM gigs WHERE user_id = $1 AND google_event_id = $2 LIMIT 1',
+          [req.user.id, ev.event_id]
+        );
+
+        if (existing.rows.length) {
+          // Merge path: caller values win when non-null, existing wins for
+          // anything the caller didn't supply. Keeps re-runs safe.
+          const g = existing.rows[0];
+          const updated = await db.query(
+            `UPDATE gigs
+               SET band_name = COALESCE($1, band_name),
+                   venue_name = COALESCE($2, venue_name),
+                   venue_address = COALESCE($3, venue_address),
+                   date = COALESCE($4, date),
+                   start_time = COALESCE($5, start_time),
+                   end_time = COALESCE($6, end_time),
+                   fee = COALESCE($7, fee),
+                   dress_code = COALESCE($8, dress_code),
+                   load_in_time = COALESCE($9, load_in_time),
+                   client_name = COALESCE($10, client_name),
+                   client_email = COALESCE($11, client_email),
+                   client_phone = COALESCE($12, client_phone),
+                   notes = COALESCE($13, notes)
+             WHERE id = $14 AND user_id = $15
+             RETURNING *`,
+            [
+              ev.band_name || ev.title || null,
+              ev.venue_name || (ev.location ? String(ev.location).split(',')[0] : null),
+              ev.location || null,
+              startParts.date,
+              startParts.time,
+              endParts.time,
+              ev.fee ? parseFloat(ev.fee) : null,
+              ev.dress_code || null,
+              ev.load_in_time || null,
+              ev.client_name || null,
+              ev.client_email || null,
+              ev.client_phone || null,
+              ev.notes || null,
+              g.id,
+              req.user.id,
+            ]
+          );
+          gigs.push(updated.rows[0]);
+          merged++;
+        } else {
+          const inserted = await db.query(
+            `INSERT INTO gigs (user_id, band_name, venue_name, venue_address,
+                               date, start_time, end_time, fee, status, source,
+                               dress_code, load_in_time, client_name, client_email,
+                               client_phone, notes, google_event_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+             RETURNING *`,
+            [
+              req.user.id,
+              ev.band_name || ev.title || null,
+              ev.venue_name || (ev.location ? String(ev.location).split(',')[0] : null),
+              ev.location || null,
+              startParts.date,
+              startParts.time,
+              endParts.time,
+              ev.fee ? parseFloat(ev.fee) : null,
+              'confirmed',
+              `gcal:${ev.event_id}`,
+              ev.dress_code || null,
+              ev.load_in_time || null,
+              ev.client_name || null,
+              ev.client_email || null,
+              ev.client_phone || null,
+              ev.notes || null,
+              ev.event_id,
+            ]
+          );
+          gigs.push(inserted.rows[0]);
+          imported++;
+        }
+      } catch (rowErr) {
+        console.error('[import-bulk] row error:', rowErr.message);
+        errors.push({ event_id: ev && ev.event_id, message: rowErr.message });
+      }
+    }
+
+    // No push-back to Google on bulk import: we already have the Google
+    // event, pushing our version back would clobber any notes the user
+    // carefully curated in the original Google event. push-back only
+    // happens when the user hits Save after editing in TMG.
+
+    res.json({ imported, merged, errors, gigs, total: list.length });
+  } catch (error) {
+    console.error('Bulk import error:', error);
+    res.status(500).json({ error: 'Bulk import failed', detail: error.message });
   }
 });
 
