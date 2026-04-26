@@ -1501,6 +1501,220 @@ async function scenarioPremium() {
   } catch (e) { record(cat, 'N-9: premium flip off', 'fail', String(e).slice(0, 160)); }
 }
 
+// ── Scenario O: universal pay-link (#292) ──────────────────────────────────
+// Covers the new code paths shipped 2026-04-26:
+//   PATCH /user/profile validation of payment_link_url (http(s) only)
+//   POST /api/invoices auto-mints public_pay_slug + accepts override
+//   PATCH /api/invoices/:id accepts override and rejects bad URL
+//   GET /pay/:slug 302 with click counter, 404 on unknown, 409 on unconfigured
+// Also hits the trial-abuse columns on /api/user/profile so we know they
+// surface correctly to the client.
+async function scenarioPayLink() {
+  const cat = 'paylink';
+  const token = sessions.leader1.token;
+
+  // O-0: profile shape includes the new columns (trial_consumed_at,
+  // stripe_cancel_at_period_end, card_fingerprints, payment_link_url) so the
+  // client UI can render them without optional chaining gymnastics.
+  try {
+    const r = await http('GET', '/api/user/profile', { token });
+    const p = r.json || {};
+    const haveAll = ('payment_link_url' in p)
+      && ('trial_consumed_at' in p)
+      && ('stripe_cancel_at_period_end' in p)
+      && ('card_fingerprints' in p);
+    record(cat, 'O-0: profile exposes pay-link + trial-abuse fields',
+      r.status === 200 && haveAll ? 'pass' : 'fail',
+      `status=${r.status} have payment_link_url=${'payment_link_url' in p} trial_consumed_at=${'trial_consumed_at' in p} cap=${'stripe_cancel_at_period_end' in p} fp=${'card_fingerprints' in p}`);
+  } catch (e) { record(cat, 'O-0: profile shape', 'fail', String(e).slice(0, 160)); }
+
+  // O-1: PATCH /user/profile rejects non-http(s) URLs.
+  try {
+    const r = await http('PATCH', '/api/user/profile', {
+      token, body: { payment_link_url: 'javascript:alert(1)' },
+    });
+    record(cat, 'O-1: bad pay link URL rejected',
+      r.status === 400 ? 'pass' : 'fail',
+      `status=${r.status} error=${r.json?.error || 'none'}`);
+  } catch (e) { record(cat, 'O-1: bad URL', 'fail', String(e).slice(0, 160)); }
+
+  // O-2: PATCH /user/profile accepts a valid URL and GET reflects it.
+  const PAY_URL = 'https://buy.stripe.com/test_stress_paylink';
+  try {
+    const r = await http('PATCH', '/api/user/profile', {
+      token, body: { payment_link_url: PAY_URL },
+    });
+    if (r.status !== 200) {
+      record(cat, 'O-2: set pay link URL', 'fail',
+        `status=${r.status} body=${r.text?.slice(0, 200)}`);
+    } else {
+      const prof = await http('GET', '/api/user/profile', { token });
+      record(cat, 'O-2: profile reflects pay link after PATCH',
+        prof.json?.payment_link_url === PAY_URL ? 'pass' : 'fail',
+        `got=${prof.json?.payment_link_url}`);
+    }
+  } catch (e) { record(cat, 'O-2: set pay link', 'fail', String(e).slice(0, 160)); }
+
+  // O-3: POST /api/invoices auto-mints public_pay_slug.
+  let invoiceId = null;
+  let publicSlug = null;
+  try {
+    const gigId = createdGigs.leader1_london_10d?.id;
+    if (!gigId) {
+      record(cat, 'O-3: setup', 'fail', 'no leader1 gig available');
+    } else {
+      const r = await http('POST', '/api/invoices', {
+        token,
+        body: {
+          gig_id: gigId,
+          band_name: '[STRESS O] Pay-link Band',
+          amount: 200,
+          status: 'draft',
+          invoice_number: `STRESS-O-${Date.now()}`,
+          payment_terms: 'On receipt',
+          due_date: '2027-08-01',
+        },
+      });
+      invoiceId = r.json?.id;
+      publicSlug = r.json?.public_pay_slug;
+      record(cat, 'O-3: invoice POST mints public_pay_slug',
+        r.status === 200 && invoiceId && publicSlug && /^[a-f0-9]{10}$/.test(publicSlug) ? 'pass' : 'fail',
+        `status=${r.status} slug=${publicSlug}`);
+    }
+  } catch (e) { record(cat, 'O-3: invoice POST', 'fail', String(e).slice(0, 160)); }
+
+  // O-4: GET /pay/:slug 302s to the user-level URL (no override set yet).
+  if (publicSlug) {
+    try {
+      const r = await http('GET', `/pay/${publicSlug}`);
+      const loc = r.headers.get('location');
+      record(cat, 'O-4: /pay/:slug 302 to profile-level URL',
+        r.status === 302 && loc === PAY_URL ? 'pass' : 'fail',
+        `status=${r.status} location=${loc}`);
+    } catch (e) { record(cat, 'O-4: /pay/:slug', 'fail', String(e).slice(0, 160)); }
+  }
+
+  // O-5: click counter incremented + last_clicked_at populated after the 302.
+  if (invoiceId) {
+    try {
+      const r = await http('GET', `/api/invoices/${invoiceId}`, { token });
+      const inv = r.json || {};
+      const okCount = (inv.pay_link_clicks || 0) >= 1;
+      const okTime = !!inv.pay_link_last_clicked_at;
+      record(cat, 'O-5: click telemetry recorded',
+        r.status === 200 && okCount && okTime ? 'pass' : 'fail',
+        `clicks=${inv.pay_link_clicks} last=${inv.pay_link_last_clicked_at}`);
+    } catch (e) { record(cat, 'O-5: telemetry', 'fail', String(e).slice(0, 160)); }
+  }
+
+  // O-6: PATCH /api/invoices/:id rejects bad override URL.
+  if (invoiceId) {
+    try {
+      const r = await http('PATCH', `/api/invoices/${invoiceId}`, {
+        token, body: { payment_link_url_override: 'data:text/html,boom' },
+      });
+      record(cat, 'O-6: bad override URL rejected',
+        r.status === 400 ? 'pass' : 'fail',
+        `status=${r.status} error=${r.json?.error || 'none'}`);
+    } catch (e) { record(cat, 'O-6: bad override', 'fail', String(e).slice(0, 160)); }
+  }
+
+  // O-7: PATCH /api/invoices/:id accepts a valid override + override
+  // takes precedence over the profile-level URL.
+  const OVERRIDE_URL = 'https://paypal.me/stresstest-override';
+  if (invoiceId && publicSlug) {
+    try {
+      const r = await http('PATCH', `/api/invoices/${invoiceId}`, {
+        token, body: { payment_link_url_override: OVERRIDE_URL },
+      });
+      if (r.status !== 200) {
+        record(cat, 'O-7: set override URL', 'fail', `status=${r.status} body=${r.text?.slice(0, 200)}`);
+      } else {
+        const redir = await http('GET', `/pay/${publicSlug}`);
+        const loc = redir.headers.get('location');
+        record(cat, 'O-7: override takes precedence over profile URL',
+          redir.status === 302 && loc === OVERRIDE_URL ? 'pass' : 'fail',
+          `status=${redir.status} location=${loc}`);
+      }
+    } catch (e) { record(cat, 'O-7: override', 'fail', String(e).slice(0, 160)); }
+  }
+
+  // O-8: empty-string override clears the override and falls back to profile URL.
+  if (invoiceId && publicSlug) {
+    try {
+      await http('PATCH', `/api/invoices/${invoiceId}`, {
+        token, body: { payment_link_url_override: '' },
+      });
+      const redir = await http('GET', `/pay/${publicSlug}`);
+      const loc = redir.headers.get('location');
+      record(cat, 'O-8: empty override clears, falls back to profile URL',
+        redir.status === 302 && loc === PAY_URL ? 'pass' : 'fail',
+        `status=${redir.status} location=${loc}`);
+    } catch (e) { record(cat, 'O-8: clear override', 'fail', String(e).slice(0, 160)); }
+  }
+
+  // O-9: clearing the profile-level URL (and no override) returns 409
+  // "pay link not configured" instead of redirecting to nothing.
+  if (publicSlug) {
+    try {
+      await http('PATCH', '/api/user/profile', {
+        token, body: { payment_link_url: '' },
+      });
+      const r = await http('GET', `/pay/${publicSlug}`);
+      record(cat, 'O-9: unconfigured pay link returns 409',
+        r.status === 409 ? 'pass' : 'fail',
+        `status=${r.status}`);
+      // Restore the URL so subsequent runs / scenarios start from a known state.
+      await http('PATCH', '/api/user/profile', {
+        token, body: { payment_link_url: PAY_URL },
+      });
+    } catch (e) { record(cat, 'O-9: 409 path', 'fail', String(e).slice(0, 160)); }
+  }
+
+  // O-10: unknown slug returns 404.
+  try {
+    const r = await http('GET', '/pay/abcd0123ef');
+    record(cat, 'O-10: unknown slug → 404',
+      r.status === 404 ? 'pass' : 'fail',
+      `status=${r.status}`);
+  } catch (e) { record(cat, 'O-10: unknown slug', 'fail', String(e).slice(0, 160)); }
+
+  // O-11: malformed slug (non-hex / wrong length) returns 404.
+  try {
+    const r = await http('GET', '/pay/not-a-slug!!');
+    record(cat, 'O-11: malformed slug → 404',
+      r.status === 404 ? 'pass' : 'fail',
+      `status=${r.status}`);
+  } catch (e) { record(cat, 'O-11: malformed slug', 'fail', String(e).slice(0, 160)); }
+
+  // O-12: clicks compound — second redirect bumps counter to 2.
+  if (publicSlug) {
+    try {
+      await http('GET', `/pay/${publicSlug}`);
+      // small wait so the async UPDATE inside the redirect finishes before
+      // we read it back. Without this, the GET below races the counter UPDATE.
+      await new Promise((res) => setTimeout(res, 250));
+      const r = await http('GET', `/api/invoices/${invoiceId}`, { token });
+      const clicks = r.json?.pay_link_clicks || 0;
+      record(cat, 'O-12: click counter is cumulative',
+        clicks >= 2 ? 'pass' : 'fail',
+        `clicks=${clicks}`);
+    } catch (e) { record(cat, 'O-12: click counter cumulative', 'fail', String(e).slice(0, 160)); }
+  }
+
+  // O-13: PATCH /user/profile with empty string clears the pay-link.
+  try {
+    await http('PATCH', '/api/user/profile', {
+      token, body: { payment_link_url: '' },
+    });
+    const prof = await http('GET', '/api/user/profile', { token });
+    const cleared = prof.json?.payment_link_url === null || prof.json?.payment_link_url === undefined;
+    record(cat, 'O-13: empty string clears profile pay link',
+      cleared ? 'pass' : 'fail',
+      `payment_link_url=${prof.json?.payment_link_url}`);
+  } catch (e) { record(cat, 'O-13: clear profile URL', 'fail', String(e).slice(0, 160)); }
+}
+
 // ── main runner ─────────────────────────────────────────────────────────────
 async function main() {
   console.log(`\n===== STRESS HARNESS starting @ ${BASE} =====\n`);
@@ -1527,6 +1741,7 @@ async function main() {
     await scenarioExpenses();
     await scenarioAI();
     await scenarioPremium();
+    await scenarioPayLink();
 
     // breadth
     await phase5Breadth();
