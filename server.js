@@ -790,6 +790,15 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_consumed_at TIMESTAMP`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS card_fingerprints TEXT[] NOT NULL DEFAULT '{}'`);
     await db.query(`CREATE INDEX IF NOT EXISTS users_card_fingerprints_gin ON users USING GIN (card_fingerprints)`);
+    // Backfill: any user who already has a Stripe subscription has by
+    // definition consumed their trial — they signed up before this column
+    // existed. Stamp NOW() so a future cancel-then-resubscribe by them
+    // doesn't sneak through with another fortnight free. Idempotent: only
+    // fills NULL rows, never overwrites.
+    await db.query(`
+      UPDATE users SET trial_consumed_at = NOW()
+      WHERE stripe_subscription_id IS NOT NULL AND trial_consumed_at IS NULL
+    `);
     // Universal pay-link (2026-04-23, task #292). User-set URL pointing to
     // their preferred payment method (Stripe Payment Link, PayPal.me, SumUp,
     // Wise, Monzo.me, etc.). Embedded in every invoice email + PDF as a

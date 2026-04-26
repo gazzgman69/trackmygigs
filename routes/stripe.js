@@ -321,7 +321,8 @@ async function webhookHandler(req, res) {
           `UPDATE users
              SET premium = $1,
                  premium_until = $2,
-                 stripe_cancel_at_period_end = $3
+                 stripe_cancel_at_period_end = $3,
+                 trial_consumed_at = COALESCE(trial_consumed_at, NOW())
            WHERE stripe_subscription_id = $4`,
           [active, periodEnd, cancelAtPeriodEnd, sub.id]
         );
