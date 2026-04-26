@@ -159,6 +159,71 @@ async function findUserBySlug(slug) {
   return r.rows.length ? r.rows[0] : null;
 }
 
+// ── Public pay-link redirect (#292) ─────────────────────────────────────────
+// /pay/:slug — looks up the invoice by its short public slug, increments the
+// click counter, and 302s to the resolved payment URL (per-invoice override
+// first, then the user's profile-level default). The slug is the only public
+// identifier — the integer invoice id is never exposed.
+//
+// Anonymous: bookers receiving the invoice email shouldn't need to log in
+// to pay. The route is rate-limited indirectly by Express's overall posture
+// (no per-IP limit here, but the click-tracker is a single UPDATE so abuse
+// would just inflate the per-invoice counter rather than do real damage).
+//
+// Failure modes:
+//   - Unknown slug → 404 page
+//   - Invoice exists but no pay URL is set anywhere → "not configured" page
+//     so the bookee sees a useful message instead of a redirect loop.
+router.get('/pay/:slug', async (req, res) => {
+  const slug = String(req.params.slug || '').trim();
+  // Defensive: slug is always 10 hex chars when minted by the app, but allow
+  // any reasonable length so manually-pasted links don't 404 on a typo.
+  if (!/^[a-f0-9]{6,32}$/i.test(slug)) {
+    return res.status(404).set('Content-Type', 'text/html')
+      .send(pageHtml('Pay link not found', `<div class="empty"><h1>Pay link not found</h1><p class="sub">This link looks malformed. Check the URL and try again.</p></div>`));
+  }
+  try {
+    const r = await db.query(
+      `SELECT i.id, i.payment_link_url_override, u.payment_link_url
+       FROM invoices i
+       JOIN users u ON u.id = i.user_id
+       WHERE i.public_pay_slug = $1
+       LIMIT 1`,
+      [slug]
+    );
+    if (!r.rows.length) {
+      return res.status(404).set('Content-Type', 'text/html')
+        .send(pageHtml('Pay link not found', `<div class="empty"><h1>Pay link not found</h1><p class="sub">This link is no longer active. The musician may have cancelled the invoice.</p></div>`));
+    }
+    const row = r.rows[0];
+    const target = row.payment_link_url_override || row.payment_link_url || null;
+    if (!target) {
+      return res.status(409).set('Content-Type', 'text/html')
+        .send(pageHtml('Pay link not configured', `<div class="empty"><h1>Pay link not configured</h1><p class="sub">The musician hasn&#x2019;t set up an online payment link yet. Please pay using the bank details on the invoice, or contact them directly.</p></div>`));
+    }
+    // Defense in depth: never redirect to anything that isn't http(s). The
+    // PATCH/POST validators already enforce this on input, but a corrupted
+    // row shouldn't be allowed to bounce a clicker to a javascript: URL.
+    if (!/^https?:\/\//i.test(target)) {
+      return res.status(409).set('Content-Type', 'text/html')
+        .send(pageHtml('Pay link invalid', `<div class="empty"><h1>Pay link invalid</h1><p class="sub">Something went wrong with this link. Please contact the musician directly.</p></div>`));
+    }
+    // Fire-and-forget click tracking: bumping the counter must NOT block the
+    // redirect. If the UPDATE fails (e.g. transient DB hiccup), the user
+    // still gets to where they were going; the musician just doesn't see the
+    // click event in their telemetry.
+    db.query(
+      `UPDATE invoices SET pay_link_clicks = pay_link_clicks + 1, pay_link_last_clicked_at = NOW() WHERE id = $1`,
+      [row.id]
+    ).catch((e) => console.warn('[pay] click track failed:', e && e.message));
+    return res.redirect(302, target);
+  } catch (err) {
+    console.error('Pay link lookup error:', err);
+    return res.status(500).set('Content-Type', 'text/html')
+      .send(pageHtml('Pay link error', `<div class="empty"><h1>Something went wrong</h1><p class="sub">Please try again in a moment.</p></div>`));
+  }
+});
+
 // ── Public availability calendar ────────────────────────────────────────────
 // /share/:slug — shows the next 12 months with busy/free/blocked dates.
 // Deliberately anonymous: no name, avatar, email or photo. A booker who has

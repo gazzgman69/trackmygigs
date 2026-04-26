@@ -3542,7 +3542,44 @@ async function openInvoiceDetail(invoiceId) {
           <span style="font-size:14px;font-weight:600;color:var(--text);">Total</span>
           <span style="font-size:20px;font-weight:700;color:var(--success);">£${parseFloat(invoice.amount).toFixed(0)}</span>
         </div>
-      </div>
+      </div>`;
+
+    // Pay link telemetry (#292). Only renders when the invoice has a public
+    // pay slug AND the user has set a pay link somewhere (per-invoice
+    // override or profile default). Otherwise the section is invisible.
+    const _profile = window._cachedProfile || {};
+    const _hasLink = !!(invoice.payment_link_url_override || _profile.payment_link_url);
+    if (invoice.public_pay_slug && _hasLink) {
+      const _origin = window.location.origin;
+      const _payUrl = `${_origin}/pay/${invoice.public_pay_slug}`;
+      const _clicks = invoice.pay_link_clicks || 0;
+      const _lastClick = invoice.pay_link_last_clicked_at;
+      let _lastClickLabel = '';
+      if (_lastClick) {
+        try {
+          const ago = Math.max(0, Math.floor((Date.now() - new Date(_lastClick).getTime()) / 60000));
+          if (ago < 1) _lastClickLabel = 'Last clicked just now';
+          else if (ago < 60) _lastClickLabel = `Last clicked ${ago} min ago`;
+          else if (ago < 1440) _lastClickLabel = `Last clicked ${Math.floor(ago / 60)} hr ago`;
+          else _lastClickLabel = `Last clicked ${Math.floor(ago / 1440)} day${ago < 2880 ? '' : 's'} ago`;
+        } catch (_) {}
+      }
+      const _clickColour = _clicks > 0 ? 'var(--accent)' : 'var(--text-3)';
+      html += `
+      <div style="padding:0 16px 12px;border-bottom:1px solid var(--border);margin-bottom:12px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Pay link</div>
+        <div style="display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:8px;">
+          <input id="payLinkUrlInput" type="text" readonly value="${escapeHtml(_payUrl)}" style="flex:1;background:transparent;border:none;color:var(--text);font-size:12px;font-family:ui-monospace,monospace;outline:none;min-width:0;" onclick="this.select();" />
+          <button onclick="copyPayLink('${invoice.id}')" style="background:var(--accent);color:#000;border:none;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;">Copy</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:${_clickColour};">
+          <span>${_clicks > 0 ? '&#x1F441;' : '&#x1F4E5;'}</span>
+          <span>${_clicks} click${_clicks === 1 ? '' : 's'}${_lastClickLabel ? ' &middot; ' + escapeHtml(_lastClickLabel) : ''}</span>
+        </div>
+      </div>`;
+    }
+
+    html += `
       <div style="padding:0 16px 12px;display:flex;flex-direction:column;gap:8px;">
         ${invoice.status === 'draft' ? `<button onclick="openSendInvoice('${invoice.id}')" class="pill">Send invoice</button>` : ''}
         ${invoice.status !== 'paid' ? `<button onclick="markInvoiceAsPaid('${invoice.id}')" class="pill-o">Mark as paid</button>` : ''}
@@ -8334,6 +8371,11 @@ function editProfile() {
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Auto-fills on every new invoice</div>
       </div>
       <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Pay link <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-3);">(optional)</span></label>
+        <input id="editPaymentLinkUrl" type="url" inputmode="url" value="${escapeHtml(profile.payment_link_url || '')}" placeholder="https://buy.stripe.com/... or https://paypal.me/yourhandle" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;line-height:1.5;">Stripe Payment Link, PayPal.me, SumUp, Wise, anything that works for you. Adds a Pay Online button to every invoice and tells you when a client clicks it.</div>
+      </div>
+      <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Number Format</label>
         <select id="editInvoiceFormat" onchange="updateInvFormatPreview()" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;">
           <option value="plain" ${(profile.invoice_format || 'plain') === 'plain' ? 'selected' : ''}>Sequential (INV-001)</option>
@@ -8382,6 +8424,7 @@ async function saveProfile() {
   const googleReviewUrl = document.getElementById('editGoogleReview')?.value?.trim();
   const facebookReviewUrl = document.getElementById('editFacebookReview')?.value?.trim();
   const bankDetails = document.getElementById('editBankDetails')?.value?.trim();
+  const paymentLinkUrl = document.getElementById('editPaymentLinkUrl')?.value?.trim();
   const businessAddress = document.getElementById('editBusinessAddress')?.value?.trim();
   const businessPhone = document.getElementById('editBusinessPhone')?.value?.trim();
   const vatNumber = document.getElementById('editVatNumber')?.value?.trim();
@@ -8436,6 +8479,7 @@ async function saveProfile() {
       google_review_url: googleReviewUrl || null,
       facebook_review_url: facebookReviewUrl || null,
       bank_details: bankDetails || null,
+      payment_link_url: paymentLinkUrl !== undefined ? (paymentLinkUrl || '') : undefined,
       business_address: businessAddress || null,
       business_phone: businessPhone || null,
       vat_number: vatNumber || null,
@@ -10640,6 +10684,24 @@ async function deleteInvoice(invoiceId) {
   }
 }
 window.deleteInvoice = deleteInvoice;
+
+// Pay-link copy helper (#292). Reads the URL from the readonly input the
+// invoice detail panel rendered, copies it to the clipboard, and toasts so
+// the user knows it worked. Falls back to the input.select() path on
+// environments without async clipboard access.
+window.copyPayLink = function copyPayLink() {
+  const el = document.getElementById('payLinkUrlInput');
+  if (!el) return;
+  const url = el.value;
+  const done = () => { if (typeof toast === 'function') toast('Pay link copied'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(done).catch(() => {
+      try { el.select(); document.execCommand('copy'); done(); } catch (_) {}
+    });
+  } else {
+    try { el.select(); document.execCommand('copy'); done(); } catch (_) {}
+  }
+};
 
 async function downloadInvoicePDF(invoiceId) {
   // Fetch the server-rendered PDF and trigger a real download. Works offline

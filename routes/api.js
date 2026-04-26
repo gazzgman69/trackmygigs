@@ -443,15 +443,36 @@ router.get('/invoices', async (req, res) => {
 router.post('/invoices', async (req, res) => {
   try {
     const { gig_id, band_name, amount, status, invoice_number, payment_terms, due_date,
-            venue_address, venue_name, description, notes, recipient_email, recipient_address } = req.body;
+            venue_address, venue_name, description, notes, recipient_email, recipient_address,
+            payment_link_url_override } = req.body;
 
     const effectiveStatus = status || 'draft';
     const sentAt = effectiveStatus === 'sent' ? new Date() : null;
 
+    // Universal pay-link (#292): mint a short public slug for every new
+    // invoice so the email + PDF Pay Online button can resolve to a stable
+    // /pay/<slug> URL without exposing the integer id. Slug is 10 hex chars
+    // = ~40 bits of entropy, low collision probability across the lifetime
+    // of a single account. Validation/normalisation of the override URL
+    // mirrors the user-profile field — must be http(s), capped at 500 chars.
+    const crypto = require('crypto');
+    const publicPaySlug = crypto.randomBytes(5).toString('hex');
+    let overrideValue = null;
+    if (payment_link_url_override !== undefined && payment_link_url_override !== null) {
+      const trimmed = String(payment_link_url_override).trim();
+      if (trimmed) {
+        if (!/^https?:\/\//i.test(trimmed)) {
+          return res.status(400).json({ error: 'Pay link must start with http:// or https://', field: 'payment_link_url_override' });
+        }
+        overrideValue = trimmed.slice(0, 500);
+      }
+    }
+
     const result = await db.query(
       `INSERT INTO invoices (user_id, gig_id, band_name, amount, status, invoice_number, payment_terms, due_date,
-                             venue_address, venue_name, description, notes, recipient_email, recipient_address, sent_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                             venue_address, venue_name, description, notes, recipient_email, recipient_address, sent_at,
+                             public_pay_slug, payment_link_url_override)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        RETURNING *`,
       [
         req.user.id,
@@ -469,6 +490,8 @@ router.post('/invoices', async (req, res) => {
         recipient_email || null,
         recipient_address || null,
         sentAt,
+        publicPaySlug,
+        overrideValue,
       ]
     );
 
@@ -850,7 +873,25 @@ router.patch('/user/profile', async (req, res) => {
             travel_radius_miles,
             business_address, business_phone, vat_number,
             discoverable, bio, photo_url, genres,
-            min_fee_pence, notify_free_gigs } = req.body;
+            min_fee_pence, notify_free_gigs,
+            payment_link_url } = req.body;
+
+    // Universal pay-link (#292): http(s) URLs only, capped at 500 chars.
+    // Empty string clears the field (user opts out of the pay-link button).
+    // Validate up front so the rest of the patch doesn't run if invalid.
+    let payLinkProvided = false;
+    let payLinkValue = null;
+    if (payment_link_url !== undefined) {
+      payLinkProvided = true;
+      const trimmed = String(payment_link_url || '').trim();
+      if (!trimmed) {
+        payLinkValue = null;
+      } else if (/^https?:\/\//i.test(trimmed)) {
+        payLinkValue = trimmed.slice(0, 500);
+      } else {
+        return res.status(400).json({ error: 'Pay link must start with http:// or https://', field: 'payment_link_url' });
+      }
+    }
 
     // instruments comes as a comma-separated string from the client but the
     // column is TEXT[].  Convert it to a proper PG array (or null to keep
@@ -1029,7 +1070,19 @@ router.patch('/user/profile', async (req, res) => {
        notifyFreeProvided, notifyFreeValue]
     );
 
-    res.json(result.rows[0]);
+    // Apply payment_link_url as a follow-up UPDATE so we don't have to thread
+    // it through the (already busy) main UPDATE's positional parameters. The
+    // outer SELECT * RETURNING re-runs to keep the response fresh.
+    let row = result.rows[0];
+    if (payLinkProvided && row) {
+      const r2 = await db.query(
+        'UPDATE users SET payment_link_url = $1 WHERE id = $2 RETURNING *',
+        [payLinkValue, req.user.id]
+      );
+      if (r2.rows[0]) row = r2.rows[0];
+    }
+
+    res.json(row);
   } catch (error) {
     console.error('Update profile error:', error);
     res.status(500).json({ error: 'Failed to update profile' });
@@ -3246,7 +3299,7 @@ router.get('/invoices/:id', async (req, res) => {
 
 router.patch('/invoices/:id', async (req, res) => {
   try {
-    const { status, sent_at, paid_at, recipient_email } = req.body;
+    const { status, sent_at, paid_at, recipient_email, payment_link_url_override } = req.body;
 
     // Auto-set transition timestamps so the client never has to remember.
     // If the client explicitly sends a value we keep it; otherwise we stamp NOW()
@@ -3254,14 +3307,33 @@ router.patch('/invoices/:id', async (req, res) => {
     const effectiveSentAt = sent_at || (status === 'sent' ? new Date().toISOString() : null);
     const effectivePaidAt = paid_at || (status === 'paid' ? new Date().toISOString() : null);
 
+    // Pay-link override (#292): same validation rules as the user-profile
+    // field. Empty string clears the override (falls back to the user-level
+    // default). undefined leaves the existing value intact.
+    let overrideProvided = false;
+    let overrideValue = null;
+    if (payment_link_url_override !== undefined) {
+      overrideProvided = true;
+      const trimmed = String(payment_link_url_override || '').trim();
+      if (!trimmed) {
+        overrideValue = null;
+      } else if (/^https?:\/\//i.test(trimmed)) {
+        overrideValue = trimmed.slice(0, 500);
+      } else {
+        return res.status(400).json({ error: 'Pay link must start with http:// or https://', field: 'payment_link_url_override' });
+      }
+    }
+
     const result = await db.query(
       `UPDATE invoices SET
          status = COALESCE($1, status),
          sent_at = COALESCE($2, sent_at),
          paid_at = COALESCE($3, paid_at),
-         recipient_email = COALESCE($4, recipient_email)
+         recipient_email = COALESCE($4, recipient_email),
+         payment_link_url_override = CASE WHEN $7::boolean THEN $8 ELSE payment_link_url_override END
        WHERE id = $5 AND user_id = $6 RETURNING *`,
-      [status, effectiveSentAt, effectivePaidAt, recipient_email || null, req.params.id, req.user.id]
+      [status, effectiveSentAt, effectivePaidAt, recipient_email || null, req.params.id, req.user.id,
+       overrideProvided, overrideValue]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
     res.json(result.rows[0]);
@@ -3484,7 +3556,7 @@ router.get('/print/gigs', async (req, res) => {
 router.get('/print/invoice/:id', async (req, res) => {
   try {
     const userR = await db.query(
-      `SELECT display_name, name, business_address, business_phone, vat_number, bank_details
+      `SELECT display_name, name, business_address, business_phone, vat_number, bank_details, payment_link_url
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -3524,6 +3596,19 @@ router.get('/print/invoice/:id', async (req, res) => {
       ? `<div style="margin-top:18px;padding:12px;background:#f6f7f9;border-radius:6px;">
            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#777;margin-bottom:6px;">Payment details</div>
            <div style="font-size:12px;color:#111;white-space:pre-line;line-height:1.5;">${_printEscape(me.bank_details)}</div>
+         </div>`
+      : '';
+
+    // #292: Pay this invoice online button. Routes through the public
+    // /pay/<slug> redirect so click telemetry fires regardless of which
+    // payment provider the URL ultimately points to.
+    const _directLink = inv.payment_link_url_override || me.payment_link_url || null;
+    const _origin = (process.env.APP_ORIGIN || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    const _payUrl = _directLink && inv.public_pay_slug ? `${_origin}/pay/${inv.public_pay_slug}` : null;
+    const payBlock = _payUrl
+      ? `<div style="margin-top:20px;text-align:center;">
+           <a href="${_printEscape(_payUrl)}" style="display:inline-block;background:#F0A500;color:#111;font-weight:700;font-size:14px;text-decoration:none;padding:12px 28px;border-radius:8px;">Pay this invoice online &rsaquo;</a>
+           <div style="font-size:10px;color:#888;margin-top:6px;">or use the bank details below</div>
          </div>`
       : '';
 
@@ -3582,6 +3667,7 @@ router.get('/print/invoice/:id', async (req, res) => {
             </tr>
           </tfoot>
         </table>
+        ${payBlock}
         ${bankBlock}
         ${renderedNotes ? `<div style="margin-top:14px;font-size:11px;color:#555;white-space:pre-line;">${_printEscape(renderedNotes)}</div>` : ''}
         <div style="margin-top:22px;padding-top:14px;border-top:1px solid #e5e7eb;font-size:10px;color:#888;text-align:center;">
@@ -3603,7 +3689,7 @@ router.get('/print/invoice/:id', async (req, res) => {
 router.get('/invoices/:id/pdf', async (req, res) => {
   try {
     const userR = await db.query(
-      `SELECT display_name, name, business_address, business_phone, vat_number, bank_details
+      `SELECT display_name, name, business_address, business_phone, vat_number, bank_details, payment_link_url
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -3619,7 +3705,17 @@ router.get('/invoices/:id/pdf', async (req, res) => {
     if (invR.rows.length === 0) return res.status(404).send('Invoice not found');
     const inv = invR.rows[0];
 
-    const pdf = await renderInvoicePdfBuffer(inv, me);
+    // Resolve the pay URL: per-invoice override first, otherwise the user's
+    // profile-level default. Always route through the public /pay/<slug>
+    // redirect so click telemetry fires even when the user pasted a direct
+    // Stripe / PayPal URL into the override field.
+    const directLink = inv.payment_link_url_override || me.payment_link_url || null;
+    const origin = (process.env.APP_ORIGIN || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    const payUrl = directLink && inv.public_pay_slug
+      ? `${origin}/pay/${inv.public_pay_slug}`
+      : null;
+
+    const pdf = await renderInvoicePdfBuffer(inv, me, { payUrl });
     const filename = buildInvoiceFilename(inv);
     const disposition = req.query.inline === '1' ? 'inline' : 'attachment';
     res.set('Content-Type', 'application/pdf')

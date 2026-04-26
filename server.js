@@ -770,6 +770,37 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`);
+    // Universal pay-link (2026-04-23, task #292). User-set URL pointing to
+    // their preferred payment method (Stripe Payment Link, PayPal.me, SumUp,
+    // Wise, Monzo.me, etc.). Embedded in every invoice email + PDF as a
+    // Pay Online button. Per-invoice override lets the user point a single
+    // invoice at a different URL when needed (e.g. a deposit link). The
+    // public_pay_slug is the short token used in /pay/<slug> redirect URLs
+    // so we don't expose the integer invoice id to email recipients.
+    // Click-tracking columns let the user see "Bob clicked your pay link
+    // 2 min ago" before any money has actually moved.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_link_url TEXT`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_link_url_override TEXT`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS public_pay_slug TEXT UNIQUE`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS pay_link_clicks INT NOT NULL DEFAULT 0`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS pay_link_last_clicked_at TIMESTAMP`);
+    // Backfill slugs for any pre-existing invoices so the public /pay/:slug
+    // route works for old data too. Generates 10 hex chars per row inside
+    // Postgres so we don't have to round-trip via the app to mint them.
+    await db.query(`
+      UPDATE invoices SET public_pay_slug = encode(gen_random_bytes(5), 'hex')
+      WHERE public_pay_slug IS NULL
+    `).catch(() => {
+      // pgcrypto / gen_random_bytes() may not be available on very old
+      // Postgres builds. Fall back to md5(random()::text) which exists on
+      // every install. Slug uniqueness is enforced by the column constraint
+      // so a collision (astronomically unlikely at 10 hex chars) would
+      // simply error out and be hand-resolved.
+      return db.query(`
+        UPDATE invoices SET public_pay_slug = substring(md5(random()::text || id::text) FOR 10)
+        WHERE public_pay_slug IS NULL
+      `);
+    });
     // Nudge cap (2026-04-23): sender gets 1 initial send + up to 2 nudges per
     // active offer. The third send of the same (gig, sender, recipient) pair
     // while the offer is still pending is rejected. nudge_count tracks how
