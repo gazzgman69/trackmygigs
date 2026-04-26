@@ -58,7 +58,11 @@ function stripeConfigured(res) {
 
 function priceIdForPlan(plan) {
   if (plan === 'annual') return process.env.STRIPE_ANNUAL_PRICE_ID || null;
-  return process.env.STRIPE_MONTHLY_PRICE_ID || null;
+  if (plan === 'monthly') return process.env.STRIPE_MONTHLY_PRICE_ID || null;
+  // Unknown plan: explicit null so the caller surfaces a 400. The earlier
+  // version of this helper fell back to monthly for any non-annual value,
+  // which let bogus plan strings sail through. Caught by harness scenario N-4.
+  return null;
 }
 
 function appOrigin(req) {
