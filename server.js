@@ -776,6 +776,20 @@ async function runMigrations() {
     // flag so the Profile screen can label the date accordingly ("cancels on
     // 10 May" vs "renews on 10 May"). Resubscribing flips it back to false.
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE`);
+    // 2026-04-26: trial-abuse defence layer.
+    //   trial_consumed_at: stamped on first subscription creation. Stops a
+    //     user cancelling and signing up again with the SAME email for a
+    //     fresh 14-day trial. Once it's set, future checkouts pass
+    //     trial_period_days=0 (subscribe immediately, no free window).
+    //   card_fingerprints: every Stripe card has a fingerprint that's stable
+    //     across customers. We append to this array whenever a payment
+    //     method gets attached to one of our users. At checkout completion
+    //     we cross-reference: if the new card has been used by ANY OTHER
+    //     user before, that user is recycling cards across emails, so we
+    //     end their trial immediately and charge them the £14.99.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_consumed_at TIMESTAMP`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS card_fingerprints TEXT[] NOT NULL DEFAULT '{}'`);
+    await db.query(`CREATE INDEX IF NOT EXISTS users_card_fingerprints_gin ON users USING GIN (card_fingerprints)`);
     // Universal pay-link (2026-04-23, task #292). User-set URL pointing to
     // their preferred payment method (Stripe Payment Link, PayPal.me, SumUp,
     // Wise, Monzo.me, etc.). Embedded in every invoice email + PDF as a

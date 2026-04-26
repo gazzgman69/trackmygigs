@@ -91,11 +91,19 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
     }
 
     const userRow = await db.query(
-      'SELECT id, email, stripe_customer_id FROM users WHERE id = $1 LIMIT 1',
+      'SELECT id, email, stripe_customer_id, trial_consumed_at FROM users WHERE id = $1 LIMIT 1',
       [req.user.id]
     );
     const user = userRow.rows[0];
     if (!user) return res.status(401).json({ error: 'unknown_actor' });
+
+    // Trial-abuse defence layer 1 (#292-followup): if this user has already
+    // consumed a trial — either on this account or by being a returning
+    // customer — skip the 14-day window. They subscribe immediately and pay
+    // the £14.99 (or £129) on day 1. Catches the easy abuse vector of
+    // "cancel, resubscribe, get another fortnight free" using the same email.
+    const alreadyTrialled = !!user.trial_consumed_at;
+    const trialDays = alreadyTrialled ? 0 : 14;
 
     const origin = appOrigin(req);
     const session = await stripe.checkout.sessions.create({
@@ -107,9 +115,10 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
       // the webhook.
       customer: user.stripe_customer_id || undefined,
       customer_email: user.stripe_customer_id ? undefined : user.email,
-      // 14-day trial on every new subscription per 2026-04-23 product call.
+      // Trial period is 14 days for first-time subscribers, 0 days for
+      // anyone whose users.trial_consumed_at flag is already set.
       subscription_data: {
-        trial_period_days: 14,
+        trial_period_days: trialDays,
         metadata: { tmg_user_id: String(user.id) },
       },
       // Session-level metadata too so the checkout.session.completed handler
@@ -202,6 +211,7 @@ async function webhookHandler(req, res) {
         // checkout but we read it anyway for symmetry with the update handler.
         let periodEnd = null;
         let cancelAtPeriodEnd = false;
+        let defaultPaymentMethodId = null;
         try {
           if (subscriptionId) {
             const sub = await stripe.subscriptions.retrieve(subscriptionId);
@@ -209,21 +219,92 @@ async function webhookHandler(req, res) {
               periodEnd = new Date(sub.current_period_end * 1000);
             }
             cancelAtPeriodEnd = !!(sub && sub.cancel_at_period_end);
+            defaultPaymentMethodId = sub && sub.default_payment_method;
           }
         } catch (subErr) {
           console.error('[stripe] subscription retrieve failed:', subErr.message);
         }
+
+        // Trial-abuse defence layer 2: pull the card fingerprint and check it
+        // against every other user's card_fingerprints. If the same physical
+        // card has been used on a different account before, the new signup is
+        // recycling cards across emails — end their trial immediately so the
+        // £14.99 charge fires today instead of in 14 days.
+        let cardFingerprint = null;
+        if (defaultPaymentMethodId) {
+          try {
+            const pm = await stripe.paymentMethods.retrieve(defaultPaymentMethodId);
+            if (pm && pm.card && pm.card.fingerprint) {
+              cardFingerprint = pm.card.fingerprint;
+            }
+          } catch (pmErr) {
+            console.error('[stripe] payment method retrieve failed:', pmErr.message);
+          }
+        }
+
+        let trialKilled = false;
+        if (cardFingerprint && subscriptionId) {
+          const collision = await db.query(
+            `SELECT id FROM users WHERE id <> $1 AND $2 = ANY(card_fingerprints) LIMIT 1`,
+            [tmgUserId, cardFingerprint]
+          );
+          if (collision.rows.length > 0) {
+            try {
+              // trial_end='now' is Stripe's documented "end this trial right
+              // now" sentinel. Stripe immediately attempts to charge the
+              // saved payment method and transitions the subscription from
+              // trialing -> active.
+              await stripe.subscriptions.update(subscriptionId, { trial_end: 'now' });
+              trialKilled = true;
+              console.log('[stripe] trial-abuse: card fingerprint matched user',
+                collision.rows[0].id, '— trial ended immediately for user', tmgUserId);
+            } catch (killErr) {
+              console.error('[stripe] failed to end abused trial:', killErr.message);
+            }
+          }
+        }
+
         await db.query(
           `UPDATE users
              SET stripe_customer_id = COALESCE(stripe_customer_id, $1),
                  stripe_subscription_id = $2,
                  premium = TRUE,
                  premium_until = $3,
-                 stripe_cancel_at_period_end = $4
+                 stripe_cancel_at_period_end = $4,
+                 trial_consumed_at = COALESCE(trial_consumed_at, NOW()),
+                 card_fingerprints = CASE
+                   WHEN $6::text IS NOT NULL AND NOT ($6 = ANY(card_fingerprints))
+                     THEN array_append(card_fingerprints, $6)
+                   ELSE card_fingerprints
+                 END
            WHERE id = $5`,
-          [customerId, subscriptionId, periodEnd, cancelAtPeriodEnd, tmgUserId]
+          [customerId, subscriptionId, periodEnd, cancelAtPeriodEnd, tmgUserId, cardFingerprint]
         );
-        console.log('[stripe] premium ON for user', tmgUserId, 'until', periodEnd, 'cancelAtPeriodEnd=', cancelAtPeriodEnd);
+        console.log('[stripe] premium ON for user', tmgUserId, 'until', periodEnd,
+          'cancelAtPeriodEnd=', cancelAtPeriodEnd, 'trialKilled=', trialKilled,
+          'fingerprint=', cardFingerprint ? cardFingerprint.slice(0, 8) + '...' : 'none');
+        break;
+      }
+      // Capture card fingerprints whenever a payment method gets attached to
+      // a customer, even outside the checkout flow (e.g. user adds a backup
+      // card via the Billing Portal). Lets us widen the cross-user match
+      // window beyond just the moment of subscription creation.
+      case 'payment_method.attached': {
+        const pm = event.data.object;
+        const fingerprint = pm && pm.card && pm.card.fingerprint;
+        const customerId = pm && pm.customer;
+        if (fingerprint && customerId) {
+          await db.query(
+            `UPDATE users
+               SET card_fingerprints = CASE
+                 WHEN NOT ($1 = ANY(card_fingerprints))
+                   THEN array_append(card_fingerprints, $1)
+                 ELSE card_fingerprints
+               END
+             WHERE stripe_customer_id = $2`,
+            [fingerprint, customerId]
+          );
+        }
         break;
       }
       case 'customer.subscription.updated': {
