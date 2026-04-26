@@ -197,14 +197,18 @@ async function webhookHandler(req, res) {
           console.warn('[stripe] checkout.session.completed without tmg_user_id metadata');
           break;
         }
-        // Pull the full subscription so we can read current_period_end.
+        // Pull the full subscription so we can read current_period_end and the
+        // cancel_at_period_end flag. The flag is almost always false on a fresh
+        // checkout but we read it anyway for symmetry with the update handler.
         let periodEnd = null;
+        let cancelAtPeriodEnd = false;
         try {
           if (subscriptionId) {
             const sub = await stripe.subscriptions.retrieve(subscriptionId);
             if (sub && sub.current_period_end) {
               periodEnd = new Date(sub.current_period_end * 1000);
             }
+            cancelAtPeriodEnd = !!(sub && sub.cancel_at_period_end);
           }
         } catch (subErr) {
           console.error('[stripe] subscription retrieve failed:', subErr.message);
@@ -214,11 +218,12 @@ async function webhookHandler(req, res) {
              SET stripe_customer_id = COALESCE(stripe_customer_id, $1),
                  stripe_subscription_id = $2,
                  premium = TRUE,
-                 premium_until = $3
-           WHERE id = $4`,
-          [customerId, subscriptionId, periodEnd, tmgUserId]
+                 premium_until = $3,
+                 stripe_cancel_at_period_end = $4
+           WHERE id = $5`,
+          [customerId, subscriptionId, periodEnd, cancelAtPeriodEnd, tmgUserId]
         );
-        console.log('[stripe] premium ON for user', tmgUserId, 'until', periodEnd);
+        console.log('[stripe] premium ON for user', tmgUserId, 'until', periodEnd, 'cancelAtPeriodEnd=', cancelAtPeriodEnd);
         break;
       }
       case 'customer.subscription.updated': {
@@ -226,14 +231,20 @@ async function webhookHandler(req, res) {
         // status: active | trialing | past_due | canceled | unpaid | incomplete
         const active = sub.status === 'active' || sub.status === 'trialing';
         const periodEnd = sub.current_period_end ? new Date(sub.current_period_end * 1000) : null;
+        // cancel_at_period_end mirrors the Stripe flag verbatim. true = user
+        // clicked Cancel in the Billing Portal but still has access until
+        // periodEnd. false = subscription is healthy AND will renew (or has
+        // been resubscribed after a cancel-at-period-end was reversed).
+        const cancelAtPeriodEnd = !!sub.cancel_at_period_end;
         await db.query(
           `UPDATE users
              SET premium = $1,
-                 premium_until = $2
-           WHERE stripe_subscription_id = $3`,
-          [active, periodEnd, sub.id]
+                 premium_until = $2,
+                 stripe_cancel_at_period_end = $3
+           WHERE stripe_subscription_id = $4`,
+          [active, periodEnd, cancelAtPeriodEnd, sub.id]
         );
-        console.log('[stripe] subscription', sub.id, 'status=', sub.status, 'active=', active);
+        console.log('[stripe] subscription', sub.id, 'status=', sub.status, 'active=', active, 'cancelAtPeriodEnd=', cancelAtPeriodEnd);
         break;
       }
       case 'customer.subscription.deleted': {
@@ -241,7 +252,8 @@ async function webhookHandler(req, res) {
         await db.query(
           `UPDATE users
              SET premium = FALSE,
-                 stripe_subscription_id = NULL
+                 stripe_subscription_id = NULL,
+                 stripe_cancel_at_period_end = FALSE
            WHERE stripe_subscription_id = $1`,
           [sub.id]
         );

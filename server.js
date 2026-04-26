@@ -770,6 +770,12 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`);
+    // 2026-04-26: when the user cancels via Stripe Billing Portal, Stripe
+    // doesn't end the subscription immediately; it sets cancel_at_period_end
+    // and lets them keep access until the trial / period ends. We mirror that
+    // flag so the Profile screen can label the date accordingly ("cancels on
+    // 10 May" vs "renews on 10 May"). Resubscribing flips it back to false.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE`);
     // Universal pay-link (2026-04-23, task #292). User-set URL pointing to
     // their preferred payment method (Stripe Payment Link, PayPal.me, SumUp,
     // Wise, Monzo.me, etc.). Embedded in every invoice email + PDF as a

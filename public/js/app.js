@@ -4308,11 +4308,20 @@ function buildProfileHTML(content, profile) {
             } catch (_) { /* ignore */ }
           }
           if (isPremium) {
+            // 2026-04-26: read cancel_at_period_end so the date label matches
+            // reality. After a Billing Portal cancel, the user still has
+            // premium until the period ends — UI should say "cancels on" not
+            // "renews on", and the colour shifts to warning so the cancellation
+            // is visible at a glance.
+            const cancelling = prof.stripe_cancel_at_period_end === true;
+            const dateVerb = cancelling ? 'cancels' : 'renews';
+            const subText = untilLabel ? ('Premium &middot; ' + dateVerb + ' ' + untilLabel) : 'Premium';
+            const subColour = cancelling ? 'var(--warning,#F0A500)' : 'var(--text-2)';
             return `
         <div onclick="window.openBillingPortal && window.openBillingPortal()" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;">
           <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
             <span style="color:var(--text);font-size:14px;">Manage subscription</span>
-            <span style="color:var(--text-2);font-size:11px;">Premium${untilLabel ? ' &middot; renews ' + untilLabel : ''}</span>
+            <span style="color:${subColour};font-size:11px;">${subText}</span>
           </div>
           <span style="color:var(--accent);font-size:16px;">&rsaquo;</span>
         </div>`;
