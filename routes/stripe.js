@@ -317,16 +317,39 @@ async function webhookHandler(req, res) {
         // periodEnd. false = subscription is healthy AND will renew (or has
         // been resubscribed after a cancel-at-period-end was reversed).
         const cancelAtPeriodEnd = !!sub.cancel_at_period_end;
+
+        // Fingerprint capture also runs here so that any subscription event
+        // (e.g. cancel, plan change, payment-method swap) keeps the
+        // card_fingerprints array fresh. Same code path as the checkout
+        // handler, just without the cross-user trial-killing check (this
+        // path is for already-subscribed users, not new signups).
+        let cardFingerprint = null;
+        if (sub.default_payment_method) {
+          try {
+            const pm = await stripe.paymentMethods.retrieve(sub.default_payment_method);
+            if (pm && pm.card && pm.card.fingerprint) {
+              cardFingerprint = pm.card.fingerprint;
+            }
+          } catch (pmErr) {
+            console.error('[stripe] payment method retrieve failed:', pmErr.message);
+          }
+        }
+
         await db.query(
           `UPDATE users
              SET premium = $1,
                  premium_until = $2,
                  stripe_cancel_at_period_end = $3,
-                 trial_consumed_at = COALESCE(trial_consumed_at, NOW())
+                 trial_consumed_at = COALESCE(trial_consumed_at, NOW()),
+                 card_fingerprints = CASE
+                   WHEN $5::text IS NOT NULL AND NOT ($5 = ANY(card_fingerprints))
+                     THEN array_append(card_fingerprints, $5)
+                   ELSE card_fingerprints
+                 END
            WHERE stripe_subscription_id = $4`,
-          [active, periodEnd, cancelAtPeriodEnd, sub.id]
+          [active, periodEnd, cancelAtPeriodEnd, sub.id, cardFingerprint]
         );
-        console.log('[stripe] subscription', sub.id, 'status=', sub.status, 'active=', active, 'cancelAtPeriodEnd=', cancelAtPeriodEnd);
+        console.log('[stripe] subscription', sub.id, 'status=', sub.status, 'active=', active, 'cancelAtPeriodEnd=', cancelAtPeriodEnd, 'fingerprint=', cardFingerprint ? cardFingerprint.slice(0, 8) + '...' : 'none');
         break;
       }
       case 'customer.subscription.deleted': {
