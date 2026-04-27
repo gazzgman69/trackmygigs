@@ -12828,7 +12828,16 @@ function onGigSelected() {
   const venueRow = document.getElementById('invPreviewVenueRow');
   const venueEl = document.getElementById('invPreviewVenue');
   if ((gig.venue_name || gig.venue_address) && venueRow && venueEl) {
-    const parts = [gig.venue_name, gig.venue_address].filter(Boolean);
+    // Demo 2026-04-28 bug 3: imported gigs whose address Google formats as
+    // "<Venue Name>, <street>, <town>, <postcode>" produced "<Venue>, <Venue>,
+    // <street>, ..." here because we joined name + address verbatim. Drop the
+    // name when the address already starts with it (case+whitespace
+    // insensitive) so the preview reads cleanly. Same call signature for the
+    // common case where address is just a postcode or doesn't echo the name.
+    const name = (gig.venue_name || '').trim();
+    const addr = (gig.venue_address || '').trim();
+    const addrStartsWithName = name && addr && addr.toLowerCase().startsWith(name.toLowerCase());
+    const parts = addrStartsWithName ? [addr] : [name, addr].filter(Boolean);
     venueEl.textContent = parts.join(', ');
     venueRow.style.display = '';
   } else if (venueRow) {
@@ -12898,15 +12907,21 @@ function openInvoicePdfPreview() {
   if (u.home_postcode) fromMetaParts.push(u.home_postcode);
   const fromMeta = fromMetaParts.join('\n');
 
-  // Venue line — pull from linked gig if present
+  // Venue line — pull from linked gig if present. Same dedup as the
+  // composer preview (Demo 2026-04-28 bug 3): if address starts with the
+  // venue name we drop the duplicate so we don't render "Venue, Venue, ...".
   const gigId = document.getElementById('invLinkedGig')?.value;
   let venueText = '';
   if (gigId) {
     const gigs = window._cachedGigs || [];
     const gig = gigs.find(g => g.id === gigId);
     if (gig) {
-      const parts = [gig.venue_name, gig.venue_address, gig.date ? formatDate(gig.date) : null].filter(Boolean);
-      venueText = parts.join(' · ');
+      const vName = (gig.venue_name || '').trim();
+      const vAddr = (gig.venue_address || '').trim();
+      const dropName = vName && vAddr && vAddr.toLowerCase().startsWith(vName.toLowerCase());
+      const venueParts = dropName ? [vAddr] : [vName, vAddr].filter(Boolean);
+      const parts = [...venueParts, gig.date ? formatDate(gig.date) : null].filter(Boolean);
+      venueText = parts.join(' \u00B7 ');
     }
   }
 

@@ -1085,7 +1085,31 @@ router.post('/offers/:id/nudge', async (req, res) => {
 
 router.get('/user/profile', async (req, res) => {
   try {
-    res.json(req.user);
+    // Demo 2026-04-28 bug 2: Profile screen rendered "0 Gigs / 0 Acts / £0
+    // Earned" for users who clearly had data because /user/profile was
+    // shipping the raw user row only — gigs_count, acts_count and
+    // total_earned were never computed. Compute them here in one round
+    // trip so the Profile card matches Home's tax-year totals (which are
+    // confirmed-only per the financial-views memory). Acts count is the
+    // distinct band_name values across all of the user's gigs.
+    const userId = req.user.id;
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const taxYearStart = (month > 4 || (month === 4 && day >= 6))
+      ? `${now.getFullYear()}-04-06`
+      : `${now.getFullYear() - 1}-04-06`;
+    const stats = await db.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM gigs WHERE user_id = $1)                                      AS gigs_count,
+         (SELECT COUNT(DISTINCT band_name)::int FROM gigs
+            WHERE user_id = $1 AND band_name IS NOT NULL AND band_name <> '')                     AS acts_count,
+         (SELECT COALESCE(SUM(fee), 0)::int FROM gigs
+            WHERE user_id = $1 AND status = 'confirmed' AND date >= $2)                           AS total_earned`,
+      [userId, taxYearStart]
+    );
+    const counts = stats.rows[0] || { gigs_count: 0, acts_count: 0, total_earned: 0 };
+    res.json({ ...req.user, ...counts });
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({ error: 'Failed to fetch profile' });

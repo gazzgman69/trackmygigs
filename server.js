@@ -1134,6 +1134,18 @@ async function runMigrations() {
     )`);
     await db.query(`CREATE INDEX IF NOT EXISTS marketplace_apps_gig_idx ON marketplace_applications (marketplace_gig_id)`);
     await db.query(`CREATE INDEX IF NOT EXISTS marketplace_apps_applicant_idx ON marketplace_applications (applicant_user_id, created_at DESC)`);
+    // Demo 2026-04-28 bug 1: invoices.invoice_number had a GLOBAL UNIQUE
+    // constraint from schema.sql, so any two users picking the same series
+    // (everyone defaults to INV-001) would collide and the second user's
+    // first invoice would 500 with a unique violation. Drop the global
+    // constraint and re-add it scoped to (user_id, invoice_number) so each
+    // tenant has their own number space. Drop is idempotent: if the
+    // constraint name doesn't match (older migrations may have renamed),
+    // the catch swallows it and we move on.
+    try {
+      await db.query(`ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_invoice_number_key`);
+    } catch (e) { /* swallow — name varies across schemas */ }
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS invoices_user_invoice_number_uniq ON invoices (user_id, invoice_number) WHERE invoice_number IS NOT NULL`);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);
