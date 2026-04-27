@@ -193,6 +193,26 @@ function initApp(user) {
     clearCalendarConnectedParam();
   }
   if (justConnected) {
+    // Onboarding resume (2026-04-27): if the user kicked off Google Calendar
+    // OAuth from inside the onboarding picker we left a marker in
+    // localStorage. Resume the picker at the "Anything else?" pass with
+    // calendar removed from the available sources, then run the existing
+    // first-import bulk-import modal so the user can pull historical gigs in.
+    const resumeFrom = (function () {
+      try { return localStorage.getItem('tmg_onboarding_resume'); } catch (_) { return null; }
+    })();
+    if (resumeFrom === 'calendar') {
+      try { localStorage.removeItem('tmg_onboarding_resume'); } catch (_) {}
+      // Pre-seed onboarding state so the picker hides the calendar option.
+      window._onboardingState = window._onboardingState || { completed: [] };
+      if (!window._onboardingState.completed.includes('calendar')) {
+        window._onboardingState.completed.push('calendar');
+      }
+      // Tell maybeStartOnboarding to skip to the picker rather than walking
+      // the user through the whole tour again.
+      window._onboardingResumePicker = true;
+    }
+
     const firstDone = (function () {
       try { return localStorage.getItem('tmg_first_import_done') === '1'; }
       catch (_) { return false; }
@@ -13928,14 +13948,29 @@ const ONBOARDING_STEPS = [
     cta: 'Next',
   },
   {
-    kind: 'info',
-    emoji: '✨',
-    title: "You're ready",
-    body: "Add your first gig and everything else falls into place. Your home and Finance panels fill up as you go.",
-    cta: "Log my first gig",
+    // 2026-04-27: replaces the old "Log my first gig" final slide. The biggest
+    // value TMG offers a working musician is *not* having to retype their
+    // existing schedule, so the onboarding now leads with bulk import. The
+    // picker is intentionally not a single-pick exit — after the user finishes
+    // one import we re-render the picker minus the source they just used, so
+    // someone with a Google Calendar of past work AND a spreadsheet of
+    // upcoming bookings can pull both in during the same setup session.
+    //
+    // Time framing matters: this step is the moment a user decides "is this
+    // worth the effort?". The body copy sets the 15-20 minute expectation
+    // honestly so the user doesn't bail when the picker takes a minute.
+    kind: 'picker',
+    emoji: '📥',
+    title: 'Bring your gigs in',
+    body: "Importing what you've already got is the fastest way to make TrackMyGigs useful. Pick a source: calendar, spreadsheet, or Google Sheet. You can do more than one. Plan for 15 to 20 minutes total if you want everything in.",
     final: true,
   },
 ];
+
+// Tracks which import sources have been completed inside the current
+// onboarding session, so the "Anything else?" pass hides them. Reset every
+// time the tour starts. Sources: 'calendar' | 'upload' | 'sheets'.
+window._onboardingState = window._onboardingState || { completed: [] };
 
 function maybeStartOnboarding() {
   try {
@@ -13952,6 +13987,50 @@ function maybeStartOnboarding() {
     const profile = window._cachedProfile || {};
     if (profile.onboarded_at) return;
     window._onboardingShown = true;
+    // Resume path (2026-04-27): if the user just came back from Google
+    // Calendar OAuth mid-onboarding, jump straight to the import picker
+    // instead of replaying the welcome/profile-basics slides. The boot
+    // handler set _onboardingResumePicker after stripping the URL flag.
+    //
+    // Subtlety: the calendar_connected handler also schedules
+    // openFirstImportModal() which opens the bulk-import UI on top. We want
+    // that UI to fire (it's the actual import flow), so we don't render the
+    // picker until the first-import modal has been dismissed. A
+    // MutationObserver watches for its removal, then re-renders the picker
+    // so the user lands on "Anything else?".
+    if (window._onboardingResumePicker) {
+      window._onboardingResumePicker = false;
+      const pickerIdx = ONBOARDING_STEPS.findIndex(s => s.kind === 'picker');
+      if (pickerIdx < 0) return;
+      // The boot handler schedules openFirstImportModal() at 600ms post-boot
+      // when calendar_connected=true is present, so it may not be in the DOM
+      // yet by the time maybeStartOnboarding runs. Wait briefly for the
+      // modal to appear; if it does, watch for its removal then render the
+      // picker. If it never appears within 2s, the user already did a bulk
+      // import so render the picker right away.
+      const renderWhenModalGone = () => {
+        const obs = new MutationObserver(() => {
+          if (!document.getElementById('firstImportOverlay')) {
+            obs.disconnect();
+            renderImportPicker(pickerIdx, { repeat: true });
+          }
+        });
+        obs.observe(document.body, { childList: true });
+      };
+      const waitForModal = (attemptsLeft) => {
+        if (document.getElementById('firstImportOverlay')) {
+          renderWhenModalGone();
+          return;
+        }
+        if (attemptsLeft <= 0) {
+          renderImportPicker(pickerIdx, { repeat: true });
+          return;
+        }
+        setTimeout(() => waitForModal(attemptsLeft - 1), 200);
+      };
+      waitForModal(10); // 10 * 200ms = 2s window for the modal to appear
+      return;
+    }
     showOnboardingStep(0);
   } catch (err) {
     console.error('Onboarding check failed:', err);
@@ -13963,13 +14042,14 @@ function showOnboardingStep(index) {
   const step = ONBOARDING_STEPS[index];
   if (!step) { finishOnboarding(); return; }
 
-  let overlay = document.getElementById('onboardingOverlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'onboardingOverlay';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(13,17,23,.88);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
-    document.body.appendChild(overlay);
+  // Picker step uses its own renderer so the layout can host three large
+  // tappable source cards instead of the standard one-button info layout.
+  if (step.kind === 'picker') {
+    renderImportPicker(index, { repeat: false });
+    return;
   }
+
+  let overlay = ensureOnboardingOverlay();
 
   const total = ONBOARDING_STEPS.length;
   const pips = Array.from({ length: total }, (_, i) =>
@@ -14025,7 +14105,9 @@ function showOnboardingStep(index) {
       }
     }
     if (step.final) {
-      await finishOnboarding({ openGigWizard: true });
+      // Non-picker final steps still finish onboarding directly. The picker
+      // path runs its own finish flow inside renderImportPicker.
+      await finishOnboarding({ openGigWizard: false });
     } else {
       showOnboardingStep(index + 1);
     }
@@ -14033,18 +14115,448 @@ function showOnboardingStep(index) {
   skipBtn.onclick = () => finishOnboarding({ openGigWizard: false });
 }
 
+// ── IMPORT PICKER (final onboarding step) ───────────────────────────────────
+// Shown as the last onboarding step. Lets the user pick how they want to
+// bring their existing gigs into TMG. Each source kicks off a different flow
+// and on completion we re-render the picker with the just-used source removed
+// so they can chain Calendar + CSV + Sheets in one sitting.
+
+function ensureOnboardingOverlay() {
+  let overlay = document.getElementById('onboardingOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'onboardingOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(13,17,23,.88);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto;';
+    document.body.appendChild(overlay);
+  }
+  return overlay;
+}
+
+function renderImportPicker(stepIndex, opts) {
+  const repeat = !!(opts && opts.repeat);
+  const completed = (window._onboardingState && window._onboardingState.completed) || [];
+  const overlay = ensureOnboardingOverlay();
+
+  const total = ONBOARDING_STEPS.length;
+  const pips = Array.from({ length: total }, (_, i) =>
+    `<span style="width:6px;height:6px;border-radius:50%;background:${i === stepIndex ? 'var(--accent)' : 'var(--border)'};"></span>`
+  ).join('');
+
+  const sources = [
+    {
+      key: 'calendar',
+      emoji: '📅',
+      title: 'Connect Google Calendar',
+      blurb: "Pull every event from your Google Calendar. Best if your gigs already live there.",
+      action: 'startImportFromCalendar',
+    },
+    {
+      key: 'upload',
+      emoji: '📊',
+      title: 'Upload a spreadsheet',
+      blurb: "CSV or Excel. We'll let you map columns to gig fields before importing.",
+      action: 'startImportFromUpload',
+    },
+    {
+      key: 'sheets',
+      emoji: '📋',
+      title: 'Connect a Google Sheet',
+      blurb: "Two-way sync. Edit gigs in TrackMyGigs or your Sheet, both stay in step.",
+      action: 'startImportFromSheets',
+    },
+  ];
+
+  const remaining = sources.filter(s => !completed.includes(s.key));
+  const allDone = remaining.length === 0;
+
+  const titleHtml = repeat
+    ? (allDone ? "Nice work, you're set" : 'Bring in another source?')
+    : 'Bring your gigs in';
+  const subtitleHtml = repeat
+    ? (allDone
+        ? "Everything imported. Hit done to land on your home screen, and you can pull more in later from Profile."
+        : "You can chain as many imports as you want. Hit done when you're finished.")
+    : "Importing what you've already got is the fastest way to make TrackMyGigs useful. Pick a source: calendar, spreadsheet, or Google Sheet. You can do more than one. Plan for 15 to 20 minutes total if you want everything in.";
+
+  const cardsHtml = remaining.map(src => {
+    const usedTag = completed.includes(src.key)
+      ? '<span style="display:inline-block;font-size:10px;font-weight:700;color:#000;background:var(--accent);padding:2px 8px;border-radius:999px;margin-left:8px;">Imported</span>'
+      : '';
+    return `
+      <button data-source="${src.key}" data-action="${src.action}" class="onbSourceBtn" style="display:block;width:100%;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:left;cursor:pointer;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="font-size:30px;line-height:1;">${src.emoji}</div>
+          <div style="flex:1;">
+            <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:2px;">${escapeHtml(src.title)}${usedTag}</div>
+            <div style="font-size:12px;color:var(--text-2);line-height:1.4;">${escapeHtml(src.blurb)}</div>
+          </div>
+          <div style="color:var(--text-3);font-size:18px;">›</div>
+        </div>
+      </button>`;
+  }).join('');
+
+  const doneCta = repeat
+    ? (allDone ? "Take me to my home screen" : "I'm done, finish setup")
+    : "Skip for now, I'll do this later";
+
+  overlay.innerHTML = `
+    <div style="max-width:380px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;text-align:center;box-shadow:0 30px 60px rgba(0,0,0,.5);">
+      <div style="font-size:46px;margin-bottom:8px;">📥</div>
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:10px;">${escapeHtml(titleHtml)}</div>
+      <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:16px;text-align:left;">${escapeHtml(subtitleHtml)}</div>
+      <div style="text-align:left;margin-bottom:14px;">${cardsHtml}</div>
+      <div style="display:flex;justify-content:center;gap:6px;margin-bottom:14px;">${pips}</div>
+      <button id="onbDone" style="width:100%;background:${allDone ? 'var(--accent)' : 'transparent'};color:${allDone ? '#000' : 'var(--text-2)'};border:1px solid ${allDone ? 'var(--accent)' : 'var(--border)'};border-radius:10px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;">${escapeHtml(doneCta)}</button>
+      <button id="onbBackToManual" style="margin-top:10px;width:100%;background:transparent;color:var(--text-3);border:none;padding:8px;font-size:12px;cursor:pointer;">Or just log a gig manually</button>
+    </div>`;
+
+  // Wire source buttons
+  overlay.querySelectorAll('.onbSourceBtn').forEach(btn => {
+    btn.onclick = () => {
+      const action = btn.getAttribute('data-action');
+      try {
+        if (action === 'startImportFromCalendar') startImportFromCalendar();
+        else if (action === 'startImportFromUpload') startImportFromUpload();
+        else if (action === 'startImportFromSheets') startImportFromSheets();
+      } catch (err) {
+        console.error('Import source action failed:', err);
+        if (typeof showToast === 'function') showToast('Could not start import. Please try again.');
+      }
+    };
+  });
+
+  document.getElementById('onbDone').onclick = () => finishOnboarding({ openGigWizard: false });
+  document.getElementById('onbBackToManual').onclick = () => finishOnboarding({ openGigWizard: true });
+}
+
+// ── IMPORT SOURCE HANDLERS ──────────────────────────────────────────────────
+// Each handler kicks off the chosen import flow. When the flow completes the
+// handler should call `markImportSourceComplete(<key>)` which re-renders the
+// picker minus the just-used source. For calendar this happens after the
+// OAuth round-trip via the boot-time resume in maybeStartOnboarding.
+
+function startImportFromCalendar() {
+  // Stash a marker so when the OAuth callback redirects us back with
+  // ?calendar_connected=true we know to resume onboarding at the picker
+  // rather than just dismissing it.
+  try { localStorage.setItem('tmg_onboarding_resume', 'calendar'); } catch (_) {}
+  // Bounce out to Google. The /auth/google/callback handler will redirect
+  // back to '/?calendar_connected=true' which the boot path already strips.
+  window.location.href = '/auth/google/calendar';
+}
+
+function startImportFromUpload() {
+  // Phase B (2026-04-27): hide the picker, render the upload + column-map
+  // UI in its place, and rebuild the picker once the import completes (or
+  // is cancelled). Both Papa Parse (CSV) and SheetJS (XLSX) are
+  // lazy-loaded from CDN the first time the user picks a file so the main
+  // bundle stays slim.
+  const overlay = ensureOnboardingOverlay();
+  overlay.innerHTML = renderUploadPickerHtml();
+  wireUploadPicker(overlay);
+}
+
+// HTML for the file-picker / drag-drop step of the spreadsheet importer.
+function renderUploadPickerHtml() {
+  return `
+    <div style="max-width:420px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;text-align:center;box-shadow:0 30px 60px rgba(0,0,0,.5);">
+      <div style="font-size:46px;margin-bottom:8px;">📊</div>
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:8px;">Upload a spreadsheet</div>
+      <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:16px;text-align:left;">
+        Drop a CSV or Excel file with one row per gig. We'll show you a column-mapping screen so you can tell us which column is the date, fee, venue, etc. Most clean spreadsheets need 30 seconds of mapping.
+      </div>
+      <label id="onbDropZone" for="onbFileInput" style="display:block;border:2px dashed var(--border);border-radius:12px;padding:30px 20px;background:var(--bg);cursor:pointer;color:var(--text-2);font-size:14px;margin-bottom:12px;">
+        <div style="font-size:30px;margin-bottom:8px;">⬆</div>
+        <div style="font-weight:700;color:var(--text);margin-bottom:4px;">Drop a file here</div>
+        <div style="font-size:12px;">or tap to browse — .csv, .xlsx, .xls</div>
+      </label>
+      <input id="onbFileInput" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none;">
+      <div id="onbUploadStatus" style="font-size:12px;color:var(--text-3);min-height:18px;margin-bottom:12px;"></div>
+      <button id="onbUploadBack" style="width:100%;background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:13px;cursor:pointer;">Back</button>
+    </div>`;
+}
+
+function wireUploadPicker(overlay) {
+  const input = overlay.querySelector('#onbFileInput');
+  const drop = overlay.querySelector('#onbDropZone');
+  const status = overlay.querySelector('#onbUploadStatus');
+  const back = overlay.querySelector('#onbUploadBack');
+
+  back.onclick = () => {
+    const pickerIdx = ONBOARDING_STEPS.findIndex(s => s.kind === 'picker');
+    if (pickerIdx >= 0) renderImportPicker(pickerIdx, { repeat: true });
+  };
+
+  // Drag and drop wiring
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    drop.style.borderColor = 'var(--accent)';
+    drop.style.background = 'rgba(76, 217, 100, 0.06)';
+  }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    drop.style.borderColor = 'var(--border)';
+    drop.style.background = 'var(--bg)';
+  }));
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) handleSpreadsheetFile(file, status);
+  });
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    if (file) handleSpreadsheetFile(file, status);
+  });
+}
+
+// Lazy-loader for parser libraries. Returns a promise that resolves with the
+// global the script attaches to window.
+function loadScriptOnce(src, globalKey) {
+  return new Promise((resolve, reject) => {
+    if (window[globalKey]) return resolve(window[globalKey]);
+    const existing = document.querySelector(`script[data-cdn="${src}"]`);
+    if (existing) {
+      existing.addEventListener('load', () => resolve(window[globalKey]));
+      existing.addEventListener('error', () => reject(new Error('script load failed')));
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = src;
+    s.setAttribute('data-cdn', src);
+    s.onload = () => resolve(window[globalKey]);
+    s.onerror = () => reject(new Error('script load failed: ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+async function handleSpreadsheetFile(file, statusEl) {
+  if (statusEl) statusEl.textContent = `Reading ${file.name}…`;
+  const name = (file.name || '').toLowerCase();
+  try {
+    let rows = [];
+    if (name.endsWith('.csv') || file.type === 'text/csv') {
+      const Papa = await loadScriptOnce('https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js', 'Papa');
+      const text = await file.text();
+      const parsed = Papa.parse(text, { header: false, skipEmptyLines: 'greedy' });
+      rows = parsed.data || [];
+    } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      const XLSX = await loadScriptOnce('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', 'XLSX');
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheetName = wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, raw: false });
+    } else {
+      if (statusEl) statusEl.textContent = 'Unsupported file type. Use CSV or Excel.';
+      return;
+    }
+    if (!rows.length) {
+      if (statusEl) statusEl.textContent = 'That file looked empty.';
+      return;
+    }
+    if (statusEl) statusEl.textContent = `${rows.length} rows read. Map your columns…`;
+    showColumnMapper(file.name, rows);
+  } catch (err) {
+    console.error('Spreadsheet parse failed:', err);
+    if (statusEl) statusEl.textContent = 'Could not read that file. Try saving it as CSV and uploading again.';
+  }
+}
+
+// Column mapping. Renders a header-row dropdown for each TMG field so the
+// user can point us at their spreadsheet's columns. Header is auto-guessed
+// from the first row whenever the column name looks recognisable.
+function showColumnMapper(filename, rows) {
+  const overlay = ensureOnboardingOverlay();
+  // Treat first row as headers. If it looks numeric/date-y the user can
+  // toggle the "First row is data" checkbox.
+  const headers = (rows[0] || []).map((h, i) => String(h || `Column ${i + 1}`));
+  const sample = rows.slice(1, 4); // up to 3 sample rows below the dropdowns
+  const fields = [
+    { key: 'date', label: 'Date', required: true,
+      synonyms: ['date', 'when', 'day', 'gig date', 'event date'] },
+    { key: 'start_time', label: 'Start time', required: false,
+      synonyms: ['start', 'time', 'start time', 'doors', 'set start'] },
+    { key: 'end_time', label: 'End time', required: false,
+      synonyms: ['end', 'finish', 'end time', 'set end'] },
+    { key: 'fee', label: 'Fee (£)', required: false,
+      synonyms: ['fee', 'amount', 'pay', 'rate', 'price', 'cost'] },
+    { key: 'band_name', label: 'Band / act', required: false,
+      synonyms: ['band', 'act', 'artist', 'group', 'band name'] },
+    { key: 'venue_name', label: 'Venue', required: false,
+      synonyms: ['venue', 'location', 'place', 'where'] },
+    { key: 'venue_address', label: 'Venue address', required: false,
+      synonyms: ['address', 'venue address', 'street'] },
+    { key: 'client_name', label: 'Client / contact', required: false,
+      synonyms: ['client', 'contact', 'agent', 'booker', 'organiser'] },
+    { key: 'notes', label: 'Notes', required: false,
+      synonyms: ['notes', 'comments', 'remarks', 'description'] },
+  ];
+
+  function guessIdx(synonyms) {
+    const lower = headers.map(h => h.toLowerCase().trim());
+    for (const syn of synonyms) {
+      const i = lower.indexOf(syn);
+      if (i >= 0) return i;
+    }
+    for (let i = 0; i < lower.length; i++) {
+      if (synonyms.some(syn => lower[i].includes(syn))) return i;
+    }
+    return -1;
+  }
+
+  const fieldRows = fields.map(f => {
+    const guess = guessIdx(f.synonyms);
+    const opts = ['<option value="-1">— Skip this field —</option>']
+      .concat(headers.map((h, i) => `<option value="${i}" ${i === guess ? 'selected' : ''}>${escapeHtml(h)}</option>`))
+      .join('');
+    return `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;text-align:left;">
+        <div style="flex:1;font-size:13px;color:var(--text);">${escapeHtml(f.label)}${f.required ? ' <span style="color:var(--accent);">*</span>' : ''}</div>
+        <select data-field="${f.key}" style="flex:1;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">${opts}</select>
+      </div>`;
+  }).join('');
+
+  const sampleHtml = sample.length
+    ? `<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;text-align:left;">
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">First 3 rows preview</div>
+        <div style="font-size:11px;color:var(--text-3);font-family:monospace;line-height:1.5;overflow-x:auto;">
+          ${sample.map(r => '<div>' + escapeHtml(r.slice(0, 6).join(' | ')) + (r.length > 6 ? ' …' : '') + '</div>').join('')}
+        </div>
+      </div>`
+    : '';
+
+  overlay.innerHTML = `
+    <div style="max-width:480px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;text-align:center;box-shadow:0 30px 60px rgba(0,0,0,.5);max-height:90vh;overflow-y:auto;">
+      <div style="font-size:32px;margin-bottom:6px;">🗂</div>
+      <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;">Map your columns</div>
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:14px;">${escapeHtml(filename)} · ${rows.length - 1} data rows</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);margin-bottom:12px;text-align:left;">
+        <input id="onbFirstRowData" type="checkbox" style="accent-color:var(--accent);">
+        First row is data, not headers
+      </label>
+      <div>${fieldRows}</div>
+      ${sampleHtml}
+      <div id="onbMapStatus" style="font-size:12px;color:var(--text-3);min-height:18px;margin:14px 0 8px;"></div>
+      <button id="onbMapImport" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">Import ${rows.length - 1} gig${rows.length - 1 === 1 ? '' : 's'}</button>
+      <button id="onbMapBack" style="margin-top:10px;width:100%;background:transparent;color:var(--text-3);border:none;padding:8px;font-size:12px;cursor:pointer;">Back to picker</button>
+    </div>`;
+
+  overlay.querySelector('#onbMapBack').onclick = () => {
+    const pickerIdx = ONBOARDING_STEPS.findIndex(s => s.kind === 'picker');
+    if (pickerIdx >= 0) renderImportPicker(pickerIdx, { repeat: true });
+  };
+
+  overlay.querySelector('#onbMapImport').onclick = async () => {
+    const map = {};
+    overlay.querySelectorAll('select[data-field]').forEach(sel => {
+      const idx = parseInt(sel.value, 10);
+      if (!isNaN(idx) && idx >= 0) map[sel.getAttribute('data-field')] = idx;
+    });
+    if (typeof map.date !== 'number') {
+      overlay.querySelector('#onbMapStatus').textContent = 'A Date column is required to import.';
+      return;
+    }
+    const firstRowIsData = !!overlay.querySelector('#onbFirstRowData').checked;
+    const dataRows = firstRowIsData ? rows : rows.slice(1);
+    await submitSpreadsheetImport(filename, dataRows, map, overlay);
+  };
+}
+
+async function submitSpreadsheetImport(filename, dataRows, map, overlay) {
+  const status = overlay.querySelector('#onbMapStatus');
+  const btn = overlay.querySelector('#onbMapImport');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  if (status) status.textContent = '';
+
+  // Build payload rows. We pass raw cell strings to the server so it can
+  // run a unified date parser; the client only normalises obvious things
+  // like whitespace and currency symbols on the fee column.
+  const events = dataRows.map((row, i) => {
+    const get = (key) => {
+      const idx = map[key];
+      if (typeof idx !== 'number') return null;
+      const v = row[idx];
+      return v == null ? null : String(v).trim();
+    };
+    const feeRaw = get('fee');
+    const fee = feeRaw ? feeRaw.replace(/[^0-9.\-]/g, '') : null;
+    return {
+      _row: i + 1,
+      date: get('date'),
+      start_time: get('start_time'),
+      end_time: get('end_time'),
+      fee: fee && fee !== '' ? parseFloat(fee) : null,
+      band_name: get('band_name'),
+      venue_name: get('venue_name'),
+      venue_address: get('venue_address'),
+      client_name: get('client_name'),
+      notes: get('notes'),
+    };
+  });
+
+  try {
+    const r = await fetch('/api/gigs/import-bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: 'csv', filename, rows: events }),
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || ('HTTP ' + r.status));
+
+    if (typeof invalidateGigsCache === 'function') invalidateGigsCache();
+
+    const imported = data.imported || 0;
+    const skipped = data.skipped || 0;
+    if (typeof showToast === 'function') {
+      showToast(`Imported ${imported} gig${imported === 1 ? '' : 's'}${skipped ? ` (${skipped} skipped)` : ''}`);
+    }
+    markImportSourceComplete('upload');
+  } catch (err) {
+    console.error('Spreadsheet import failed:', err);
+    if (status) status.textContent = 'Import failed: ' + (err.message || 'unknown error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Try again'; }
+  }
+}
+
+function startImportFromSheets() {
+  // Phase C will replace this stub with the Google Sheets OAuth + sheet
+  // picker. For now mark the source complete + toast.
+  if (typeof showToast === 'function') {
+    showToast('Google Sheets sync arrives in the next release. Skipping for now.');
+  }
+  markImportSourceComplete('sheets');
+}
+
+function markImportSourceComplete(key) {
+  if (!window._onboardingState) window._onboardingState = { completed: [] };
+  if (!window._onboardingState.completed.includes(key)) {
+    window._onboardingState.completed.push(key);
+  }
+  // The picker is the final ONBOARDING_STEPS index. Find it dynamically so
+  // the index doesn't go stale if steps are reordered later.
+  const pickerIdx = ONBOARDING_STEPS.findIndex(s => s.kind === 'picker');
+  if (pickerIdx >= 0) {
+    renderImportPicker(pickerIdx, { repeat: true });
+  }
+}
+window.markImportSourceComplete = markImportSourceComplete;
+
 async function finishOnboarding(opts) {
   const overlay = document.getElementById('onboardingOverlay');
   if (overlay) overlay.remove();
   try {
     localStorage.setItem('tmg_onboarded', '1');
+    // Clear any in-flight resume marker — the user has finished.
+    localStorage.removeItem('tmg_onboarding_resume');
     await fetch('/api/user/onboarded', { method: 'POST' });
     if (window._cachedProfile) window._cachedProfile.onboarded_at = new Date().toISOString();
   } catch (err) {
     console.error('Mark onboarded failed (non-fatal):', err);
   }
-  // S10-06: if the final step asked us to, jump straight into the gig wizard so
-  // the first-run experience ends with the user adding their first booking.
+  // Reset session state so a re-fired tour starts clean.
+  window._onboardingState = { completed: [] };
+  // The picker has its own "log a gig manually" affordance which sets
+  // openGigWizard=true. All other paths just land on the home screen.
   if (opts && opts.openGigWizard) {
     try {
       if (typeof openGigWizard === 'function') setTimeout(() => openGigWizard(), 200);

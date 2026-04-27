@@ -872,6 +872,26 @@ async function runMigrations() {
     // through. Single calendar selection (default primary) is enough for the
     // launch cohort; bumping to multi-select would need per-calendar sync tokens.
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_selected_calendar VARCHAR(255) DEFAULT 'primary'`);
+    // Phase A onboarding rework (2026-04-27): users who skipped the import
+    // picker can re-fire setup later from Profile. The new flag lets us tell
+    // a fresh-skip from a long-term user who never wanted to bulk-import.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_skipped BOOLEAN DEFAULT FALSE`);
+    // Phase C/D/E Google Sheets two-way sync. The user picks a single sheet
+    // tab; we store its spreadsheet+sheet IDs on the user, and stamp each
+    // gig with its Sheets row ID so updates round-trip cleanly.
+    //   google_sheets_id             — the spreadsheet (file) ID, fixed per user
+    //   google_sheets_tab            — sheet tab name within that file
+    //   google_sheets_last_pulled_at — last time we pulled changes FROM Sheets
+    //   gigs.sheets_row_id           — A1-style row reference inside the tab
+    //   gigs.sheets_updated_at       — Sheets-side mtime, used for last-write-wins
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sheets_id VARCHAR(255)`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sheets_tab VARCHAR(255)`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sheets_last_pulled_at TIMESTAMPTZ`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS sheets_row_id VARCHAR(64)`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS sheets_updated_at TIMESTAMPTZ`);
+    // Lookup index for the bidirectional pull: "all my gigs that map to a
+    // Sheet row I've seen before".
+    await db.query(`CREATE INDEX IF NOT EXISTS gigs_sheets_row_idx ON gigs (user_id, sheets_row_id) WHERE sheets_row_id IS NOT NULL`);
     // One-time cleanup: a legacy gig row (uuid prefix 1cc2b3e0, "The Vents @
     // The Post Barn", 2026-04-23) was created with 00:00/00:00 start+end times
     // and kept surfacing on the Calendar as a ghost. Predates the wizard's

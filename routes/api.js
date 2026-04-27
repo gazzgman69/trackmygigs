@@ -301,6 +301,222 @@ router.delete('/gigs/:id', async (req, res) => {
   }
 });
 
+// ── BULK IMPORT FROM SPREADSHEET (CSV / XLSX) ────────────────────────────────
+// Companion to /calendar/import-bulk for non-Google sources. The frontend
+// parses the file in the browser (Papa Parse / SheetJS) and sends pre-mapped
+// rows here. We dedupe on three axes:
+//   1. Source-specific synthetic key — md5(user_id|date|venue_name|start_time)
+//      stored in google_event_id. Re-importing the same file is idempotent.
+//   2. Cross-source soft match — same user_id + same date + same venue_name
+//      (case-insensitive). If found, MERGE rather than INSERT so a gig that
+//      already arrived via Google Calendar doesn't duplicate when the same
+//      booking shows up in a CSV.
+//   3. Time conflict guard — if the candidate row has an explicit start_time
+//      that DOESN'T match the existing row's start_time, treat it as a
+//      separate gig (e.g. a teaching session in the morning + a dep gig in
+//      the evening at the same venue).
+//
+// Body:
+//   { source: 'csv' | 'xlsx', filename: string,
+//     rows: [{ date, start_time?, end_time?, fee?, band_name?, venue_name?,
+//              venue_address?, client_name?, notes? }, ...] }
+// Returns: { imported, merged, skipped, errors, gigs, total }
+router.post('/gigs/import-bulk', async (req, res) => {
+  try {
+    const sourceTag = ['csv', 'xlsx', 'sheets'].includes(req.body && req.body.source)
+      ? req.body.source
+      : 'csv';
+    const filename = (req.body && req.body.filename) ? String(req.body.filename).slice(0, 200) : 'spreadsheet';
+    const list = Array.isArray(req.body && req.body.rows) ? req.body.rows : [];
+
+    if (list.length === 0) return res.status(400).json({ error: 'No rows provided' });
+    if (list.length > 1500) return res.status(413).json({ error: 'Too many rows (max 1500)' });
+
+    let imported = 0;
+    let merged = 0;
+    let skipped = 0;
+    const errors = [];
+    const gigs = [];
+
+    // Try ISO first, then DD/MM/YYYY (UK), then MM/DD/YYYY (US fallback).
+    // Anything else returns null and the row is skipped with a clear reason.
+    function parseDateLike(s) {
+      if (!s) return null;
+      const v = String(s).trim();
+      // ISO: 2026-04-27 or 2026-04-27T10:00...
+      const iso = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+      if (iso) return `${iso[1]}-${String(iso[2]).padStart(2,'0')}-${String(iso[3]).padStart(2,'0')}`;
+      // DD/MM/YYYY or DD-MM-YYYY (UK) — only if first segment is 1-31
+      const uk = v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+      if (uk) {
+        let day = parseInt(uk[1], 10);
+        let month = parseInt(uk[2], 10);
+        let year = parseInt(uk[3], 10);
+        if (year < 100) year += 2000;
+        if (day > 12 && month <= 12) {
+          // Must be DD/MM
+          return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        }
+        // Ambiguous (both day and month <= 12): default to UK format since
+        // app is UK-first. International users with US-format CSVs can save
+        // their sheet with ISO dates to avoid the ambiguity.
+        return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+      }
+      // Last-resort: let Date.parse have a go.
+      const d = new Date(v);
+      if (!isNaN(d.getTime())) {
+        return d.toISOString().slice(0, 10);
+      }
+      return null;
+    }
+
+    function parseTimeLike(s) {
+      if (!s) return null;
+      const v = String(s).trim();
+      // 24h: 19:30, 19.30, 1930
+      const m24 = v.match(/^(\d{1,2})[:\.]?(\d{2})$/);
+      if (m24) {
+        const h = parseInt(m24[1], 10);
+        const m = parseInt(m24[2], 10);
+        if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+          return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+        }
+      }
+      // 12h: 7:30 PM
+      const m12 = v.match(/^(\d{1,2})[:\.](\d{2})\s*(am|pm)$/i);
+      if (m12) {
+        let h = parseInt(m12[1], 10);
+        const m = parseInt(m12[2], 10);
+        const ap = m12[3].toLowerCase();
+        if (ap === 'pm' && h < 12) h += 12;
+        if (ap === 'am' && h === 12) h = 0;
+        return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+      }
+      return null;
+    }
+
+    for (const ev of list) {
+      try {
+        const rowNum = ev._row || (list.indexOf(ev) + 1);
+        const date = parseDateLike(ev.date);
+        if (!date) {
+          skipped++;
+          errors.push({ row: rowNum, message: `Could not parse date "${ev.date}"` });
+          continue;
+        }
+        const startTime = parseTimeLike(ev.start_time);
+        const endTime = parseTimeLike(ev.end_time);
+        const venueName = ev.venue_name ? String(ev.venue_name).trim() : null;
+        const bandName = ev.band_name ? String(ev.band_name).trim() : null;
+
+        // Synthetic dedup key — stable across re-imports of the same row.
+        const dedupRaw = `${req.user.id}|${date}|${(venueName || '').toLowerCase()}|${startTime || ''}|${sourceTag}`;
+        const dedupKey = `${sourceTag}:${crypto.createHash('md5').update(dedupRaw).digest('hex').slice(0, 16)}`;
+
+        // Layer 1: same source repeat — if google_event_id already matches our
+        // synthetic key, this row was already imported. Merge values in case
+        // the user updated their spreadsheet between runs.
+        const sameSrcExisting = await db.query(
+          'SELECT * FROM gigs WHERE user_id = $1 AND google_event_id = $2 LIMIT 1',
+          [req.user.id, dedupKey]
+        );
+
+        // Layer 2: cross-source soft match — same date + same venue (case-
+        // insensitive). Skip the soft match if the candidate has an explicit
+        // start_time that disagrees with the existing row's start_time.
+        let crossSrcExisting = { rows: [] };
+        if (sameSrcExisting.rows.length === 0 && venueName) {
+          crossSrcExisting = await db.query(
+            `SELECT * FROM gigs
+              WHERE user_id = $1
+                AND date = $2
+                AND LOWER(TRIM(venue_name)) = LOWER(TRIM($3))
+                AND ($4::time IS NULL
+                     OR start_time IS NULL
+                     OR start_time = $4::time)
+              LIMIT 1`,
+            [req.user.id, date, venueName, startTime]
+          );
+        }
+
+        const existingRow = sameSrcExisting.rows[0] || crossSrcExisting.rows[0];
+
+        if (existingRow) {
+          // Merge: caller fills nulls, never overwrites a non-null. Preserves
+          // hand-edited values. Append source tag if it's a different source.
+          const newSource = existingRow.source && !existingRow.source.includes(sourceTag)
+            ? `${existingRow.source}+${sourceTag}:${filename}`
+            : (existingRow.source || `${sourceTag}:${filename}`);
+          const updated = await db.query(
+            `UPDATE gigs
+               SET band_name = COALESCE(band_name, $1),
+                   venue_name = COALESCE(venue_name, $2),
+                   venue_address = COALESCE(venue_address, $3),
+                   start_time = COALESCE(start_time, $4),
+                   end_time = COALESCE(end_time, $5),
+                   fee = COALESCE(fee, $6),
+                   client_name = COALESCE(client_name, $7),
+                   notes = COALESCE(notes, $8),
+                   source = $9
+             WHERE id = $10 AND user_id = $11
+             RETURNING *`,
+            [
+              bandName,
+              venueName,
+              ev.venue_address ? String(ev.venue_address).trim() : null,
+              startTime,
+              endTime,
+              ev.fee != null && ev.fee !== '' ? parseFloat(ev.fee) : null,
+              ev.client_name ? String(ev.client_name).trim() : null,
+              ev.notes ? String(ev.notes).trim() : null,
+              newSource,
+              existingRow.id,
+              req.user.id,
+            ]
+          );
+          gigs.push(updated.rows[0]);
+          merged++;
+        } else {
+          const inserted = await db.query(
+            `INSERT INTO gigs (user_id, band_name, venue_name, venue_address,
+                               date, start_time, end_time, fee, status, source,
+                               client_name, notes, google_event_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             RETURNING *`,
+            [
+              req.user.id,
+              bandName,
+              venueName,
+              ev.venue_address ? String(ev.venue_address).trim() : null,
+              date,
+              startTime,
+              endTime,
+              ev.fee != null && ev.fee !== '' ? parseFloat(ev.fee) : null,
+              'confirmed',
+              `${sourceTag}:${filename}`,
+              ev.client_name ? String(ev.client_name).trim() : null,
+              ev.notes ? String(ev.notes).trim() : null,
+              dedupKey, // store synthetic key in google_event_id so the
+                        // existing dedup index does its job
+            ]
+          );
+          gigs.push(inserted.rows[0]);
+          imported++;
+        }
+      } catch (rowErr) {
+        console.error('[gigs/import-bulk] row error:', rowErr.message);
+        errors.push({ row: ev && ev._row, message: rowErr.message });
+        skipped++;
+      }
+    }
+
+    res.json({ imported, merged, skipped, errors, gigs, total: list.length });
+  } catch (error) {
+    console.error('Spreadsheet bulk import error:', error);
+    res.status(500).json({ error: 'Bulk import failed', detail: error.message });
+  }
+});
+
 // Bulk-create teaching gigs from a weekly recurrence pattern. Example body:
 //   { client_name, client_email, client_phone, rate_per_hour,
 //     weekday: 1 /* 0=Sun..6=Sat */, start_time: '16:30', end_time: '17:30',
