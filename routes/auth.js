@@ -137,12 +137,13 @@ async function findOrCreateUser(email, name, avatarUrl, googleId) {
     // name stays in sync for back-compat, but users can later edit name to be an act/band name.
     // S10-05: when no name is provided (magic-link flow), derive from email.
     const derivedName = name || deriveNameFromEmail(email);
-    // 2026-04-27: default new users to available_for_deps=true so the
-    // marketplace has a healthy dep pool from day one. Users opt out from
-    // Profile > Edit Profile if they don't want dep offers. The onboarding
-    // tour no longer asks about this.
+    // 2026-04-27: new users default to available_for_deps=TRUE via the
+    // schema DEFAULT (see server.js migration). Onboarding no longer asks
+    // about this. Users opt out from Profile > Edit Profile if they don't
+    // want dep offers. Keeping the INSERT minimal (no explicit column) so
+    // the schema default is the single source of truth.
     const createResult = await db.query(
-      'INSERT INTO users (email, name, display_name, avatar_url, google_id, available_for_deps) VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING *',
+      'INSERT INTO users (email, name, display_name, avatar_url, google_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [email, derivedName, derivedName || null, avatarUrl || null, googleId || null]
     );
     // Owner marketing list hook: enrol the new user into the Kit form so they

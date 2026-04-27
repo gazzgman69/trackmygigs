@@ -878,6 +878,12 @@ async function runMigrations() {
     // picker can re-fire setup later from Profile. The new flag lets us tell
     // a fresh-skip from a long-term user who never wanted to bulk-import.
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_skipped BOOLEAN DEFAULT FALSE`);
+    // 2026-04-27: available_for_deps was referenced in app.js + auth.js but
+    // never had a migration. Add it now with DEFAULT TRUE so new users opt
+    // into the dep marketplace by default (the onboarding tour no longer
+    // asks). Existing users with NULL get backfilled to TRUE in one shot.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS available_for_deps BOOLEAN DEFAULT TRUE`);
+    await db.query(`UPDATE users SET available_for_deps = TRUE WHERE available_for_deps IS NULL`);
     // Phase C/D/E Google Sheets two-way sync. The user picks a single sheet
     // tab; we store its spreadsheet+sheet IDs on the user, and stamp each
     // gig with its Sheets row ID so updates round-trip cleanly.
