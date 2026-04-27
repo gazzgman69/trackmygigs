@@ -402,6 +402,12 @@ async function resolveSessionUser(req) {
 //   calendar.events           - read/write events (two-way sync)
 //   calendar.calendarlist.readonly - let user pick which calendar to sync
 router.get('/google/calendar', (req, res) => {
+  // 2026-04-27: include the spreadsheets scope upfront so users who connect
+  // Calendar and later want to import from a Google Sheet don't trigger a
+  // second OAuth round-trip. Trade-off: the consent screen mentions "edit
+  // Sheets" which is broader than they may expect from a "Connect Calendar"
+  // button. Acceptable for the smoother flow — users can still skip the
+  // Sheet import; the scope just lies dormant until needed.
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
@@ -410,6 +416,7 @@ router.get('/google/calendar', (req, res) => {
       'https://www.googleapis.com/auth/userinfo.profile',
       'https://www.googleapis.com/auth/calendar.events',
       'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+      'https://www.googleapis.com/auth/spreadsheets',
     ],
     state: 'calendar',
   });

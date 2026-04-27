@@ -208,8 +208,11 @@ function initApp(user) {
       try { localStorage.removeItem('tmg_onboarding_resume'); } catch (_) {}
       // Skip the welcome/profile slides and drop straight into the Sheets
       // URL paste step. _onboardingShown stops the regular tour from also
-      // firing.
+      // firing. _sheetsResumeAutoFetch tells showSheetsUrlStep to auto-
+      // trigger the preview so the user doesn't have to click Read again
+      // after the OAuth bounce.
       window._onboardingShown = true;
+      window._sheetsResumeAutoFetch = true;
       setTimeout(() => {
         if (typeof showSheetsUrlStep === 'function') showSheetsUrlStep();
       }, 400);
@@ -14687,6 +14690,12 @@ async function startImportFromSheets() {
 
 function showSheetsUrlStep() {
   const overlay = ensureOnboardingOverlay();
+  // 2026-04-27: pre-fill the URL field from localStorage so users who got
+  // bounced through OAuth don't have to retype. We stash the URL on
+  // "Read this sheet" click and clear it when the import succeeds.
+  let savedUrl = '';
+  try { savedUrl = localStorage.getItem('tmg_onboarding_sheet_url') || ''; } catch (_) {}
+
   overlay.innerHTML = `
     <div style="max-width:420px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;text-align:center;box-shadow:0 30px 60px rgba(0,0,0,.5);">
       <div style="font-size:46px;margin-bottom:8px;">📋</div>
@@ -14694,13 +14703,14 @@ function showSheetsUrlStep() {
       <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:14px;text-align:left;">
         Open the Sheet in Google Sheets, copy the URL from your browser's address bar, and paste it here. We'll show you the tabs and let you map columns.
       </div>
-      <input id="onbSheetUrl" type="url" placeholder="https://docs.google.com/spreadsheets/d/..." style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;box-sizing:border-box;margin-bottom:10px;">
+      <input id="onbSheetUrl" type="url" placeholder="https://docs.google.com/spreadsheets/d/..." value="${escapeHtml(savedUrl)}" style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;box-sizing:border-box;margin-bottom:10px;">
       <div id="onbSheetStatus" style="font-size:12px;color:var(--text-3);min-height:18px;margin-bottom:10px;text-align:left;"></div>
       <button id="onbSheetNext" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">Read this sheet</button>
       <button id="onbSheetBack" style="margin-top:10px;width:100%;background:transparent;color:var(--text-3);border:none;padding:8px;font-size:12px;cursor:pointer;">Back</button>
     </div>`;
 
   overlay.querySelector('#onbSheetBack').onclick = () => {
+    try { localStorage.removeItem('tmg_onboarding_sheet_url'); } catch (_) {}
     const pickerIdx = ONBOARDING_STEPS.findIndex(s => s.kind === 'picker');
     if (pickerIdx >= 0) renderImportPicker(pickerIdx, { repeat: true });
   };
@@ -14710,8 +14720,20 @@ function showSheetsUrlStep() {
       overlay.querySelector('#onbSheetStatus').textContent = 'Paste a Google Sheets URL or ID first.';
       return;
     }
+    // Stash before any fetch so an OAuth redirect doesn't lose the URL.
+    try { localStorage.setItem('tmg_onboarding_sheet_url', url); } catch (_) {}
     fetchSheetPreview(url, null);
   };
+
+  // If we were resumed with a URL already saved, auto-trigger the preview
+  // so the user lands directly on the column mapper without having to
+  // click "Read this sheet" again. Belt and braces: with the calendar OAuth
+  // now granting spreadsheets too, this auto-resume rarely fires anymore,
+  // but it's the right fallback for any future flow that does redirect.
+  if (savedUrl && window._sheetsResumeAutoFetch) {
+    window._sheetsResumeAutoFetch = false;
+    setTimeout(() => fetchSheetPreview(savedUrl, null), 200);
+  }
 }
 
 async function fetchSheetPreview(urlOrId, tabName) {
@@ -14842,6 +14864,9 @@ async function submitSheetsImport(columnMap, overlay) {
       if (skipped) parts.push(`${skipped} skipped`);
       showToast(parts.join(', '));
     }
+    // Clear the stashed URL so the next time the user opens the Sheets
+    // step it doesn't pre-fill with a stale value.
+    try { localStorage.removeItem('tmg_onboarding_sheet_url'); } catch (_) {}
     markImportSourceComplete('sheets');
   } catch (err) {
     console.error('Sheets import failed:', err);
