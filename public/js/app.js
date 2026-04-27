@@ -3292,16 +3292,67 @@ function openDayActionSheet(dateStr) {
   const existing = document.getElementById('dayActionSheet');
   if (existing) existing.remove();
   const display = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  // Look up what's actually on this date so the sheet is informative
+  // instead of always saying "Nothing on this day". Gigs come from the
+  // gigs cache (date columns are ISO timestamps so we slice the first 10
+  // chars before comparing). Blocked-date entries come from the blocked
+  // cache; they may be objects with a date field or bare ISO strings.
+  const gigsOnDay = (Array.isArray(window._cachedGigs) ? window._cachedGigs : [])
+    .filter((g) => String(g.date || '').slice(0, 10) === dateStr);
+  const blockedRows = Array.isArray(window._cachedBlocked) ? window._cachedBlocked : [];
+  const blockedRow = blockedRows.find((b) => {
+    const bd = typeof b === 'string' ? b : (b && b.date);
+    return String(bd || '').slice(0, 10) === dateStr;
+  });
+
+  let summaryHtml;
+  if (gigsOnDay.length > 0) {
+    summaryHtml = gigsOnDay.map((g) => {
+      const startTime = g.start_time ? String(g.start_time).slice(0, 5) : '';
+      const endTime = g.end_time ? String(g.end_time).slice(0, 5) : '';
+      const timeBits = [startTime, endTime].filter(Boolean).join(' – ');
+      const venue = g.venue_name || '';
+      const sub = [timeBits, venue].filter(Boolean).join(' &middot; ');
+      const fee = g.fee ? '£' + Math.round(parseFloat(g.fee)).toLocaleString('en-GB') : '';
+      return `<div onclick="closeDayActionSheet();openGigDetail('${g.id}')" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:11px 13px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;gap:10px;">
+        <div style="width:3px;align-self:stretch;background:var(--success);border-radius:2px;"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(g.band_name || g.act_name || 'Gig')}</div>
+          ${sub ? `<div style="font-size:11px;color:var(--text-2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sub}</div>` : ''}
+        </div>
+        ${fee ? `<div style="font-size:12px;font-weight:700;color:var(--success);flex-shrink:0;">${fee}</div>` : ''}
+        <span style="color:var(--accent);font-size:18px;flex-shrink:0;">&rsaquo;</span>
+      </div>`;
+    }).join('');
+  } else if (blockedRow) {
+    const reason = (typeof blockedRow === 'object' && blockedRow.reason) ? blockedRow.reason : '';
+    summaryHtml = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:11px 13px;margin-bottom:8px;display:flex;align-items:center;gap:10px;">
+      <div style="width:3px;align-self:stretch;background:var(--danger);border-radius:2px;"></div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">Blocked</div>
+        ${reason ? `<div style="font-size:11px;color:var(--text-2);margin-top:2px;">${escapeHtml(reason)}</div>` : ''}
+      </div>
+    </div>`;
+  } else {
+    summaryHtml = `<div style="font-size:12px;color:var(--text-2);text-align:center;margin-bottom:12px;">Nothing on this day</div>`;
+  }
+
+  // Always offer Add gig. Block / Unblock toggles based on current state.
+  const blockButton = blockedRow
+    ? `<button onclick="closeDayActionSheet();window._prefillBlockDate='${dateStr}';openPanel('panel-block');" style="width:100%;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:10px;">Manage block</button>`
+    : `<button onclick="closeDayActionSheet();window._prefillBlockDate='${dateStr}';openPanel('panel-block');" style="width:100%;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:10px;">Block date</button>`;
+
   const sheet = document.createElement('div');
   sheet.id = 'dayActionSheet';
   sheet.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
   sheet.innerHTML = `
     <div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
-      <div style="font-size:14px;font-weight:700;color:var(--text);text-align:center;margin-bottom:4px;">${escapeHtml(display)}</div>
-      <div style="font-size:12px;color:var(--text-2);text-align:center;margin-bottom:16px;">Nothing on this day</div>
-      <button onclick="closeDayActionSheet();window._prefillGigDate='${dateStr}';openGigWizard();" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:10px;">Add gig</button>
-      <button onclick="closeDayActionSheet();window._prefillBlockDate='${dateStr}';openPanel('panel-block');" style="width:100%;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:10px;">Block date</button>
+      <div style="font-size:14px;font-weight:700;color:var(--text);text-align:center;margin-bottom:14px;">${escapeHtml(display)}</div>
+      ${summaryHtml}
+      <button onclick="closeDayActionSheet();window._prefillGigDate='${dateStr}';openGigWizard();" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin:6px 0 10px;">${gigsOnDay.length > 0 ? 'Add another gig' : 'Add gig'}</button>
+      ${blockButton}
       <button onclick="closeDayActionSheet()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Cancel</button>
     </div>`;
   sheet.addEventListener('click', (ev) => { if (ev.target === sheet) closeDayActionSheet(); });
