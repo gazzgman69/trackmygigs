@@ -881,14 +881,14 @@ function buildHomeHTML(content, stats) {
         : 'No confirmed earnings yet this tax year';
 
       html += `
-      <div onclick="window.openFinanceAt && window.openFinanceAt('monthly')" style="margin:0 16px 6px;cursor:pointer;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 14px 12px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-          <div style="font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px;">
-            <span style="font-size:14px;">📈</span>12-month forecast
+      <div onclick="window.openFinanceAt && window.openFinanceAt('monthly')" style="margin:0 16px 6px;cursor:pointer;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px 9px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div style="font-size:12px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:5px;">
+            <span style="font-size:12px;">📈</span>12-month forecast
           </div>
-          <div style="font-size:11px;color:var(--text-3);">Tax year ${taxYearLabel}</div>
+          <div style="font-size:10px;color:var(--text-3);">Tax year ${taxYearLabel}</div>
         </div>
-        <div style="display:flex;align-items:flex-end;gap:5px;height:74px;margin-bottom:8px;">
+        <div style="display:flex;align-items:flex-end;gap:4px;height:44px;margin-bottom:4px;">
           ${months.map((m) => {
             const heightPct = m.confirmed > 0 ? Math.max(8, (m.confirmed / maxConfirmed) * 100) : 4;
             const opacity = m.confirmed > 0 ? (m.isFuture ? 0.85 : 1) : 0.18;
@@ -897,15 +897,15 @@ function buildHomeHTML(content, stats) {
               ? ': £' + Math.round(m.confirmed).toLocaleString('en-GB')
               : ': no confirmed earnings';
             return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;" title="${m.full}${titleSuffix}">
-              <div style="width:100%;height:${heightPct}%;background:${bg};border-radius:6px;opacity:${opacity};"></div>
+              <div style="width:100%;height:${heightPct}%;background:${bg};border-radius:5px;opacity:${opacity};"></div>
             </div>`;
           }).join('')}
         </div>
-        <div style="display:flex;align-items:center;gap:5px;margin-bottom:10px;padding:0 1px;">
-          ${months.map((m) => `<div style="flex:1;text-align:center;font-size:10px;color:var(--text-3);font-weight:600;">${m.letter}</div>`).join('')}
+        <div style="display:flex;align-items:center;gap:4px;margin-bottom:7px;padding:0 1px;">
+          ${months.map((m) => `<div style="flex:1;text-align:center;font-size:9px;color:var(--text-3);font-weight:600;">${m.letter}</div>`).join('')}
         </div>
-        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-2);padding-top:10px;border-top:1px solid var(--border);">
-          <span style="width:9px;height:9px;background:var(--success,#3FB950);border-radius:2px;flex-shrink:0;"></span>
+        <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text-2);padding-top:7px;border-top:1px solid var(--border);">
+          <span style="width:8px;height:8px;background:var(--success,#3FB950);border-radius:2px;flex-shrink:0;"></span>
           <span>${summary}</span>
         </div>
       </div>`;
