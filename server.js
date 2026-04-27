@@ -172,6 +172,49 @@ function handleReload(req, res) {
 app.get('/api/admin/reload', handleReload);
 app.post('/api/admin/reload', handleReload);
 
+// Debug endpoint (Demo 2026-04-28): inspect cross-source dedup state.
+// Reports: total gigs, duplicate counts by date+start_time+normalized
+// band, and whether the cleanup migration would match them. Gated by
+// RELOAD_SECRET so it won't leak data in production.
+app.get('/api/admin/dedup-debug', async (req, res) => {
+  const expected = process.env.RELOAD_SECRET;
+  if (!expected || req.query.key !== expected) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  try {
+    const db = require('./db');
+    const total = await db.query(`SELECT COUNT(*)::int AS n FROM gigs`);
+    const dupes = await db.query(`
+      WITH norm AS (
+        SELECT
+          id, user_id, date, start_time, band_name, venue_name,
+          source, google_event_id, sheets_row_id,
+          LOWER(regexp_replace(regexp_replace(TRIM(COALESCE(band_name,'')), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', '')) AS norm_band
+        FROM gigs
+      )
+      SELECT
+        n1.user_id, n1.date, n1.start_time, n1.norm_band,
+        n1.id AS id1, n1.band_name AS band1, n1.source AS src1, n1.google_event_id AS gcal1, n1.sheets_row_id AS sheet1, n1.venue_name AS venue1,
+        n2.id AS id2, n2.band_name AS band2, n2.source AS src2, n2.google_event_id AS gcal2, n2.sheets_row_id AS sheet2, n2.venue_name AS venue2
+      FROM norm n1
+      JOIN norm n2 ON n1.user_id = n2.user_id
+        AND n1.date = n2.date
+        AND n1.start_time = n2.start_time
+        AND n1.norm_band = n2.norm_band
+        AND n1.id < n2.id
+        AND n1.norm_band <> ''
+      LIMIT 5
+    `);
+    res.json({
+      total_gigs: total.rows[0].n,
+      sample_pairs: dupes.rows,
+      sample_count: dupes.rows.length,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // One-off cleanup endpoint for [SEC-TEST] harness data on the live helium DB.
 // The multi-tenant audit test creates 10 sec-test-*@trackmygigs.test users
 // plus their gigs, contacts, threads, messages and offers; the test's own
