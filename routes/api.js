@@ -450,6 +450,27 @@ router.post('/gigs/import-bulk', async (req, res) => {
             [req.user.id, date, venueName, startTime]
           );
         }
+        // Layer 2b (Demo 2026-04-28): venue-name match misses when calendar
+        // and sheet name the venue differently (e.g. calendar location was
+        // just the address "High St, Bicester" while the sheet has "The
+        // Tythe Barn" as venue_name). Fall back to date + start_time +
+        // band_name — a real user playing two gigs at the same time on the
+        // same day with the same band name is essentially impossible. Only
+        // fires when both rows have a band_name AND start_time, so generic
+        // empty-band entries don't collapse together.
+        if (sameSrcExisting.rows.length === 0
+            && crossSrcExisting.rows.length === 0
+            && bandName && startTime) {
+          crossSrcExisting = await db.query(
+            `SELECT * FROM gigs
+              WHERE user_id = $1
+                AND date = $2
+                AND start_time = $3::time
+                AND LOWER(TRIM(band_name)) = LOWER(TRIM($4))
+              LIMIT 1`,
+            [req.user.id, date, startTime, bandName]
+          );
+        }
 
         const existingRow = sameSrcExisting.rows[0] || crossSrcExisting.rows[0];
 

@@ -1146,6 +1146,50 @@ async function runMigrations() {
       await db.query(`ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_invoice_number_key`);
     } catch (e) { /* swallow — name varies across schemas */ }
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS invoices_user_invoice_number_uniq ON invoices (user_id, invoice_number) WHERE invoice_number IS NOT NULL`);
+    // Demo 2026-04-28 follow-up: cross-source dedup was matching on
+    // venue_name only, which misses pairs where calendar and sheet picked
+    // different strings for the same physical gig (calendar location is
+    // often just the address while the sheet has venue name as a separate
+    // column). Going forward the import paths also try date + start_time
+    // + band_name. This one-shot cleans up the existing pairs by merging
+    // any sheet+calendar pair that matches on band/date/time: the sheet
+    // row keeps its cleaner venue data and inherits the calendar row's
+    // google_event_id, then the calendar row gets deleted. Idempotent —
+    // after the first pass no duplicate pairs match the filter.
+    await db.query(`
+      WITH dup_pairs AS (
+        SELECT DISTINCT ON (sheet_row.id)
+          sheet_row.id   AS keep_id,
+          cal_row.id     AS delete_id,
+          cal_row.google_event_id AS gcal_id,
+          cal_row.source AS cal_source
+        FROM gigs sheet_row
+        JOIN gigs cal_row ON
+              sheet_row.user_id = cal_row.user_id
+          AND sheet_row.date = cal_row.date
+          AND sheet_row.start_time = cal_row.start_time
+          AND LOWER(TRIM(sheet_row.band_name)) = LOWER(TRIM(cal_row.band_name))
+          AND sheet_row.id <> cal_row.id
+          AND sheet_row.sheets_row_id IS NOT NULL
+          AND sheet_row.google_event_id IS NULL
+          AND cal_row.sheets_row_id IS NULL
+          AND cal_row.google_event_id IS NOT NULL
+          AND TRIM(COALESCE(sheet_row.band_name, '')) <> ''
+        ORDER BY sheet_row.id, cal_row.id
+      ),
+      upd AS (
+        UPDATE gigs g
+        SET google_event_id = dp.gcal_id,
+            source = CASE
+              WHEN g.source IS NULL OR g.source = '' THEN COALESCE(dp.cal_source, 'gcal')
+              ELSE g.source || '+' || COALESCE(dp.cal_source, 'gcal')
+            END
+        FROM dup_pairs dp
+        WHERE g.id = dp.keep_id
+        RETURNING g.id
+      )
+      DELETE FROM gigs WHERE id IN (SELECT delete_id FROM dup_pairs)
+    `);
     console.log('Migrations: OK');
   } catch (err) {
     console.error('Migration error (non-fatal):', err.message);

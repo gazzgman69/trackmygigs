@@ -971,6 +971,22 @@ router.post('/import', async (req, res) => {
         if (soft.rows.length) existing = soft;
       }
     }
+    // Layer 2b (Demo 2026-04-28): see /api/gigs/import-bulk comment. Falls
+    // back to date + start_time + band_name when venue-match misses because
+    // calendar and sheet picked different venue_name strings for the same
+    // physical gig.
+    if (existing.rows.length === 0 && startParts.date && startParts.time && band_name) {
+      const softBand = await db.query(
+        `SELECT * FROM gigs
+          WHERE user_id = $1
+            AND date = $2
+            AND start_time = $3::time
+            AND LOWER(TRIM(band_name)) = LOWER(TRIM($4))
+          LIMIT 1`,
+        [req.user.id, startParts.date, startParts.time, band_name]
+      );
+      if (softBand.rows.length) existing = softBand;
+    }
 
     if (existing.rows.length) {
       const g = existing.rows[0];
@@ -1141,6 +1157,23 @@ router.post('/import-bulk', async (req, res) => {
             );
             if (soft.rows.length) existing = soft;
           }
+        }
+        // Layer 2b (Demo 2026-04-28): venue-match misses when sheet venue
+        // and calendar location parse to different strings. Fall back to
+        // date + start_time + band_name.
+        const candidateBand = ev.band_name || ev.title || null;
+        if (existing.rows.length === 0
+            && startParts.date && startParts.time && candidateBand) {
+          const softBand = await db.query(
+            `SELECT * FROM gigs
+              WHERE user_id = $1
+                AND date = $2
+                AND start_time = $3::time
+                AND LOWER(TRIM(band_name)) = LOWER(TRIM($4))
+              LIMIT 1`,
+            [req.user.id, startParts.date, startParts.time, candidateBand]
+          );
+          if (softBand.rows.length) existing = softBand;
         }
 
         if (existing.rows.length) {
