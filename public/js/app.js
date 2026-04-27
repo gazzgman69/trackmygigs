@@ -813,11 +813,11 @@ function buildHomeHTML(content, stats) {
     const _yearGigs = stats.year_gigs || 0;
     html += `
     <div style="display:flex;gap:8px;margin:0 16px 8px;">
-      <div onclick="window.openFinanceAt && window.openFinanceAt('month-insight')" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;cursor:pointer;">
+      <div onclick="window.openFinanceAt && window.openFinanceAt('month-insight')" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;cursor:pointer;text-align:center;">
         <div style="font-size:22px;font-weight:800;color:var(--text);line-height:1.1;">£${_monthEarnings}</div>
         <div style="font-size:11px;color:var(--text-3);margin-top:4px;">This month &middot; ${_monthGigs} gig${_monthGigs === 1 ? '' : 's'}</div>
       </div>
-      <div onclick="window.openFinanceAt && window.openFinanceAt('tax-year')" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;cursor:pointer;">
+      <div onclick="window.openFinanceAt && window.openFinanceAt('tax-year')" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;cursor:pointer;text-align:center;">
         <div style="font-size:22px;font-weight:800;color:var(--text);line-height:1.1;">£${_yearEarnings}</div>
         <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Tax year &middot; ${_yearGigs} gig${_yearGigs === 1 ? '' : 's'}</div>
       </div>

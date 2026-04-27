@@ -6,8 +6,13 @@
   --accent: #F0A500;
   --accent-dim: rgba(240, 165, 0, 0.15);
   --text: #E6EDF3;
-  --text-2: #8B949E;
-  --text-3: #484F58;
+  /* 2026-04-27: bumped --text-3 from #484F58 to #8B949E and pulled --text-2
+     up to #B0B8C1 to fix readability of subtitle copy across the app
+     ("This month · 3 gigs" et al). The old text-3 sat near AA-fail contrast
+     on var(--card). The hierarchy is preserved (text > text-2 > text-3),
+     just shifted brighter overall. */
+  --text-2: #B0B8C1;
+  --text-3: #8B949E;
   --success: #3FB950;
   --success-dim: rgba(63, 185, 80, 0.15);
   --danger: #F85149;
