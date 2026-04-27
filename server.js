@@ -205,8 +205,24 @@ app.get('/api/admin/dedup-debug', async (req, res) => {
         AND n1.norm_band <> ''
       LIMIT 5
     `);
+    // Count what the cleanup migration filter actually catches.
+    const wouldMerge = await db.query(`
+      SELECT COUNT(*)::int AS n FROM gigs sheet_row
+      JOIN gigs cal_row ON
+        sheet_row.user_id = cal_row.user_id
+        AND sheet_row.date = cal_row.date
+        AND sheet_row.start_time = cal_row.start_time
+        AND LOWER(regexp_replace(regexp_replace(TRIM(sheet_row.band_name), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
+          = LOWER(regexp_replace(regexp_replace(TRIM(cal_row.band_name),   '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
+        AND sheet_row.id <> cal_row.id
+        AND sheet_row.sheets_row_id IS NOT NULL
+        AND cal_row.sheets_row_id IS NULL
+        AND cal_row.source LIKE 'gcal:%'
+        AND TRIM(COALESCE(sheet_row.band_name, '')) <> ''
+    `);
     res.json({
       total_gigs: total.rows[0].n,
+      would_merge_count: wouldMerge.rows[0].n,
       sample_pairs: dupes.rows,
       sample_count: dupes.rows.length,
     });
