@@ -818,72 +818,95 @@ function buildHomeHTML(content, stats) {
       </div>
     </div>`;
 
-    // 12-month forecast (S11-FORECAST stacked-bar rewrite)
-    // API now returns confirmed_earnings + pending_earnings per month. We
-    // render each month as a stacked column: green (confirmed) bottom,
-    // amber (pending) middle, grey (forecast) top. Forecast is the past
-    // 6-month confirmed-earnings average, applied only to future months
-    // that have no confirmed/pending gigs yet — it's a visual "expect this"
-    // hint, not real revenue. Past months only show what actually happened.
+    // 12-month forecast (mockup-v3 redesign 2026-04-26)
+    // Confirmed earnings only — no pending, no projection, no guesses.
+    // Tax-year window (April -> March) so the bar order matches the
+    // musician's actual financial year. Tax year header on the right,
+    // YTD total + best month in the footer. Past months are vivid green;
+    // future months that already have confirmed bookings render the same
+    // colour but at slightly reduced opacity to hint "still ahead" without
+    // introducing a separate visual category.
     if (stats.monthly_breakdown && stats.monthly_breakdown.length) {
       const nowRef = new Date();
-      const thisMonthStart = new Date(nowRef.getFullYear(), nowRef.getMonth(), 1).getTime();
-      const enriched = stats.monthly_breakdown.map((m) => {
-        const ts = new Date(m.month_start).getTime();
-        const confirmed = parseFloat(m.confirmed_earnings || 0);
-        const pending = parseFloat(m.pending_earnings || 0);
-        return {
-          month_label: m.month_label,
-          confirmed,
-          pending,
-          forecast: 0,
-          isFuture: ts > thisMonthStart,
-        };
+      // UK tax year: 6 April through 5 April. If we're between Jan 1 and
+      // April 5 we're still in the tax year that began the previous April.
+      const tyStartYear = nowRef.getMonth() < 3 || (nowRef.getMonth() === 3 && nowRef.getDate() < 6)
+        ? nowRef.getFullYear() - 1
+        : nowRef.getFullYear();
+      const tyEndYear = tyStartYear + 1;
+      const taxYearLabel = `${String(tyStartYear).slice(-2)}/${String(tyEndYear).slice(-2)}`;
+
+      // Reorder the API's calendar-month breakdown into tax-year sequence.
+      // Each tax year contains months April..March, so we walk a fixed
+      // 12-step list and pick the matching breakdown row. Months outside
+      // the API's window (i.e. far past or far future) fall through as £0
+      // empty bars rather than being silently dropped.
+      const monthIndex = new Map();
+      stats.monthly_breakdown.forEach((m) => {
+        const d = new Date(m.month_start);
+        const key = `${d.getFullYear()}-${d.getMonth()}`;
+        monthIndex.set(key, m);
       });
-      const pastWithEarnings = enriched.filter((m) => !m.isFuture && m.confirmed > 0);
-      const pastAvg = pastWithEarnings.length
-        ? pastWithEarnings.reduce((s, m) => s + m.confirmed, 0) / pastWithEarnings.length
-        : 0;
-      enriched.forEach((m) => {
-        if (m.isFuture && m.confirmed === 0 && m.pending === 0 && pastAvg > 0) {
-          m.forecast = pastAvg;
-        }
+      const SHORT = ['J','F','M','A','M','J','J','A','S','O','N','D'];
+      const months = [];
+      for (let i = 0; i < 12; i++) {
+        const monthIdx = (3 + i) % 12;            // 3=April, ... 2=March
+        const year = monthIdx >= 3 ? tyStartYear : tyEndYear;
+        const key = `${year}-${monthIdx}`;
+        const row = monthIndex.get(key) || null;
+        const monthDate = new Date(year, monthIdx, 1);
+        const isFuture = monthDate.getTime() > new Date(nowRef.getFullYear(), nowRef.getMonth(), 1).getTime();
+        months.push({
+          letter: SHORT[monthIdx],
+          full: monthDate.toLocaleString('en-GB', { month: 'short', year: 'numeric' }),
+          confirmed: row ? parseFloat(row.confirmed_earnings || 0) : 0,
+          isFuture,
+        });
+      }
+
+      const maxConfirmed = Math.max(1, ...months.map((m) => m.confirmed));
+      const ytdTotal = months.reduce((s, m) => s + m.confirmed, 0);
+
+      // Best month so far: highest confirmed across the tax year. If two
+      // months tie we prefer the most recent (later in array order).
+      let best = null;
+      months.forEach((m) => {
+        if (m.confirmed > 0 && (!best || m.confirmed >= best.confirmed)) best = m;
       });
-      const maxTotal = Math.max(
-        1,
-        ...enriched.map((m) => m.confirmed + m.pending + m.forecast)
-      );
+      const bestLine = best
+        ? `Best: ${best.full.split(' ')[0]} &pound;${Math.round(best.confirmed).toLocaleString('en-GB')}`
+        : '';
+      const summary = ytdTotal > 0
+        ? `&pound;${Math.round(ytdTotal).toLocaleString('en-GB')} confirmed YTD${bestLine ? ' &middot; ' + bestLine : ''}`
+        : 'No confirmed earnings yet this tax year';
+
       html += `
-      <div onclick="window.openFinanceAt && window.openFinanceAt('monthly')" style="margin:0 16px 6px;cursor:pointer;">
-        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">12-Month Forecast</div>
-        <div style="display:flex;align-items:flex-end;gap:3px;height:60px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:8px;">
-          ${enriched.map((m) => {
-            const total = m.confirmed + m.pending + m.forecast;
-            const columnPct = total > 0 ? Math.max(6, (total / maxTotal) * 100) : 2;
-            const denom = total || 1;
-            const fPct = (m.forecast / denom) * 100;
-            const pPct = (m.pending / denom) * 100;
-            const cPct = (m.confirmed / denom) * 100;
-            const titleParts = [];
-            if (m.confirmed) titleParts.push('£' + Math.round(m.confirmed) + ' confirmed');
-            if (m.pending) titleParts.push('£' + Math.round(m.pending) + ' pending');
-            if (m.forecast) titleParts.push('~£' + Math.round(m.forecast) + ' forecast');
-            const title = (m.month_label || '') + (titleParts.length ? ': ' + titleParts.join(', ') : ': no gigs');
-            const emptyOpacity = total > 0 ? 1 : 0.25;
-            return `<div style="flex:1;display:flex;flex-direction:column;height:${columnPct}%;border-radius:2px;overflow:hidden;opacity:${emptyOpacity};background:${total > 0 ? 'transparent' : 'var(--border)'};" title="${title}">
-              ${m.forecast > 0 ? `<div style="flex:${fPct};background:#666;"></div>` : ''}
-              ${m.pending > 0 ? `<div style="flex:${pPct};background:var(--warning);"></div>` : ''}
-              ${m.confirmed > 0 ? `<div style="flex:${cPct};background:var(--success);"></div>` : ''}
+      <div onclick="window.openFinanceAt && window.openFinanceAt('monthly')" style="margin:0 16px 6px;cursor:pointer;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 14px 12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div style="font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px;">
+            <span style="font-size:14px;">📈</span>12-month forecast
+          </div>
+          <div style="font-size:11px;color:var(--text-3);">Tax year ${taxYearLabel}</div>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:5px;height:74px;margin-bottom:8px;">
+          ${months.map((m) => {
+            const heightPct = m.confirmed > 0 ? Math.max(8, (m.confirmed / maxConfirmed) * 100) : 4;
+            const opacity = m.confirmed > 0 ? (m.isFuture ? 0.85 : 1) : 0.18;
+            const bg = m.confirmed > 0 ? 'var(--success,#3FB950)' : 'var(--border)';
+            const titleSuffix = m.confirmed > 0
+              ? ': £' + Math.round(m.confirmed).toLocaleString('en-GB')
+              : ': no confirmed earnings';
+            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;" title="${m.full}${titleSuffix}">
+              <div style="width:100%;height:${heightPct}%;background:${bg};border-radius:6px;opacity:${opacity};"></div>
             </div>`;
           }).join('')}
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:3px;margin-top:4px;padding:0 8px;font-size:9px;color:var(--text-3);">
-          ${enriched.map((m) => `<div style="flex:1;text-align:center;">${(m.month_label || '').slice(0, 3)}</div>`).join('')}
+        <div style="display:flex;align-items:center;gap:5px;margin-bottom:10px;padding:0 1px;">
+          ${months.map((m) => `<div style="flex:1;text-align:center;font-size:10px;color:var(--text-3);font-weight:600;">${m.letter}</div>`).join('')}
         </div>
-        <div style="display:flex;justify-content:center;gap:14px;margin-top:6px;font-size:10px;color:var(--text-2);">
-          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--success);border-radius:2px;"></span>Confirmed</span>
-          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--warning);border-radius:2px;"></span>Pending</span>
-          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:#666;border-radius:2px;"></span>Forecast</span>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-2);padding-top:10px;border-top:1px solid var(--border);">
+          <span style="width:9px;height:9px;background:var(--success,#3FB950);border-radius:2px;flex-shrink:0;"></span>
+          <span>${summary}</span>
         </div>
       </div>`;
     }
