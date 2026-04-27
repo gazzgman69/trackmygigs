@@ -1258,6 +1258,10 @@ async function runMigrations() {
       await db.query(`ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_invoice_number_key`);
     } catch (e) { /* swallow — name varies across schemas */ }
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS invoices_user_invoice_number_uniq ON invoices (user_id, invoice_number) WHERE invoice_number IS NOT NULL`);
+    // Demo 2026-04-28 follow-up: gigs.source was VARCHAR(50) but cross-source
+    // merges produce labels like "sheets:TMG-Demo-Gigs.csv+gcal:<id>" that
+    // overflow. Bump to TEXT — it's a free-form audit string, not indexed.
+    await db.query(`ALTER TABLE gigs ALTER COLUMN source TYPE TEXT`);
     // Demo 2026-04-28 follow-up: cross-source dedup was matching on
     // venue_name only, which misses pairs where calendar and sheet picked
     // different strings for the same physical gig (calendar location is
