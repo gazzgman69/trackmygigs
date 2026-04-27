@@ -1220,10 +1220,14 @@ async function runMigrations() {
           AND LOWER(regexp_replace(regexp_replace(TRIM(sheet_row.band_name), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
             = LOWER(regexp_replace(regexp_replace(TRIM(cal_row.band_name),   '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
           AND sheet_row.id <> cal_row.id
+          -- Sheet rows have a sheets_row_id and a synthetic 'sheets:<md5>'
+          -- google_event_id (Layer 1 same-source dedup key). Calendar rows
+          -- have a real Google event id and no sheets_row_id. Distinguish
+          -- them on sheets_row_id presence + the source prefix instead of
+          -- google_event_id IS NULL (which the original filter got wrong).
           AND sheet_row.sheets_row_id IS NOT NULL
-          AND sheet_row.google_event_id IS NULL
           AND cal_row.sheets_row_id IS NULL
-          AND cal_row.google_event_id IS NOT NULL
+          AND cal_row.source LIKE 'gcal:%'
           AND TRIM(COALESCE(sheet_row.band_name, '')) <> ''
         ORDER BY sheet_row.id, cal_row.id
       ),
