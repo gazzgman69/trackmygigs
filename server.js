@@ -220,11 +220,64 @@ app.get('/api/admin/dedup-debug', async (req, res) => {
         AND cal_row.source LIKE 'gcal:%'
         AND TRIM(COALESCE(sheet_row.band_name, '')) <> ''
     `);
+    let runResult = null;
+    if (req.query.run === '1') {
+      // Actually fire the cleanup query and report rowCount.
+      const upd = await db.query(`
+        UPDATE gigs g
+        SET google_event_id = sub.gcal_id,
+            source = CASE
+              WHEN g.source IS NULL OR g.source = '' THEN COALESCE(sub.cal_source, 'gcal')
+              ELSE g.source || '+' || COALESCE(sub.cal_source, 'gcal')
+            END
+        FROM (
+          SELECT DISTINCT ON (sheet_row.id)
+            sheet_row.id   AS keep_id,
+            cal_row.id     AS delete_id,
+            cal_row.google_event_id AS gcal_id,
+            cal_row.source AS cal_source
+          FROM gigs sheet_row
+          JOIN gigs cal_row ON
+                sheet_row.user_id = cal_row.user_id
+            AND sheet_row.date = cal_row.date
+            AND sheet_row.start_time = cal_row.start_time
+            AND LOWER(regexp_replace(regexp_replace(TRIM(sheet_row.band_name), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
+              = LOWER(regexp_replace(regexp_replace(TRIM(cal_row.band_name),   '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
+            AND sheet_row.id <> cal_row.id
+            AND sheet_row.sheets_row_id IS NOT NULL
+            AND cal_row.sheets_row_id IS NULL
+            AND cal_row.source LIKE 'gcal:%'
+            AND TRIM(COALESCE(sheet_row.band_name, '')) <> ''
+          ORDER BY sheet_row.id, cal_row.id
+        ) sub
+        WHERE g.id = sub.keep_id
+      `);
+      const del = await db.query(`
+        DELETE FROM gigs WHERE id IN (
+          SELECT DISTINCT ON (sheet_row.id) cal_row.id
+          FROM gigs sheet_row
+          JOIN gigs cal_row ON
+                sheet_row.user_id = cal_row.user_id
+            AND sheet_row.date = cal_row.date
+            AND sheet_row.start_time = cal_row.start_time
+            AND LOWER(regexp_replace(regexp_replace(TRIM(sheet_row.band_name), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
+              = LOWER(regexp_replace(regexp_replace(TRIM(cal_row.band_name),   '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
+            AND sheet_row.id <> cal_row.id
+            AND sheet_row.sheets_row_id IS NOT NULL
+            AND cal_row.sheets_row_id IS NULL
+            AND cal_row.source LIKE 'gcal:%'
+            AND TRIM(COALESCE(sheet_row.band_name, '')) <> ''
+          ORDER BY sheet_row.id, cal_row.id
+        )
+      `);
+      runResult = { updated: upd.rowCount, deleted: del.rowCount };
+    }
     res.json({
       total_gigs: total.rows[0].n,
       would_merge_count: wouldMerge.rows[0].n,
       sample_pairs: dupes.rows,
       sample_count: dupes.rows.length,
+      run_result: runResult,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
