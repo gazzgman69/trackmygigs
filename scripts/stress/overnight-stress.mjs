@@ -1304,11 +1304,6 @@ async function scenarioAI() {
       body: { text: 'Booking confirmed for Saturday 12 June 2027 at The Royal Arms, London. Load-in 6pm, set at 8pm. Fee £300.' },
     },
     {
-      name: 'M: /ai/draft-dep-reply',
-      path: '/api/ai/draft-dep-reply',
-      body: { offerText: 'Can you cover my wedding gig on 15 Aug? £250.', gigDate: '2027-08-15' },
-    },
-    {
       name: 'M: /ai/generate-setlist',
       path: '/api/ai/generate-setlist',
       body: { durationMinutes: 90, venueType: 'pub', crowd: 'mixed age 30-60', mood: 'upbeat classic rock' },

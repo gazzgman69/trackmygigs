@@ -156,63 +156,6 @@ Return ONLY the JSON. No prose, no markdown.`;
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// FEATURE 3 — Dep Offer Reply Drafter
-// POST /api/ai/draft-dep-reply  { offerText, gigDate?, userName? }
-// Returns: { accept, decline, ask_fee }  (three short plain-text drafts)
-// ═════════════════════════════════════════════════════════════════════════════
-router.post('/draft-dep-reply', async (req, res) => {
-  if (!aiGuard(res)) return;
-  try {
-    const offerText = String(req.body?.offerText || '').slice(0, 2000);
-    const gigDate = req.body?.gigDate || null;
-    const userName = req.user.name || 'the musician';
-
-    if (!offerText.trim()) {
-      return res.status(400).json({ error: 'Pass the offer text.' });
-    }
-
-    // Pull the user's calendar for the target date so the AI can check for
-    // clashes without assuming anything.
-    let sameDayGigs = [];
-    if (gigDate) {
-      try {
-        const r = await db.query(
-          `SELECT band_name, venue_name, start_time FROM gigs
-           WHERE user_id = $1 AND date = $2 AND status IN ('confirmed', 'enquiry')`,
-          [req.user.id, gigDate]
-        );
-        sameDayGigs = r.rows;
-      } catch (_) { /* non-fatal */ }
-    }
-    const alreadyBooked = sameDayGigs.length > 0;
-
-    const system = `You draft three reply options to a dep (sub) gig offer that a working musician has just received.
-
-Write in the first person, warm but direct, suited for WhatsApp or email. Short (1-3 sentences each). No em dashes.
-
-Return ONLY a JSON object:
-
-{
-  "accept": string,        // accepting the offer, confirming the date
-  "decline": string,       // polite decline; mention alternative if appropriate
-  "ask_fee": string        // polite ask about fee before committing
-}
-
-Context:
-- Musician name: ${userName}
-- ${alreadyBooked ? `ALREADY BOOKED this date at: ${sameDayGigs.map(g => g.band_name || g.venue_name).join(', ')}. Decline should mention this gently.` : 'Date appears free on the calendar.'}
-
-No prose outside the JSON. No markdown fences.`;
-
-    const data = await callHaiku({ system, user: offerText, json: true, maxTokens: 500 });
-    sendAIResult(res, data);
-  } catch (err) {
-    console.error(`[ai/draft-dep-reply] error:`, err);
-    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
-  }
-});
-
-// ═════════════════════════════════════════════════════════════════════════════
 // FEATURE 4 — Set List Generator
 // POST /api/ai/generate-setlist  { durationMinutes, venueType, crowd?, mood? }
 // Returns: { setlist: [{ position, song_id, title, artist, key, tempo, duration, reason }], notes }
@@ -511,7 +454,6 @@ router.get('/status', (req, res) => {
     features: [
       'extract-gig',
       'extract-receipt',
-      'draft-dep-reply',
       'generate-setlist',
       'draft-invoice-chase',
       'generate-bio',

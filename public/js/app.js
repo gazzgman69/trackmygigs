@@ -3876,9 +3876,6 @@ function buildOffersHTML(content, offers) {
           <button onclick="acceptOffer('${offer.id}')" class="o-acc" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">&#x2713; Accept</button>
           <button onclick="declineOffer('${offer.id}')" class="o-dec" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">&#x2715; Decline</button>
         </div>
-        <div style="margin-top:8px;text-align:right;">
-          <button type="button" onclick="window.aiDepReplyDrafter && window.aiDepReplyDrafter(${JSON.stringify(`${offer.offer_type === 'dep' ? 'Dep' : 'Lineup'} request from ${senderName} for ${offer.band_name || 'Gig'} at ${offer.venue_name || 'venue'} on ${offer.gig_date}${offer.start_time ? ' starting ' + offer.start_time.slice(0,5) : ''}. Fee £${parseFloat(offer.fee || 0).toFixed(0)}.${offer.dress_code ? ' Dress: ' + offer.dress_code + '.' : ''}`).replace(/"/g, '&quot;')})" style="background:none;border:none;color:var(--accent,#f0a500);font-size:11px;font-weight:600;cursor:pointer;padding:4px 8px;">&#10024; Draft reply with AI</button>
-        </div>
       </div>`;
     });
   }

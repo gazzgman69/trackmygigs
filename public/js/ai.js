@@ -7,7 +7,6 @@
 // Exposed on window so inline onclick= handlers and app.js can call them:
 //   aiSmartPasteGig()           — opens paste-to-extract modal for the Gig Wizard
 //   aiScanReceipt()             — opens image/text scan modal for Expenses
-//   aiDepReplyDrafter(offerId)  — drafts three replies to a dep offer
 //   aiSetListGenerator()        — generates an ordered set list from repertoire
 //   aiInvoiceChase(invoiceId)   — drafts three chase emails for an invoice
 //   aiBioWriter()               — writes three bios (short/medium/long) for EPK
@@ -311,66 +310,6 @@
       });
     }
     return card;
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // FEATURE 3 — Dep Offer Reply Drafter
-  // ═══════════════════════════════════════════════════════════════════════════
-  function aiDepReplyDrafter(offerText) {
-    const body = h(`
-      <div>
-        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2,#999);">Paste the dep offer message and I will draft three replies: accept, decline, and ask the fee. I will cross-check your calendar for conflicts.</p>
-        <textarea id="aiDepText" class="ai-textarea" placeholder="Paste the offer message here">${esc(offerText || '')}</textarea>
-        <div class="ai-row" style="justify-content:flex-end;">
-          <button type="button" class="ai-btn-secondary" onclick="document.getElementById('aiModalRoot').remove()">Cancel</button>
-          <button type="button" class="ai-btn" id="aiDepGo">Draft replies</button>
-        </div>
-        <div id="aiDepResult" style="margin-top:14px;"></div>
-      </div>
-    `);
-    openModal('Dep Offer Replies', body);
-    body.querySelector('#aiDepGo').addEventListener('click', async () => {
-      const text = body.querySelector('#aiDepText').value.trim();
-      if (!text) { toast('Paste the message first', 'warn'); return; }
-      const result = body.querySelector('#aiDepResult');
-      result.innerHTML = '';
-      result.appendChild(spinner('Drafting replies...'));
-      const data = await postAI('/draft-dep-reply', { text });
-      result.innerHTML = '';
-      if (!data) return;
-      result.appendChild(renderDepReplyCards(data));
-    });
-  }
-
-  function renderDepReplyCards(data) {
-    const box = h('<div></div>');
-    if (data.conflict) {
-      box.appendChild(h(`<div style="background:rgba(255,70,70,.12);border:1px solid rgba(255,70,70,.35);border-radius:10px;padding:10px;font-size:12px;margin-bottom:10px;">&#9888;&#65039; Conflict on that date: ${esc(data.conflict)}</div>`));
-    } else if (data.date_seen) {
-      box.appendChild(h(`<div style="background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.3);border-radius:10px;padding:10px;font-size:12px;margin-bottom:10px;">&#9989; No conflict on ${esc(data.date_seen)}.</div>`));
-    }
-    const tones = [
-      ['Accept', data.accept],
-      ['Decline', data.decline],
-      ['Ask fee', data.ask_fee],
-    ].filter(([, v]) => v);
-    tones.forEach(([label, msg]) => {
-      const card = h(`
-        <div class="ai-result-card">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-            <div style="font-weight:700;">${esc(label)}</div>
-            <button type="button" class="ai-btn-secondary" style="padding:4px 10px;font-size:11px;">Copy</button>
-          </div>
-          <div style="font-size:13px;white-space:pre-wrap;line-height:1.55;">${esc(msg)}</div>
-        </div>
-      `);
-      card.querySelector('button').addEventListener('click', () => {
-        navigator.clipboard?.writeText(msg);
-        toast('Copied', 'success');
-      });
-      box.appendChild(card);
-    });
-    return box;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -869,7 +808,6 @@
   Object.assign(window, {
     aiSmartPasteGig,
     aiScanReceipt,
-    aiDepReplyDrafter,
     aiSetListGenerator,
     aiInvoiceChase,
     aiBioWriter,
