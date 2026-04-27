@@ -3875,6 +3875,7 @@ function buildOffersHTML(content, offers) {
         <div class="o-acts" style="display:flex;gap:8px;">
           <button onclick="acceptOffer('${offer.id}')" class="o-acc" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">&#x2713; Accept</button>
           <button onclick="declineOffer('${offer.id}')" class="o-dec" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">&#x2715; Decline</button>
+          <button onclick="messageAboutOffer('${offer.gig_id}','${offer.sender_id}')" title="Message about this gig" aria-label="Message" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:14px;font-weight:600;cursor:pointer;flex-shrink:0;">&#x1F4AC;</button>
         </div>
       </div>`;
     });
@@ -10907,6 +10908,46 @@ async function acceptOffer(offerId) {
     alert('Could not accept that offer, please try again');
   }
 }
+
+// Open a chat thread with the offer's sender, scoped to the gig in question
+// so the sender immediately sees what gig the message is about. POST
+// /api/chat/threads is idempotent for gig+participant pairs (returns the
+// existing thread if one already exists), so this is safe to tap multiple
+// times. The thread shows up in the "Gig messages" list on Home with the
+// gig name attached.
+async function messageAboutOffer(gigId, senderUserId) {
+  if (!gigId || !senderUserId) {
+    if (typeof toast === 'function') toast('Could not open chat for this offer');
+    return;
+  }
+  try {
+    const res = await fetch('/api/chat/threads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gig_id: gigId,
+        thread_type: 'gig',
+        participant_ids: [senderUserId],
+      }),
+    });
+    const data = await res.json();
+    const thread = data?.thread;
+    if (!res.ok || !thread || !thread.id) {
+      throw new Error(data?.error || `thread create failed (${res.status})`);
+    }
+    if (typeof openChatThread === 'function') {
+      openChatThread(thread.id);
+    } else {
+      // Fallback: open the inbox if the thread opener isn't defined.
+      openPanel('panel-chat-inbox');
+      if (typeof renderChatInbox === 'function') renderChatInbox();
+    }
+  } catch (err) {
+    console.error('messageAboutOffer error:', err);
+    if (typeof toast === 'function') toast('Could not open chat. Try again.');
+  }
+}
+window.messageAboutOffer = messageAboutOffer;
 
 async function declineOffer(offerId) {
   const ok = await showConfirm('The sender will see this offer as declined. They can resend or pick someone else.', {
