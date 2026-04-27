@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const calendarRouter = require('./calendar');
+const { writeGigToSheets } = require('../lib/sheets-writer');
 const { lookupPostcode, normalise: normalisePostcode } = require('../lib/postcodes');
 const { haversineMiles } = require('../lib/geo');
 const { normaliseE164 } = require('../lib/phone');
@@ -27,16 +28,27 @@ function toTextArray(v) {
 }
 
 // Fire-and-forget helper — never let sync failures break API responses.
-// The gig has already been saved locally; Google is a mirror.
+// The gig has already been saved locally; Google is a mirror. Phase D
+// (2026-04-27) extends this to also mirror writes to the user's linked
+// Google Sheet when one is configured. Both mirrors run in parallel; either
+// can fail silently and the gig save still succeeds.
 function syncGigSafely(action, userId, gig) {
   try {
     if (!gig) return;
     const fn = action === 'delete'
       ? calendarRouter.removeGigFromGoogle
       : calendarRouter.pushGigToGoogle;
-    if (typeof fn !== 'function') return;
-    Promise.resolve(fn(userId, gig)).catch((err) => {
-      console.error(`Calendar ${action} sync failed (non-fatal):`, err.message || err);
+    if (typeof fn === 'function') {
+      Promise.resolve(fn(userId, gig)).catch((err) => {
+        console.error(`Calendar ${action} sync failed (non-fatal):`, err.message || err);
+      });
+    }
+    // Sheets write-back. action map: create→create, update→update,
+    // delete→cancel (we mark cancelled rather than removing the row so the
+    // user's sheet history stays intact).
+    const sheetsAction = action === 'delete' ? 'cancel' : action;
+    Promise.resolve(writeGigToSheets(sheetsAction, userId, gig)).catch((err) => {
+      console.error(`Sheets ${sheetsAction} sync failed (non-fatal):`, err.message || err);
     });
   } catch (err) {
     console.error('syncGigSafely error:', err);

@@ -4406,6 +4406,17 @@ function buildProfileHTML(content, profile) {
           <span style="color:var(--accent);font-size:12px;font-weight:600;">Connect \u203A</span>
         </div>`;
         })()}
+        <!-- Phase F (2026-04-27): Google Sheets row. Hydrates async from
+             /api/sheets/status so the Profile screen paints fast. The row
+             starts in a loading state and gets patched in by hydrateSheetsProfileRow.
+             Three states surfaced: connected (shows tab name + Pull/Disconnect),
+             connect (entry point to onboarding picker), and connecting (spinner). -->
+        <div id="profileSheetsRow" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+            <span style="color:var(--text);font-size:14px;">Google Sheets</span>
+            <span style="color:var(--text-3);font-size:11px;">Loading\u2026</span>
+          </div>
+        </div>
         <div onclick="openMapsPreferencePicker()" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
           <span style="color:var(--text);font-size:14px;">Preferred maps app</span>
           <span style="display:flex;align-items:center;gap:8px;">
@@ -4478,7 +4489,114 @@ function buildProfileHTML(content, profile) {
     // Highlight the active colour swatch
     const activeColour = localStorage.getItem('colourTheme') || 'amber';
     applyColourTheme(activeColour);
+    // Phase F: hydrate the Sheets row async so the screen paints fast.
+    setTimeout(() => {
+      try { hydrateSheetsProfileRow(); } catch (_) { /* non-fatal */ }
+    }, 0);
 }
+
+// Phase F (2026-04-27): patch the Google Sheets row in Profile after the
+// async /api/sheets/status call returns. Three states:
+//   1. has_google_token=false        → "Connect" entry into onboarding picker
+//   2. has_google_token=true, !linked → "Connect a sheet" via picker
+//   3. linked                        → tab name + last-pulled time + Pull / Disconnect
+async function hydrateSheetsProfileRow() {
+  const row = document.getElementById('profileSheetsRow');
+  if (!row) return;
+  let status = null;
+  try {
+    const r = await fetch('/api/sheets/status');
+    if (r.ok) status = await r.json();
+  } catch (_) {}
+  if (!status) {
+    row.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+        <span style="color:var(--text);font-size:14px;">Google Sheets</span>
+        <span style="color:var(--text-3);font-size:11px;">Status unavailable</span>
+      </div>`;
+    return;
+  }
+  if (status.connected) {
+    const lastPull = status.last_pulled_at
+      ? new Date(status.last_pulled_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+      : 'never';
+    row.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+        <span style="color:var(--text);font-size:14px;">Google Sheets</span>
+        <span style="color:var(--text-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Linked &middot; tab "${escapeHtml(status.tab_name || '')}" &middot; last pulled ${escapeHtml(lastPull)}</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        <button onclick="pullFromSheet()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;">Pull now</button>
+        <button onclick="disconnectSheet()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--danger);font-size:12px;font-weight:600;cursor:pointer;">Disconnect</button>
+      </div>`;
+    return;
+  }
+  // Connected to Google but no sheet linked, OR not connected to Google at
+  // all. Either way the entry point is the same: open the import picker
+  // pre-targeted at sheets so the user lands on the URL paste step.
+  row.innerHTML = `
+    <div onclick="reopenImportPickerForSheets()" style="display:flex;align-items:center;justify-content:space-between;width:100%;cursor:pointer;">
+      <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+        <span style="color:var(--text);font-size:14px;">Google Sheets</span>
+        <span style="color:var(--text-2);font-size:11px;">${status.has_google_token ? 'Pick a sheet to enable two-way sync' : 'Connect a sheet for two-way sync'}</span>
+      </div>
+      <span style="color:var(--accent);font-size:12px;font-weight:600;flex-shrink:0;">Connect &rsaquo;</span>
+    </div>`;
+}
+window.hydrateSheetsProfileRow = hydrateSheetsProfileRow;
+
+// Trigger Phase E pull from the Profile row "Pull now" button.
+async function pullFromSheet() {
+  const row = document.getElementById('profileSheetsRow');
+  // Show inline busy state.
+  if (row) {
+    const lastSpan = row.querySelector('span[style*="text-overflow"]');
+    if (lastSpan) lastSpan.textContent = 'Pulling changes from Sheets\u2026';
+  }
+  try {
+    const r = await fetch('/api/sheets/pull', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    if (typeof invalidateGigsCache === 'function') invalidateGigsCache();
+    const parts = [];
+    if (data.pulled) parts.push(`${data.pulled} updated`);
+    if (data.imported) parts.push(`${data.imported} new gig${data.imported === 1 ? '' : 's'}`);
+    if (data.conflicts) parts.push(`${data.conflicts} resolved by Sheets`);
+    if (parts.length === 0) parts.push('No changes since last pull');
+    if (typeof showToast === 'function') showToast(parts.join(', '));
+  } catch (err) {
+    console.error('Pull from sheet failed:', err);
+    if (typeof showToast === 'function') showToast('Pull failed: ' + (err.message || 'unknown error'));
+  }
+  // Re-fetch status to refresh last-pulled timestamp.
+  hydrateSheetsProfileRow();
+}
+window.pullFromSheet = pullFromSheet;
+
+async function disconnectSheet() {
+  if (!confirm('Disconnect from this Google Sheet? Your imported gigs stay in TrackMyGigs but new edits will no longer sync to the sheet.')) return;
+  try {
+    const r = await fetch('/api/sheets/disconnect', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed');
+    if (typeof showToast === 'function') showToast('Disconnected from sheet');
+  } catch (err) {
+    if (typeof showToast === 'function') showToast('Could not disconnect: ' + (err.message || 'unknown error'));
+  }
+  hydrateSheetsProfileRow();
+}
+window.disconnectSheet = disconnectSheet;
+
+// Re-open the onboarding-style picker but skip straight to the sheets path.
+// Used from Profile when the user wants to (re-)link a sheet without
+// running through the whole onboarding flow again.
+function reopenImportPickerForSheets() {
+  // Reuse the picker with state so the calendar/upload tiles still show
+  // (user might want to chain another import) but the sheet step is the
+  // intent. We just call startImportFromSheets directly.
+  if (typeof startImportFromSheets === 'function') startImportFromSheets();
+}
+window.reopenImportPickerForSheets = reopenImportPickerForSheets;
 
 function toggleConnected() {
   const section = document.getElementById('connected-section');

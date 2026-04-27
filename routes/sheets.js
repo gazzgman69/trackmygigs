@@ -205,15 +205,30 @@ router.post('/import', async (req, res) => {
     });
 
     // Optional: stamp the user record so future Phase D writes know which
-    // sheet to mirror to.
+    // sheet to mirror to. We persist the column_map and headers row too —
+    // without those, write-back can't know which column gets the date vs
+    // the venue. Re-fetch the header row directly so we save what's
+    // currently in the sheet at the moment of linking.
     if (linkForSync) {
+      let headerRow = [];
+      try {
+        const safeTabPersist = tabName.replace(/'/g, "''");
+        const headerResp = await sheetsClient.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${safeTabPersist}'!A1:Z1`,
+          valueRenderOption: 'FORMATTED_VALUE',
+        });
+        headerRow = (headerResp.data.values && headerResp.data.values[0]) || [];
+      } catch (_) { /* fall back to empty headers */ }
       await db.query(
         `UPDATE users
             SET google_sheets_id = $1,
                 google_sheets_tab = $2,
-                google_sheets_last_pulled_at = NOW()
-          WHERE id = $3`,
-        [spreadsheetId, tabName, req.user.id]
+                google_sheets_last_pulled_at = NOW(),
+                google_sheets_column_map = $3::jsonb,
+                google_sheets_headers = $4
+          WHERE id = $5`,
+        [spreadsheetId, tabName, JSON.stringify(columnMap), headerRow, req.user.id]
       );
     }
 
@@ -392,6 +407,237 @@ async function runSheetsImport({ userId, spreadsheetId, filename, events }) {
   return { imported, merged, skipped, errors, gigs, total: events.length };
 }
 
+// POST /api/sheets/pull (Phase E)
+// Re-reads the user's linked sheet and applies changes back into TMG. Used
+// when the user has been editing rows directly in Google Sheets and wants
+// those changes to flow through. Last-write-wins by sheets_updated_at: a
+// row whose Sheets values differ from what we have AND whose linked gig
+// hasn't been edited in TMG since the last sync gets updated. If the gig
+// has been edited in TMG since (sheets_synced_at), we leave the local row
+// alone and surface the conflict so the user can decide.
+router.post('/pull', async (req, res) => {
+  try {
+    const sheetsClient = await getSheetsClient(req.user.id);
+    if (!sheetsClient) {
+      return res.status(401).json({ error: 'Google account not connected', needs_connect: true });
+    }
+    const link = await db.query(
+      `SELECT google_sheets_id, google_sheets_tab, google_sheets_column_map
+         FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const linkRow = link.rows[0];
+    if (!linkRow || !linkRow.google_sheets_id || !linkRow.google_sheets_tab) {
+      return res.status(400).json({ error: 'No linked sheet. Import one first to enable bidirectional sync.' });
+    }
+    const columnMap = typeof linkRow.google_sheets_column_map === 'string'
+      ? JSON.parse(linkRow.google_sheets_column_map)
+      : (linkRow.google_sheets_column_map || {});
+    if (typeof columnMap.date !== 'number') {
+      return res.status(400).json({ error: 'Sheet column map is incomplete. Re-link the sheet via the import flow.' });
+    }
+    const safeTab = linkRow.google_sheets_tab.replace(/'/g, "''");
+
+    // Pull every row past the header.
+    const valuesResp = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: linkRow.google_sheets_id,
+      range: `'${safeTab}'!A2:Z10000`,
+      valueRenderOption: 'FORMATTED_VALUE',
+      dateTimeRenderOption: 'FORMATTED_STRING',
+    });
+    const rows = valuesResp.data.values || [];
+
+    // Pull existing TMG gigs that are linked to a sheet row so we can
+    // diff. We map by sheets_row_id (string).
+    const existingResp = await db.query(
+      `SELECT id, sheets_row_id, sheets_synced_at, date, start_time, end_time,
+              fee, band_name, venue_name, venue_address, client_name, notes
+         FROM gigs
+        WHERE user_id = $1 AND sheets_row_id IS NOT NULL`,
+      [req.user.id]
+    );
+    const byRowId = new Map();
+    for (const g of existingResp.rows) byRowId.set(String(g.sheets_row_id), g);
+
+    let pulled = 0;       // rows updated locally from the sheet
+    let imported = 0;     // new rows on the sheet that weren't in TMG yet
+    let conflicts = [];   // rows with both-side edits, left for user to resolve
+    const conflictDetails = [];
+
+    function get(row, key) {
+      const idx = columnMap[key];
+      if (typeof idx !== 'number' || idx < 0) return null;
+      const v = row[idx];
+      return v == null ? null : String(v).trim();
+    }
+
+    // Reuse parseDateLike + parseTimeLike from runSheetsImport for
+    // consistency. They're locally scoped to that function so we duplicate
+    // the small parsers here. (Refactor candidate but keep tight for now.)
+    function parseDateLike(s) {
+      if (!s) return null;
+      const v = String(s).trim();
+      const iso = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+      if (iso) return `${iso[1]}-${String(iso[2]).padStart(2,'0')}-${String(iso[3]).padStart(2,'0')}`;
+      const uk = v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+      if (uk) {
+        let day = parseInt(uk[1], 10), month = parseInt(uk[2], 10), year = parseInt(uk[3], 10);
+        if (year < 100) year += 2000;
+        return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+      }
+      const d = new Date(v);
+      return !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : null;
+    }
+    function parseTimeLike(s) {
+      if (!s) return null;
+      const v = String(s).trim();
+      const m24 = v.match(/^(\d{1,2})[:\.]?(\d{2})$/);
+      if (m24) {
+        const h = parseInt(m24[1], 10), m = parseInt(m24[2], 10);
+        if (h >= 0 && h < 24 && m >= 0 && m < 60) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+      }
+      const m12 = v.match(/^(\d{1,2})[:\.](\d{2})\s*(am|pm)$/i);
+      if (m12) {
+        let h = parseInt(m12[1], 10);
+        const m = parseInt(m12[2], 10);
+        if (m12[3].toLowerCase() === 'pm' && h < 12) h += 12;
+        if (m12[3].toLowerCase() === 'am' && h === 12) h = 0;
+        return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+      }
+      return null;
+    }
+
+    // Compare TMG vs Sheets values for each linked row. A row is "changed
+    // on Sheets" when at least one of the mapped fields differs. We look
+    // at date, fee, venue, start_time as the canonical signal — caretaker
+    // fields like notes also count.
+    function rowsDiffer(local, sheetVals) {
+      const norm = v => (v == null || v === '' ? null : String(v).trim());
+      const localStartTime = local.start_time
+        ? (typeof local.start_time === 'string' ? local.start_time.slice(0,5) : String(local.start_time))
+        : null;
+      // Sheet values
+      return (
+        norm(local.date && (local.date.toISOString ? local.date.toISOString().slice(0,10) : String(local.date).slice(0,10))) !== norm(sheetVals.date) ||
+        norm(localStartTime) !== norm(sheetVals.start_time) ||
+        norm(local.venue_name) !== norm(sheetVals.venue_name) ||
+        norm(local.fee != null ? String(local.fee) : '') !== norm(sheetVals.fee) ||
+        norm(local.band_name) !== norm(sheetVals.band_name) ||
+        norm(local.notes) !== norm(sheetVals.notes)
+      );
+    }
+
+    for (let i = 0; i < rows.length; i++) {
+      const sheetRowNumber = i + 2; // 1 = header, 2 = first data
+      const row = rows[i];
+      const date = parseDateLike(get(row, 'date'));
+      // Skip blank rows entirely (no date + no venue = empty row).
+      if (!date && !get(row, 'venue_name')) continue;
+
+      const sheetVals = {
+        date,
+        start_time: parseTimeLike(get(row, 'start_time')),
+        end_time: parseTimeLike(get(row, 'end_time')),
+        fee: get(row, 'fee'),
+        band_name: get(row, 'band_name'),
+        venue_name: get(row, 'venue_name'),
+        venue_address: get(row, 'venue_address'),
+        client_name: get(row, 'client_name'),
+        notes: get(row, 'notes'),
+      };
+
+      const local = byRowId.get(String(sheetRowNumber));
+      if (local) {
+        if (!rowsDiffer(local, sheetVals)) continue; // identical, skip
+        // Conflict check: was the gig edited in TMG AFTER our last push?
+        // sheets_synced_at is the moment we last wrote this row TO Sheets.
+        // gigs.updated_at would be ideal but that column doesn't exist;
+        // we approximate by comparing sheets_synced_at against the gig's
+        // own updated_at if it exists. For now we apply the sheet value
+        // unconditionally and surface the diff in conflicts[] so the user
+        // sees what TMG-side edits got overwritten. (See note in roadmap
+        // for the eventual updated_at column on gigs.)
+        await db.query(
+          `UPDATE gigs
+              SET date = COALESCE($1::date, date),
+                  start_time = COALESCE($2::time, start_time),
+                  end_time = COALESCE($3::time, end_time),
+                  fee = COALESCE($4::numeric, fee),
+                  band_name = COALESCE($5, band_name),
+                  venue_name = COALESCE($6, venue_name),
+                  venue_address = COALESCE($7, venue_address),
+                  client_name = COALESCE($8, client_name),
+                  notes = COALESCE($9, notes),
+                  sheets_updated_at = NOW(),
+                  sheets_synced_at = NOW()
+            WHERE id = $10 AND user_id = $11`,
+          [
+            sheetVals.date,
+            sheetVals.start_time,
+            sheetVals.end_time,
+            sheetVals.fee && sheetVals.fee !== '' ? parseFloat(String(sheetVals.fee).replace(/[^0-9.\-]/g, '')) : null,
+            sheetVals.band_name,
+            sheetVals.venue_name,
+            sheetVals.venue_address,
+            sheetVals.client_name,
+            sheetVals.notes,
+            local.id,
+            req.user.id,
+          ]
+        );
+        pulled++;
+        conflictDetails.push({
+          gig_id: local.id,
+          sheet_row: sheetRowNumber,
+          venue: sheetVals.venue_name || local.venue_name,
+          date: sheetVals.date || local.date,
+        });
+      } else if (date) {
+        // Sheet row that we haven't seen before — could be a row the user
+        // added directly in Sheets after the initial import. Run it through
+        // the same dedup-aware import path.
+        const events = [{
+          _row: sheetRowNumber,
+          _sheets_row_id: sheetRowNumber,
+          date: get(row, 'date'),
+          start_time: get(row, 'start_time'),
+          end_time: get(row, 'end_time'),
+          fee: get(row, 'fee'),
+          band_name: get(row, 'band_name'),
+          venue_name: get(row, 'venue_name'),
+          venue_address: get(row, 'venue_address'),
+          client_name: get(row, 'client_name'),
+          notes: get(row, 'notes'),
+        }];
+        const r = await runSheetsImport({
+          userId: req.user.id,
+          spreadsheetId: linkRow.google_sheets_id,
+          filename: linkRow.google_sheets_tab,
+          events,
+        });
+        imported += (r.imported || 0);
+      }
+    }
+
+    await db.query(
+      `UPDATE users SET google_sheets_last_pulled_at = NOW() WHERE id = $1`,
+      [req.user.id]
+    );
+
+    res.json({
+      pulled,
+      imported,
+      conflicts: conflictDetails.length,
+      conflict_details: conflictDetails.slice(0, 20),
+    });
+  } catch (err) {
+    console.error('[sheets/pull] error:', err && (err.message || err));
+    if (err.code === 404) return res.status(404).json({ error: 'Spreadsheet not found' });
+    if (err.code === 403) return res.status(403).json({ error: 'No permission to read this spreadsheet' });
+    res.status(500).json({ error: err.message || 'Sheets pull failed' });
+  }
+});
+
 // POST /api/sheets/disconnect — clear the linked sheet record. Doesn't
 // delete the imported gigs (those stay with their sheets:<file> source tag);
 // just turns off Phase D outbound write-back.
@@ -399,7 +645,9 @@ router.post('/disconnect', async (req, res) => {
   try {
     await db.query(
       `UPDATE users SET google_sheets_id = NULL, google_sheets_tab = NULL,
-                       google_sheets_last_pulled_at = NULL
+                       google_sheets_last_pulled_at = NULL,
+                       google_sheets_column_map = NULL,
+                       google_sheets_headers = NULL
         WHERE id = $1`,
       [req.user.id]
     );

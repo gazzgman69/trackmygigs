@@ -889,8 +889,23 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sheets_id VARCHAR(255)`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sheets_tab VARCHAR(255)`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sheets_last_pulled_at TIMESTAMPTZ`);
+    // Phase D (2026-04-27): need to remember the column mapping the user
+    // chose at import time so write-back lands gig fields in the right
+    // columns of their existing sheet. Stored as { date: 0, venue_name: 2,
+    // ... } JSON. Without this, write-back would either guess (bad) or
+    // require a TMG-owned tab (limits the bidirectional flow Gareth wants).
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sheets_column_map JSONB`);
+    // Header row at import time, so we know how wide the sheet is and can
+    // include unmapped columns when writing new rows (preserves the user's
+    // existing structure).
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sheets_headers TEXT[]`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS sheets_row_id VARCHAR(64)`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS sheets_updated_at TIMESTAMPTZ`);
+    // sheets_synced_at: last successful write FROM TMG TO Sheets. Distinct
+    // from sheets_updated_at (last write in either direction). Used by
+    // Phase E to detect divergence: if sheets_updated_at > sheets_synced_at
+    // we know the Sheet has unread changes since our last push.
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS sheets_synced_at TIMESTAMPTZ`);
     // Lookup index for the bidirectional pull: "all my gigs that map to a
     // Sheet row I've seen before".
     await db.query(`CREATE INDEX IF NOT EXISTS gigs_sheets_row_idx ON gigs (user_id, sheets_row_id) WHERE sheets_row_id IS NOT NULL`);
