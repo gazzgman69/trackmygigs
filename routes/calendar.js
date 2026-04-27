@@ -910,10 +910,33 @@ router.post('/import', async (req, res) => {
     // never clobbering non-null existing fields with nulls. This fixes the
     // duplicate-row bug when a user imports a flagged gig then re-opens
     // the detail pane to add band name / fee / dress code.
-    const existing = await db.query(
+    let existing = await db.query(
       `SELECT * FROM gigs WHERE user_id = $1 AND google_event_id = $2 LIMIT 1`,
       [req.user.id, event_id]
     );
+
+    // Layer 2 (2026-04-27): cross-source soft match. If a gig with the same
+    // date and venue already exists from another source (CSV, Sheets, hand-
+    // entered), merge into it rather than creating a duplicate. Same time-
+    // conflict guard as bulk import: if both rows have explicit, different
+    // start_times, treat as separate gigs.
+    if (existing.rows.length === 0) {
+      const candidateVenue = location ? String(location).split(',')[0] : null;
+      if (candidateVenue && startParts.date) {
+        const soft = await db.query(
+          `SELECT * FROM gigs
+            WHERE user_id = $1
+              AND date = $2
+              AND LOWER(TRIM(venue_name)) = LOWER(TRIM($3))
+              AND ($4::time IS NULL
+                   OR start_time IS NULL
+                   OR start_time = $4::time)
+            LIMIT 1`,
+          [req.user.id, startParts.date, candidateVenue, startParts.time]
+        );
+        if (soft.rows.length) existing = soft;
+      }
+    }
 
     if (existing.rows.length) {
       const g = existing.rows[0];
@@ -928,6 +951,14 @@ router.post('/import', async (req, res) => {
         : g.fee;
       const newDressCode = dress_code || g.dress_code;
 
+      // 2026-04-27: when this is a soft-match merge (existing row came in
+      // from CSV/Sheets and didn't have a google_event_id yet), stamp the
+      // google_event_id so future Google pulls hit the fast path. Also
+      // append the gcal: source so the audit trail shows both contributors.
+      const newGoogleEventId = g.google_event_id || event_id;
+      const newSource = g.source && !String(g.source).includes('gcal:')
+        ? `${g.source}+gcal:${event_id}`
+        : (g.source || `gcal:${event_id}`);
       const updated = await db.query(
         `UPDATE gigs
            SET band_name = $1,
@@ -937,8 +968,10 @@ router.post('/import', async (req, res) => {
                start_time = $5,
                end_time = $6,
                fee = $7,
-               dress_code = $8
-         WHERE id = $9 AND user_id = $10
+               dress_code = $8,
+               google_event_id = $9,
+               source = $10
+         WHERE id = $11 AND user_id = $12
          RETURNING *`,
         [
           newBandName,
@@ -949,6 +982,8 @@ router.post('/import', async (req, res) => {
           newEndTime,
           newFee,
           newDressCode,
+          newGoogleEventId,
+          newSource,
           g.id,
           req.user.id,
         ]
@@ -1042,15 +1077,52 @@ router.post('/import-bulk', async (req, res) => {
           continue;
         }
 
-        const existing = await db.query(
+        // Layer 1: same-source dedup by google_event_id. Catches re-imports
+        // of the same calendar event.
+        let existing = await db.query(
           'SELECT * FROM gigs WHERE user_id = $1 AND google_event_id = $2 LIMIT 1',
           [req.user.id, ev.event_id]
         );
 
+        // Layer 2 (2026-04-27): cross-source soft match. If this calendar
+        // event lines up with an existing gig that came in from a CSV or
+        // Google Sheet (or was hand-entered), merge into that row rather
+        // than creating a duplicate. Match key is date + venue (case-
+        // insensitive). Time-conflict guard: if both rows have explicit
+        // start_times and they differ, treat as separate gigs (e.g. teaching
+        // session in the morning + evening band gig at the same venue).
+        if (existing.rows.length === 0) {
+          const candidateVenue = ev.venue_name || (ev.location ? String(ev.location).split(',')[0] : null);
+          if (candidateVenue && startParts.date) {
+            const soft = await db.query(
+              `SELECT * FROM gigs
+                WHERE user_id = $1
+                  AND date = $2
+                  AND LOWER(TRIM(venue_name)) = LOWER(TRIM($3))
+                  AND ($4::time IS NULL
+                       OR start_time IS NULL
+                       OR start_time = $4::time)
+                LIMIT 1`,
+              [req.user.id, startParts.date, candidateVenue, startParts.time]
+            );
+            if (soft.rows.length) existing = soft;
+          }
+        }
+
         if (existing.rows.length) {
           // Merge path: caller values win when non-null, existing wins for
-          // anything the caller didn't supply. Keeps re-runs safe.
+          // anything the caller didn't supply. Keeps re-runs safe AND lets a
+          // calendar event enrich a gig that was first created from a CSV.
+          // We also stamp google_event_id when it's currently null so future
+          // calendar pulls hit the fast same-source path instead of soft-
+          // matching every time. And when the existing row's source is
+          // non-gcal (e.g. csv:Q1.csv), we append the gcal source so the
+          // audit trail shows both contributors.
           const g = existing.rows[0];
+          const newGoogleEventId = g.google_event_id || ev.event_id;
+          const newSource = g.source && !String(g.source).includes('gcal:')
+            ? `${g.source}+gcal:${ev.event_id}`
+            : (g.source || `gcal:${ev.event_id}`);
           const updated = await db.query(
             `UPDATE gigs
                SET band_name = COALESCE($1, band_name),
@@ -1065,8 +1137,10 @@ router.post('/import-bulk', async (req, res) => {
                    client_name = COALESCE($10, client_name),
                    client_email = COALESCE($11, client_email),
                    client_phone = COALESCE($12, client_phone),
-                   notes = COALESCE($13, notes)
-             WHERE id = $14 AND user_id = $15
+                   notes = COALESCE($13, notes),
+                   google_event_id = $14,
+                   source = $15
+             WHERE id = $16 AND user_id = $17
              RETURNING *`,
             [
               ev.band_name || ev.title || null,
@@ -1082,6 +1156,8 @@ router.post('/import-bulk', async (req, res) => {
               ev.client_email || null,
               ev.client_phone || null,
               ev.notes || null,
+              newGoogleEventId,
+              newSource,
               g.id,
               req.user.id,
             ]
