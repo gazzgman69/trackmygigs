@@ -172,10 +172,10 @@ function handleReload(req, res) {
 app.get('/api/admin/reload', handleReload);
 app.post('/api/admin/reload', handleReload);
 
-// Debug endpoint (Demo 2026-04-28): inspect cross-source dedup state.
-// Reports: total gigs, duplicate counts by date+start_time+normalized
-// band, and whether the cleanup migration would match them. Gated by
-// RELOAD_SECRET so it won't leak data in production.
+// Debug endpoint (Demo 2026-04-28): inspect cross-source dedup state and
+// optionally run the cleanup query out-of-cycle. Gated by RELOAD_SECRET.
+// Kept around because the cross-source dedup is exactly the kind of thing
+// that goes quiet for weeks then bites you again on a new edge case.
 app.get('/api/admin/dedup-debug', async (req, res) => {
   const expected = process.env.RELOAD_SECRET;
   if (!expected || req.query.key !== expected) {
