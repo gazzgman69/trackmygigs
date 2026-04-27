@@ -13661,7 +13661,10 @@ function updateOfferStatus(offerId, status) {
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
-function showToast(message) {
+// Optional second argument lets callers extend the auto-dismiss for messages
+// the user genuinely needs time to read (multi-segment import results,
+// merge counts, etc.). Default 2200ms covers the snappy success/error case.
+function showToast(message, opts) {
   const existing = document.querySelector('.toast');
   if (existing) existing.remove();
 
@@ -13669,7 +13672,12 @@ function showToast(message) {
   toast.className = 'toast';
   toast.textContent = message;
   document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 2200);
+  // Backwards compat: opts may be a number (duration in ms), an object
+  // with { durationMs: number }, or undefined.
+  let durationMs = 2200;
+  if (typeof opts === 'number') durationMs = opts;
+  else if (opts && typeof opts.durationMs === 'number') durationMs = opts.durationMs;
+  setTimeout(() => toast.remove(), durationMs);
 }
 
 // S1-05: in-app confirm modal. Replaces native window.confirm() which (a) leaks the
@@ -14818,9 +14826,21 @@ function showSheetsTabAndMapper(preview, urlOrId) {
     };
   }
 
-  // Override the import button to hit /api/sheets/import.
+  // Override the import button to hit /api/sheets/import. Also fix the
+  // button label: showColumnMapper bases the count on the rows it received
+  // (the 10-row preview sample), so for Sheets it always says "Import 10".
+  // The actual import reads the entire tab server-side via the sheets API,
+  // so use the tab's real row_count from the preview metadata. Subtract 1
+  // for the header row.
   const importBtn = overlay.querySelector('#onbMapImport');
   if (importBtn) {
+    const tabMeta = preview.tabs.find(t => t.name === preview.tab_name);
+    const dataRowCount = tabMeta && typeof tabMeta.row_count === 'number'
+      ? Math.max(0, tabMeta.row_count - 1)
+      : null;
+    if (dataRowCount != null) {
+      importBtn.textContent = `Import ${dataRowCount} gig${dataRowCount === 1 ? '' : 's'}`;
+    }
     importBtn.onclick = async () => {
       const map = {};
       overlay.querySelectorAll('select[data-field]').forEach(sel => {
@@ -14867,7 +14887,9 @@ async function submitSheetsImport(columnMap, overlay) {
       const parts = [`Imported ${imported} gig${imported === 1 ? '' : 's'}`];
       if (merged) parts.push(`merged ${merged} with existing`);
       if (skipped) parts.push(`${skipped} skipped`);
-      showToast(parts.join(', '));
+      // 5s duration: the result message is multi-clause and worth letting
+      // the user actually read it. Default 2200ms vanishes too fast.
+      showToast(parts.join(', '), 5000);
     }
     // Clear the stashed URL so the next time the user opens the Sheets
     // step it doesn't pre-fill with a stale value.
