@@ -189,6 +189,32 @@ function initApp(user) {
   // this user has never bulk-imported, open the modal before we strip.
   const justConnected = (typeof URL !== 'undefined')
     && new URL(window.location.href).searchParams.get('calendar_connected') === 'true';
+  // Phase C (2026-04-27): same dance for sheets_connected. Strip the flag,
+  // and if the user kicked off OAuth from inside the onboarding picker,
+  // resume them at the URL-paste step so they can finish the import.
+  const sheetsJustConnected = (typeof URL !== 'undefined')
+    && new URL(window.location.href).searchParams.get('sheets_connected') === 'true';
+  if (sheetsJustConnected) {
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete('sheets_connected');
+      const qs = u.searchParams.toString();
+      history.replaceState(null, '', u.pathname + (qs ? `?${qs}` : '') + u.hash);
+    } catch (_) {}
+    const sheetsResume = (function () {
+      try { return localStorage.getItem('tmg_onboarding_resume'); } catch (_) { return null; }
+    })();
+    if (sheetsResume === 'sheets') {
+      try { localStorage.removeItem('tmg_onboarding_resume'); } catch (_) {}
+      // Skip the welcome/profile slides and drop straight into the Sheets
+      // URL paste step. _onboardingShown stops the regular tour from also
+      // firing.
+      window._onboardingShown = true;
+      setTimeout(() => {
+        if (typeof showSheetsUrlStep === 'function') showSheetsUrlStep();
+      }, 400);
+    }
+  }
   if (typeof clearCalendarConnectedParam === 'function') {
     clearCalendarConnectedParam();
   }
@@ -14518,13 +14544,192 @@ async function submitSpreadsheetImport(filename, dataRows, map, overlay) {
   }
 }
 
-function startImportFromSheets() {
-  // Phase C will replace this stub with the Google Sheets OAuth + sheet
-  // picker. For now mark the source complete + toast.
-  if (typeof showToast === 'function') {
-    showToast('Google Sheets sync arrives in the next release. Skipping for now.');
+async function startImportFromSheets() {
+  // Phase C (2026-04-27): check if the user already has Sheets access on
+  // their Google account. If yes, jump straight to the URL-paste step. If
+  // not, kick off the dedicated /auth/google/sheets OAuth flow which
+  // requests the spreadsheets scope (plus calendar so it stays a single
+  // consent screen) and redirects back with ?sheets_connected=true.
+  let status = null;
+  try {
+    const r = await fetch('/api/sheets/status');
+    if (r.ok) status = await r.json();
+  } catch (_) { /* fall through to OAuth */ }
+  if (!status || !status.has_google_token) {
+    try { localStorage.setItem('tmg_onboarding_resume', 'sheets'); } catch (_) {}
+    window.location.href = '/auth/google/sheets';
+    return;
   }
-  markImportSourceComplete('sheets');
+  // Already have Google token (likely connected for calendar) — but might
+  // not include the spreadsheets scope yet. Show the URL paste step; if the
+  // preview call comes back with a permission error we'll prompt the user
+  // to re-consent.
+  showSheetsUrlStep();
+}
+
+function showSheetsUrlStep() {
+  const overlay = ensureOnboardingOverlay();
+  overlay.innerHTML = `
+    <div style="max-width:420px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;text-align:center;box-shadow:0 30px 60px rgba(0,0,0,.5);">
+      <div style="font-size:46px;margin-bottom:8px;">📋</div>
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:8px;">Paste your Google Sheet</div>
+      <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:14px;text-align:left;">
+        Open the Sheet in Google Sheets, copy the URL from your browser's address bar, and paste it here. We'll show you the tabs and let you map columns.
+      </div>
+      <input id="onbSheetUrl" type="url" placeholder="https://docs.google.com/spreadsheets/d/..." style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;box-sizing:border-box;margin-bottom:10px;">
+      <div id="onbSheetStatus" style="font-size:12px;color:var(--text-3);min-height:18px;margin-bottom:10px;text-align:left;"></div>
+      <button id="onbSheetNext" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">Read this sheet</button>
+      <button id="onbSheetBack" style="margin-top:10px;width:100%;background:transparent;color:var(--text-3);border:none;padding:8px;font-size:12px;cursor:pointer;">Back</button>
+    </div>`;
+
+  overlay.querySelector('#onbSheetBack').onclick = () => {
+    const pickerIdx = ONBOARDING_STEPS.findIndex(s => s.kind === 'picker');
+    if (pickerIdx >= 0) renderImportPicker(pickerIdx, { repeat: true });
+  };
+  overlay.querySelector('#onbSheetNext').onclick = () => {
+    const url = (overlay.querySelector('#onbSheetUrl').value || '').trim();
+    if (!url) {
+      overlay.querySelector('#onbSheetStatus').textContent = 'Paste a Google Sheets URL or ID first.';
+      return;
+    }
+    fetchSheetPreview(url, null);
+  };
+}
+
+async function fetchSheetPreview(urlOrId, tabName) {
+  const overlay = ensureOnboardingOverlay();
+  const status = overlay.querySelector('#onbSheetStatus');
+  const btn = overlay.querySelector('#onbSheetNext');
+  if (status) status.textContent = 'Reading…';
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/sheets/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url_or_id: urlOrId, tab_name: tabName }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      // Permission scope mismatch: token doesn't include spreadsheets.
+      if (data.needs_connect || /permission|scope/i.test(data.error || '')) {
+        try { localStorage.setItem('tmg_onboarding_resume', 'sheets'); } catch (_) {}
+        window.location.href = '/auth/google/sheets';
+        return;
+      }
+      if (status) status.textContent = data.error || 'Could not read that sheet.';
+      if (btn) btn.disabled = false;
+      return;
+    }
+    showSheetsTabAndMapper(data, urlOrId);
+  } catch (err) {
+    console.error('Sheets preview failed:', err);
+    if (status) status.textContent = 'Network error reading the sheet. Try again.';
+    if (btn) btn.disabled = false;
+  }
+}
+
+function showSheetsTabAndMapper(preview, urlOrId) {
+  // preview = { spreadsheet_id, spreadsheet_title, tabs, tab_name,
+  //             headers, sample_rows }
+  const overlay = ensureOnboardingOverlay();
+  const tabsHtml = preview.tabs.map(t =>
+    `<option value="${escapeHtml(t.name)}" ${t.name === preview.tab_name ? 'selected' : ''}>${escapeHtml(t.name)} (${t.row_count - 1} rows)</option>`
+  ).join('');
+
+  // Reuse the column-mapper logic from Phase B by feeding it Sheets-style
+  // [headers, ...sampleRows] data and an import callback that hits
+  // /api/sheets/import instead of /api/gigs/import-bulk.
+  const fakeRows = [preview.headers, ...preview.sample_rows];
+  // We need the mapper to know about the spreadsheet ID + tab name when it
+  // submits, so we stash them on a session-scoped object the mapper picks
+  // up in submitSpreadsheetImport-equivalent.
+  window._sheetsImportContext = {
+    spreadsheet_id: preview.spreadsheet_id,
+    tab_name: preview.tab_name,
+    spreadsheet_title: preview.spreadsheet_title,
+  };
+
+  // Render a minimal tab-picker on top, then call the existing mapper.
+  // showColumnMapper renders the entire overlay, so we render the tab
+  // picker AS PART OF that overlay by patching the title HTML afterwards.
+  showColumnMapper(`${preview.spreadsheet_title} · ${preview.tab_name}`, fakeRows);
+
+  // Inject the tab picker above the column mapper. The mapper rendered a
+  // <div style="...font-size:18px;font-weight:700;...">Map your columns</div>
+  // which we anchor against; insert a tab dropdown immediately before it so
+  // the user can switch tabs without going back to the URL step.
+  const mapperBox = overlay.querySelector('div[style*="max-width:480px"]');
+  if (mapperBox && preview.tabs.length > 1) {
+    const titleEl = mapperBox.querySelector('div[style*="font-size:18px"]');
+    const tabPicker = document.createElement('div');
+    tabPicker.style.cssText = 'text-align:left;margin-bottom:12px;';
+    tabPicker.innerHTML = `
+      <label style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Sheet tab</label>
+      <select id="onbSheetTabSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;">${tabsHtml}</select>
+    `;
+    titleEl.parentNode.insertBefore(tabPicker, titleEl.nextSibling.nextSibling);
+    overlay.querySelector('#onbSheetTabSelect').onchange = (e) => {
+      fetchSheetPreview(urlOrId, e.target.value);
+    };
+  }
+
+  // Override the import button to hit /api/sheets/import.
+  const importBtn = overlay.querySelector('#onbMapImport');
+  if (importBtn) {
+    importBtn.onclick = async () => {
+      const map = {};
+      overlay.querySelectorAll('select[data-field]').forEach(sel => {
+        const idx = parseInt(sel.value, 10);
+        if (!isNaN(idx) && idx >= 0) map[sel.getAttribute('data-field')] = idx;
+      });
+      if (typeof map.date !== 'number') {
+        const st = overlay.querySelector('#onbMapStatus');
+        if (st) st.textContent = 'A Date column is required to import.';
+        return;
+      }
+      await submitSheetsImport(map, overlay);
+    };
+  }
+  // Override the Back button to return to the URL step rather than the picker.
+  const backBtn = overlay.querySelector('#onbMapBack');
+  if (backBtn) backBtn.onclick = () => showSheetsUrlStep();
+}
+
+async function submitSheetsImport(columnMap, overlay) {
+  const ctx = window._sheetsImportContext || {};
+  const status = overlay.querySelector('#onbMapStatus');
+  const btn = overlay.querySelector('#onbMapImport');
+  if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+  if (status) status.textContent = '';
+  try {
+    const r = await fetch('/api/sheets/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        spreadsheet_id: ctx.spreadsheet_id,
+        tab_name: ctx.tab_name,
+        column_map: columnMap,
+        link_for_sync: true,
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || ('HTTP ' + r.status));
+    if (typeof invalidateGigsCache === 'function') invalidateGigsCache();
+    const imported = data.imported || 0;
+    const merged = data.merged || 0;
+    const skipped = data.skipped || 0;
+    if (typeof showToast === 'function') {
+      const parts = [`Imported ${imported} gig${imported === 1 ? '' : 's'}`];
+      if (merged) parts.push(`merged ${merged} with existing`);
+      if (skipped) parts.push(`${skipped} skipped`);
+      showToast(parts.join(', '));
+    }
+    markImportSourceComplete('sheets');
+  } catch (err) {
+    console.error('Sheets import failed:', err);
+    if (status) status.textContent = 'Import failed: ' + (err.message || 'unknown error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Try again'; }
+  }
 }
 
 function markImportSourceComplete(key) {

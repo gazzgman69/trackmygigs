@@ -411,6 +411,31 @@ router.get('/google/calendar', (req, res) => {
       'https://www.googleapis.com/auth/calendar.events',
       'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
     ],
+    state: 'calendar',
+  });
+  res.redirect(authUrl);
+});
+
+// Phase C (2026-04-27): Google Sheets two-way sync. Requests the
+// spreadsheets scope so we can both read existing rows during the inbound
+// import (Phase C) AND write back changes when the user edits a gig in TMG
+// (Phase D). Calendar scopes are included too — if the user is connecting
+// Sheets first and later wants Calendar, they don't need a second consent
+// round-trip. include_granted_scopes preserves any scopes they've already
+// agreed to so we don't lose calendar.events on a returning user.
+router.get('/google/sheets', (req, res) => {
+  const authUrl = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    include_granted_scopes: true,
+    scope: [
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+    ],
+    state: 'sheets',
   });
   res.redirect(authUrl);
 });
@@ -425,8 +450,14 @@ router.get('/google/calendar', (req, res) => {
 //       find-or-create the user by Google email and start a session.
 router.get('/google/callback', async (req, res) => {
   try {
-    const { code } = req.query;
+    const { code, state } = req.query;
     if (!code) return res.redirect('/?error=no_code');
+
+    // Phase C: state is set to 'sheets' by /auth/google/sheets and
+    // 'calendar' by /auth/google/calendar so the post-OAuth redirect lands
+    // the user back on the right surface. Falls back to calendar for safety.
+    const flow = state === 'sheets' ? 'sheets' : 'calendar';
+    const successQuery = flow === 'sheets' ? 'sheets_connected=true' : 'calendar_connected=true';
 
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
@@ -462,7 +493,7 @@ router.get('/google/callback', async (req, res) => {
           currentUser.id,
         ]
       );
-      return res.redirect('/?calendar_connected=true');
+      return res.redirect('/?' + successQuery);
     }
 
     // Sign-in mode: no existing session, treat as identity.
@@ -493,7 +524,7 @@ router.get('/google/callback', async (req, res) => {
     );
 
     await createSession(res, user.id);
-    res.redirect('/?calendar_connected=true');
+    res.redirect('/?' + successQuery);
   } catch (error) {
     console.error('Google Calendar OAuth error:', error);
     res.redirect('/?error=calendar_auth_failed');

@@ -9,6 +9,7 @@ const { exec } = require('child_process');
 const authRoutes = require('./routes/auth');
 const apiRoutes = require('./routes/api');
 const calendarRoutes = require('./routes/calendar');
+const sheetsRoutes = require('./routes/sheets');
 const chatRoutes = require('./routes/chat');
 const publicRoutes = require('./routes/public');
 const aiRoutes = require('./routes/ai');
@@ -267,6 +268,7 @@ app.use('/api/stripe', stripeRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/calendar', calendarRoutes);
+app.use('/api/sheets', sheetsRoutes);
 app.use('/api/chat', chatRoutes);
 // Public share and EPK routes (no auth) — mounted at /share and /epk via the same router
 app.use('/', publicRoutes);
