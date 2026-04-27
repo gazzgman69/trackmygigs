@@ -457,7 +457,10 @@ router.post('/gigs/import-bulk', async (req, res) => {
         // band_name — a real user playing two gigs at the same time on the
         // same day with the same band name is essentially impossible. Only
         // fires when both rows have a band_name AND start_time, so generic
-        // empty-band entries don't collapse together.
+        // empty-band entries don't collapse together. Normalises band names
+        // by stripping a leading "[Tag] " prefix and a trailing " @ <venue>"
+        // suffix so the calendar's full event summary matches the sheet's
+        // bare band name.
         if (sameSrcExisting.rows.length === 0
             && crossSrcExisting.rows.length === 0
             && bandName && startTime) {
@@ -466,7 +469,8 @@ router.post('/gigs/import-bulk', async (req, res) => {
               WHERE user_id = $1
                 AND date = $2
                 AND start_time = $3::time
-                AND LOWER(TRIM(band_name)) = LOWER(TRIM($4))
+                AND LOWER(regexp_replace(regexp_replace(TRIM(band_name), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
+                  = LOWER(regexp_replace(regexp_replace(TRIM($4::text), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
               LIMIT 1`,
             [req.user.id, date, startTime, bandName]
           );

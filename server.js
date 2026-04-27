@@ -1156,6 +1156,12 @@ async function runMigrations() {
     // row keeps its cleaner venue data and inherits the calendar row's
     // google_event_id, then the calendar row gets deleted. Idempotent —
     // after the first pass no duplicate pairs match the filter.
+    // Helper: normalise band names for matching across sources by
+    // stripping a leading "[Tag] " prefix (e.g. "[TMG Demo] ") and a
+    // trailing " @ <venue>" suffix that calendar AI tends to glue on.
+    // Calendar import often stores the full event summary verbatim while
+    // the sheet has just the band name, so naive equality misses pairs
+    // that are clearly the same gig.
     await db.query(`
       WITH dup_pairs AS (
         SELECT DISTINCT ON (sheet_row.id)
@@ -1168,7 +1174,8 @@ async function runMigrations() {
               sheet_row.user_id = cal_row.user_id
           AND sheet_row.date = cal_row.date
           AND sheet_row.start_time = cal_row.start_time
-          AND LOWER(TRIM(sheet_row.band_name)) = LOWER(TRIM(cal_row.band_name))
+          AND LOWER(regexp_replace(regexp_replace(TRIM(sheet_row.band_name), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
+            = LOWER(regexp_replace(regexp_replace(TRIM(cal_row.band_name),   '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
           AND sheet_row.id <> cal_row.id
           AND sheet_row.sheets_row_id IS NOT NULL
           AND sheet_row.google_event_id IS NULL

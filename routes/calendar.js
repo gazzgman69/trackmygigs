@@ -974,14 +974,15 @@ router.post('/import', async (req, res) => {
     // Layer 2b (Demo 2026-04-28): see /api/gigs/import-bulk comment. Falls
     // back to date + start_time + band_name when venue-match misses because
     // calendar and sheet picked different venue_name strings for the same
-    // physical gig.
+    // physical gig. Normalises bands so "[Tag] Band @ Venue" matches "Band".
     if (existing.rows.length === 0 && startParts.date && startParts.time && band_name) {
       const softBand = await db.query(
         `SELECT * FROM gigs
           WHERE user_id = $1
             AND date = $2
             AND start_time = $3::time
-            AND LOWER(TRIM(band_name)) = LOWER(TRIM($4))
+            AND LOWER(regexp_replace(regexp_replace(TRIM(band_name), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
+              = LOWER(regexp_replace(regexp_replace(TRIM($4::text), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
           LIMIT 1`,
         [req.user.id, startParts.date, startParts.time, band_name]
       );
@@ -1160,7 +1161,7 @@ router.post('/import-bulk', async (req, res) => {
         }
         // Layer 2b (Demo 2026-04-28): venue-match misses when sheet venue
         // and calendar location parse to different strings. Fall back to
-        // date + start_time + band_name.
+        // date + start_time + band_name with prefix/suffix normalisation.
         const candidateBand = ev.band_name || ev.title || null;
         if (existing.rows.length === 0
             && startParts.date && startParts.time && candidateBand) {
@@ -1169,7 +1170,8 @@ router.post('/import-bulk', async (req, res) => {
               WHERE user_id = $1
                 AND date = $2
                 AND start_time = $3::time
-                AND LOWER(TRIM(band_name)) = LOWER(TRIM($4))
+                AND LOWER(regexp_replace(regexp_replace(TRIM(band_name), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
+                  = LOWER(regexp_replace(regexp_replace(TRIM($4::text), '^\\[[^\\]]+\\]\\s*', ''), '\\s+@\\s+.+$', ''))
               LIMIT 1`,
             [req.user.id, startParts.date, startParts.time, candidateBand]
           );
