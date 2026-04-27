@@ -568,22 +568,42 @@ router.get('/events', async (req, res) => {
       // UK tax year runs 6 April - 5 April. If we're past 6 April of this
       // calendar year, the current TY started in April of this year. If we
       // haven't hit 6 April yet, the current TY started in April last year.
+      // 2026-04-27 fix: timeMax now goes to the END of the tax year (5 Apr
+      // next year), not now+60d. The original cap meant a tax-year query
+      // hit by a fresh user in April only saw events ~2 months ahead, and
+      // the bulk-import modal said "27 of 50" or similar.
       const y = now.getFullYear();
-      const taxYearStart = (now.getMonth() > 3 || (now.getMonth() === 3 && now.getDate() >= 6))
+      const isAfterApril6 = now.getMonth() > 3 || (now.getMonth() === 3 && now.getDate() >= 6);
+      const taxYearStart = isAfterApril6
         ? new Date(y, 3, 6)           // 6 April this year
         : new Date(y - 1, 3, 6);      // 6 April last year
+      const taxYearEnd = isAfterApril6
+        ? new Date(y + 1, 3, 5, 23, 59, 59)   // 5 April next year
+        : new Date(y, 3, 5, 23, 59, 59);      // 5 April this year
       timeMin = taxYearStart;
-      const future = new Date(now);
-      future.setDate(future.getDate() + 60);
-      timeMax = future;
+      timeMax = taxYearEnd;
     } else if (windowMode === 'all') {
+      // 2026-04-27: extend forward window to 18 months so future bookings
+      // beyond a year are visible (working musicians often have weddings
+      // booked 12-18 months out).
       const twoYearsAgoTaxYear = new Date(now.getFullYear() - 2, 3, 6);
       timeMin = twoYearsAgoTaxYear;
       const future = new Date(now);
-      future.setDate(future.getDate() + 365);
+      future.setMonth(future.getMonth() + 18);
+      timeMax = future;
+    } else if (windowMode === 'future') {
+      // 'future': for the first-import modal, show all upcoming gigs
+      // out to 18 months (was 60 days). The Calendar screen's nudge bar
+      // uses /api/calendar/events without a window, so it falls through
+      // to the implicit default below — keep that one short.
+      timeMin = now;
+      const future = new Date(now);
+      future.setMonth(future.getMonth() + 18);
       timeMax = future;
     } else {
-      // 'future' (default): next 60 days, matches the ongoing nudge bar.
+      // Implicit default (no window param): next 60 days. Used by the
+      // Calendar screen's nudge bar where we want a tight window to
+      // surface only imminent events.
       timeMin = now;
       const future = new Date(now);
       future.setDate(future.getDate() + 60);
@@ -741,6 +761,20 @@ router.get('/events', async (req, res) => {
         const kw = scoreEvent(ev);
         score = kw.score;
         reasons = kw.reasons;
+      }
+
+      // 2026-04-27: regex fallback for fee. Haiku misses "Fee: £850" lines
+      // in event descriptions more often than expected (probably because
+      // the prompt asks for a number and the line includes £). If we have
+      // a description and no fee yet, grep it. Conservative pattern: must
+      // be on a "Fee:" or "Fee " line and capped at 5 digits to avoid
+      // matching phone numbers or postcodes.
+      if (suggested_fee == null && ev.description) {
+        const m = String(ev.description).match(/(?:^|\n)\s*Fee\s*[:\s]\s*£?\s*([0-9]{2,5}(?:\.[0-9]{1,2})?)\b/i);
+        if (m) {
+          const v = parseFloat(m[1]);
+          if (Number.isFinite(v) && v > 0 && v < 50000) suggested_fee = Math.round(v);
+        }
       }
 
       // London-local components so a 23:00+01:00 event doesn't get labelled

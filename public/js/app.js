@@ -242,8 +242,17 @@ function initApp(user) {
       window._onboardingResumePicker = true;
     }
 
+    // 2026-04-27: scope the first-import-done flag per user. The original
+    // global key suppressed the modal for users who shared a Chrome
+    // session with a different TMG account that already did the import.
+    // Using user.id in the key means each fresh user gets the modal once,
+    // regardless of who used this browser before.
+    const firstImportKey = (function () {
+      const uid = window._currentUser?.id;
+      return uid ? `tmg_first_import_done:${uid}` : 'tmg_first_import_done';
+    })();
     const firstDone = (function () {
-      try { return localStorage.getItem('tmg_first_import_done') === '1'; }
+      try { return localStorage.getItem(firstImportKey) === '1'; }
       catch (_) { return false; }
     })();
     if (!firstDone && typeof openFirstImportModal === 'function') {
@@ -14049,25 +14058,21 @@ const ONBOARDING_STEPS = [
           ${escapeHtml(opt)}
         </label>`;
       }).join('');
-      const avail = profile.available_for_deps === true;
+      // 2026-04-27: removed the "Available for dep gigs" toggle from
+      // onboarding. New users default to available_for_deps=true (set
+      // server-side in findOrCreateUser) so the marketplace has a healthy
+      // pool from day one. Users who don't want dep offers can flip it
+      // off in Profile > Edit Profile.
       return `
         <div style="text-align:left;margin-bottom:14px;">
           <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Instruments</label>
           <div id="onbInstrChips" style="display:flex;flex-wrap:wrap;gap:6px;">${chips}</div>
-        </div>
-        <div style="text-align:left;">
-          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;">
-            <input id="onbDepToggle" type="checkbox" ${avail ? 'checked' : ''} style="accent-color:var(--accent);">
-            <span style="font-size:14px;color:var(--text);">Available for dep gigs</span>
-          </label>
-          <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Other users can invite you to cover their bookings. You can change this later.</div>
         </div>`;
     },
     collect: () => {
       const body = {};
       const inputs = document.querySelectorAll('input[name="onbInstrument"]:checked');
       body.instruments = Array.from(inputs).map(i => i.value);
-      body.available_for_deps = !!document.getElementById('onbDepToggle')?.checked;
       return body;
     },
     cta: 'Next',
@@ -15124,7 +15129,7 @@ window.isTimeAutoBlocked = isTimeAutoBlocked;
       </div>
 
       <button id="fiImportBtn" onclick="fiStartImport()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:14px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;">Import all ${events.length}</button>
-      <button onclick="document.getElementById('firstImportOverlay').remove();localStorage.setItem('tmg_first_import_done','1');" style="width:100%;background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:14px;padding:12px;font-size:13px;cursor:pointer;">Skip for now</button>
+      <button onclick="document.getElementById('firstImportOverlay').remove();localStorage.setItem(window._currentUser?.id ? 'tmg_first_import_done:' + window._currentUser.id : 'tmg_first_import_done','1');" style="width:100%;background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:14px;padding:12px;font-size:13px;cursor:pointer;">Skip for now</button>
 
       <div style="font-size:11px;color:var(--text-3);margin-top:14px;line-height:1.5;">We'll add fees, dress code, and load-in times where the AI could find them. Anything blank, you can fill in seconds with the quick-fire review.</div>`;
 
@@ -15189,7 +15194,9 @@ window.isTimeAutoBlocked = isTimeAutoBlocked;
         throw new Error(data.error || ('HTTP ' + r.status));
       }
 
-      localStorage.setItem('tmg_first_import_done', '1');
+      // 2026-04-27: per-user key (see firstImportKey in bootstrap).
+      const _fid = window._currentUser?.id;
+      localStorage.setItem(_fid ? `tmg_first_import_done:${_fid}` : 'tmg_first_import_done', '1');
       // Invalidate cached gigs so the Gigs + Home screens re-pull on next render.
       if (typeof invalidateGigsCache === 'function') invalidateGigsCache();
 
