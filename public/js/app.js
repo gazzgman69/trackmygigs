@@ -13204,54 +13204,238 @@ function renderMessageAttachment(att, isMe) {
 // toast — they're seeing the snapshot, not their own copy. Sender always
 // owns the gig (server enforces) so this works for both sides.
 // 2026-04-29 contextual-send batch: tap-the-card handler for shared
-// contacts. If the snapshotted contact is a TMG user we open their
-// directory profile (works for sender + receiver). If not, we surface a
-// toast with the name — the receiver can choose to add them manually.
-// Saving directly into the receiver's contacts is a future iteration;
-// for now we keep the receive side read-only to avoid silently slurping
-// names into someone else's address book.
+// contacts. Lifts a profile sheet with the full directory-style card
+// (photo, name, instruments, bio, worked-together badge, distance) plus
+// action buttons (Send message, Add to contacts, Send dep offer).
+// Stays inside the chat — no navigation out.
 async function openSharedContactCard(linkedUserId, cardEl) {
-  if (linkedUserId && typeof openUserProfileSheet === 'function') {
-    // 2026-04-29 — don't close the chat thread first. The profile kebab is
-    // a z-index 99999 overlay that sits cleanly on top of any open panel.
-    // Closing the panel triggered the openPanel defensive sweep on the
-    // back-navigation, which wiped the kebab overlay we'd just created.
-    openUserProfileSheet(linkedUserId);
+  if (!linkedUserId) {
+    let name = '';
+    try {
+      const el = cardEl || document.querySelector('.chat-contact-card');
+      if (el) name = el.getAttribute('data-contact-name') || '';
+    } catch (_) {}
+    try { toast(name ? `${name} isn't on TrackMyGigs yet — copy their details from chat.` : 'This contact isn’t on TrackMyGigs yet.'); } catch (_) {}
     return;
   }
-  // Non-TMG contact — try to read the name back off the card for a useful
-  // toast. Receivers can copy/paste it into their own contacts manually.
-  let name = '';
-  try {
-    const el = cardEl || document.querySelector('.chat-contact-card');
-    if (el) name = el.getAttribute('data-contact-name') || '';
-  } catch (_) {}
-  try { toast(name ? `${name} isn't on TrackMyGigs yet — copy their details from chat.` : 'This contact isn’t on TrackMyGigs yet.'); } catch (_) {}
+  openSharedContactProfileSheet(linkedUserId);
 }
 window.openSharedContactCard = openSharedContactCard;
 
+// 2026-04-29 — full profile preview sheet for a shared contact. Reads
+// the discover-user cache (pre-warmed when the card paints) and falls
+// back to a fetch only if the cache is cold. Lifts a sheet-overlay on
+// top of the chat thread so the user never loses their place in the
+// conversation.
+async function openSharedContactProfileSheet(userId) {
+  if (!userId) return;
+  // Paint a loading sheet immediately so the tap feels responsive.
+  const cached = (window._discoverCardCache || {})[userId];
+  _renderContactProfileSheet(userId, cached || null);
+  if (!cached) {
+    try {
+      const r = await fetch('/api/discover/user/' + encodeURIComponent(userId));
+      if (r.ok) {
+        const j = await r.json();
+        if (j && j.user) {
+          window._discoverCardCache = window._discoverCardCache || {};
+          window._discoverCardCache[userId] = j.user;
+          _renderContactProfileSheet(userId, j.user);
+        } else if (j && j.self) {
+          closeSharedContactProfileSheet();
+          try { toast('That\'s you!'); } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+}
+window.openSharedContactProfileSheet = openSharedContactProfileSheet;
+
+function _renderContactProfileSheet(userId, u) {
+  closeSharedContactProfileSheet();
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'sharedContactProfileSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSharedContactProfileSheet(); });
+
+  if (!u) {
+    wrap.innerHTML = `
+      <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;padding:24px;">
+        <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:0 auto 16px;"></div>
+        <div style="text-align:center;color:var(--text-2);padding:24px;font-size:13px;">Loading profile…</div>
+      </div>`;
+    document.body.appendChild(wrap);
+    return;
+  }
+
+  const name = u.display_name || u.name || 'Musician';
+  const initial = (name || 'U')[0].toUpperCase();
+  const photo = u.photo_url
+    ? `<img src="${escapeAttr(u.photo_url)}" alt="" style="width:64px;height:64px;border-radius:32px;object-fit:cover;" onerror="this.outerHTML='<div style=&quot;width:64px;height:64px;border-radius:32px;background:var(--accent-dim);color:var(--accent);font-size:24px;font-weight:700;display:flex;align-items:center;justify-content:center;&quot;>${escapeAttr(initial)}</div>'" />`
+    : `<div style="width:64px;height:64px;border-radius:32px;background:var(--accent-dim);color:var(--accent);font-size:24px;font-weight:700;display:flex;align-items:center;justify-content:center;">${escapeHtml(initial)}</div>`;
+
+  const instruments = Array.isArray(u.instruments) ? u.instruments.slice(0, 4) : [];
+  const genres = Array.isArray(u.genres) ? u.genres.slice(0, 4) : [];
+  const metaParts = [];
+  if (instruments.length) metaParts.push(instruments.join(', '));
+  if (genres.length) metaParts.push(genres.join(' / '));
+  const meta = metaParts.join(' · ');
+
+  const outward = u.outward_postcode || '';
+  const radius = (u.travel_radius_miles != null) ? `travels ${u.travel_radius_miles} mi` : '';
+  const dist = (u.distance_miles != null) ? `${Math.round(u.distance_miles)} mi away` : '';
+  const geoBits = [outward, radius, dist].filter(Boolean).join(' · ');
+
+  const togetherCount = u.gigs_together_count || 0;
+  const togetherBadge = togetherCount > 0
+    ? `<span style="background:rgba(63,184,95,.15);border:1px solid rgba(63,184,95,.5);color:#3fb85f;font-weight:700;font-size:11px;padding:3px 8px;border-radius:6px;">✓ Worked ${togetherCount}×</span>`
+    : '';
+
+  const bio = (u.bio || '').trim();
+  const bioBlock = bio
+    ? `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text-2);line-height:1.5;margin-top:12px;">${escapeHtml(bio)}</div>`
+    : '';
+
+  const messageBtn = u.allow_direct_messages !== false
+    ? `<button onclick="closeSharedContactProfileSheet(); discoverAction_message('${escapeAttr(userId)}')" style="width:100%;background:var(--accent);border:none;color:#000;padding:12px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;margin-bottom:8px;">💬 Send message</button>`
+    : '';
+  const addContactBtn = `<button onclick="closeSharedContactProfileSheet(); discoverAction_addContact('${escapeAttr(userId)}')" style="width:100%;background:var(--card);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:10px;font-weight:600;font-size:14px;cursor:pointer;margin-bottom:8px;">➕ Add to contacts</button>`;
+  const sendDepBtn = `<button onclick="closeSharedContactProfileSheet(); discoverAction_sendDep('${escapeAttr(userId)}')" style="width:100%;background:var(--card);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:10px;font-weight:600;font-size:14px;cursor:pointer;margin-bottom:8px;">🎵 Send dep offer</button>`;
+
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:85vh;display:flex;flex-direction:column;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
+      <div style="overflow-y:auto;padding:16px 20px 8px;">
+        <div style="display:flex;gap:14px;align-items:center;">
+          ${photo}
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:18px;font-weight:700;color:var(--text);">${escapeHtml(name)}</div>
+            ${meta ? `<div style="font-size:13px;color:var(--text-2);margin-top:2px;">${escapeHtml(meta)}</div>` : ''}
+            ${geoBits ? `<div style="font-size:11px;color:var(--text-3);margin-top:2px;">${escapeHtml(geoBits)}</div>` : ''}
+          </div>
+        </div>
+        ${togetherBadge ? `<div style="margin-top:12px;">${togetherBadge}</div>` : ''}
+        ${bioBlock}
+      </div>
+      <div style="padding:12px 20px 8px;border-top:1px solid var(--border);flex-shrink:0;">
+        ${messageBtn}
+        ${addContactBtn}
+        ${sendDepBtn}
+      </div>
+      <button onclick="closeSharedContactProfileSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Close</button>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+function closeSharedContactProfileSheet() {
+  const el = document.getElementById('sharedContactProfileSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeSharedContactProfileSheet = closeSharedContactProfileSheet;
+
 async function openSharedGigCard(gigId) {
   if (!gigId) return;
-  // Try local cache first (window._cachedGigs is what openGigDetail itself
-  // reads). If we have it, paint instantly without a round-trip.
-  const cache = window._cachedGigs || window._gigsCache || [];
+  // Lift a preview sheet inside the chat. The user stays in-thread; if
+  // they want the full gig panel (edit, invoice, calendar export, etc)
+  // there's an "Open in Gigs" button inside the sheet that navigates out.
+  // This avoids the panel-overlay stacking issue where the gig detail
+  // panel would render hidden behind the chat on Safari, AND keeps the
+  // user from losing their conversation context on every tap.
+  openSharedGigPreviewSheet(gigId);
+}
+
+function openSharedGigPreviewSheet(gigId) {
+  if (!gigId) return;
+  // Pull the gig from the latest cached message — that has the full
+  // server-side snapshot the receiver sees too.
+  let snapshot = null;
+  const messages = (window._chatThreadCache && window._chatThreadCache.messages) || [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const atts = Array.isArray(m && m.attachments) ? m.attachments : [];
+    const hit = atts.find(a => a && a.kind === 'gig' && a.gig_id === gigId);
+    if (hit) { snapshot = hit.snapshot || {}; break; }
+  }
+  if (!snapshot) snapshot = {};
+  closeSharedGigPreviewSheet();
+
+  const band = snapshot.band_name || 'Untitled gig';
+  const venue = snapshot.venue_name || '';
+  const postcode = snapshot.venue_postcode || '';
+  const venueLine = [venue, postcode].filter(Boolean).join(' · ');
+  let dateLine = '';
+  if (snapshot.date) {
+    try {
+      const d = new Date(snapshot.date);
+      dateLine = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    } catch (_) { dateLine = snapshot.date; }
+  }
+  const timeBits = [];
+  if (snapshot.start_time) timeBits.push(String(snapshot.start_time).slice(0, 5));
+  if (snapshot.end_time) timeBits.push(String(snapshot.end_time).slice(0, 5));
+  const timeLine = timeBits.length ? timeBits.join(' – ') : '';
+  const fee = (snapshot.fee != null && Number(snapshot.fee) > 0) ? `£${Number(snapshot.fee).toFixed(0)}` : '';
+  const dress = snapshot.dress_code ? String(snapshot.dress_code) : '';
+  const loadInTime = snapshot.load_in_time ? String(snapshot.load_in_time).slice(0, 5) : '';
+  const notesText = snapshot.notes ? String(snapshot.notes) : '';
+
+  const row = (label, value) => value
+    ? `<div style="padding:10px 0;border-bottom:1px solid var(--border);"><div style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;">${escapeHtml(label)}</div><div style="font-size:14px;color:var(--text);">${escapeHtml(value)}</div></div>`
+    : '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'sharedGigPreviewSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSharedGigPreviewSheet(); });
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:85vh;display:flex;flex-direction:column;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
+      <div style="padding:14px 20px 6px;flex-shrink:0;">
+        <div style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px;">🎵 Gig</div>
+        <div style="font-size:20px;font-weight:700;color:var(--text);margin-top:4px;line-height:1.25;">${escapeHtml(band)}</div>
+      </div>
+      <div style="overflow-y:auto;padding:0 20px 8px;">
+        ${row('Venue', venueLine)}
+        ${row('Date', dateLine)}
+        ${row('Time', timeLine)}
+        ${row('Load-in', loadInTime)}
+        ${row('Fee', fee)}
+        ${row('Dress code', dress)}
+        ${row('Notes', notesText)}
+      </div>
+      <div style="padding:12px 20px;border-top:1px solid var(--border);flex-shrink:0;">
+        <button onclick="closeSharedGigPreviewSheet(); openFullGigFromShared('${escapeAttr(gigId)}')" style="width:100%;background:var(--accent);border:none;color:#000;padding:12px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;">Open in Gigs &rsaquo;</button>
+      </div>
+      <button onclick="closeSharedGigPreviewSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Close</button>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+window.openSharedGigPreviewSheet = openSharedGigPreviewSheet;
+
+function closeSharedGigPreviewSheet() {
+  const el = document.getElementById('sharedGigPreviewSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeSharedGigPreviewSheet = closeSharedGigPreviewSheet;
+
+// "Open in Gigs" button from the preview sheet. Closes chat thread first
+// so the gig detail panel isn't hidden behind it, then opens. Falls back
+// to a toast if the user doesn't own the gig (receiver side).
+async function openFullGigFromShared(gigId) {
+  if (!gigId) return;
+  const cache = window._cachedGigs || [];
   const owns = (Array.isArray(cache) ? cache : []).some(g => g && g.id === gigId);
-  // Close the chat thread before opening the gig detail panel — both are
-  // panel-overlays, and stacking them leaves the gig hidden behind chat
-  // on Safari (panel-overlay z-index ties resolve by DOM order). The
-  // sheet-overlay sweep in openPanel doesn't affect panel-overlays, so
-  // this close is safe.
-  try { closePanel('panel-chat-thread'); } catch (_) {}
   if (owns && typeof openGigDetail === 'function') {
+    try { closePanel('panel-chat-thread'); } catch (_) {}
     openGigDetail(gigId);
     return;
   }
-  // Cold path: try to open the gig anyway. openGigDetail handles its own
-  // 404 by showing a "could not load" body. If the actor doesn't own this
-  // gig the API returns 404 and the panel surfaces that gracefully.
   try {
-    const r = await fetch(`/api/gigs/${gigId}`);
+    const r = await fetch('/api/gigs/' + encodeURIComponent(gigId));
     if (r.ok && typeof openGigDetail === 'function') {
+      try { closePanel('panel-chat-thread'); } catch (_) {}
       openGigDetail(gigId);
     } else {
       try { toast('You can see what was sent — the full gig stays with the sender.'); } catch (_) {}
@@ -13260,6 +13444,7 @@ async function openSharedGigCard(gigId) {
     try { toast('Could not open gig.'); } catch (_) {}
   }
 }
+window.openFullGigFromShared = openFullGigFromShared;
 window.openSharedGigCard = openSharedGigCard;
 
 function renderChatThread(thread, messages, participants) {
