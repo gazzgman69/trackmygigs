@@ -13173,7 +13173,10 @@ function renderMessageAttachment(att, isMe) {
 // names into someone else's address book.
 async function openSharedContactCard(linkedUserId, cardEl) {
   if (linkedUserId && typeof openUserProfileSheet === 'function') {
-    try { closePanel('panel-chat-thread'); } catch (_) {}
+    // 2026-04-29 — don't close the chat thread first. The profile kebab is
+    // a z-index 99999 overlay that sits cleanly on top of any open panel.
+    // Closing the panel triggered the openPanel defensive sweep on the
+    // back-navigation, which wiped the kebab overlay we'd just created.
     openUserProfileSheet(linkedUserId);
     return;
   }
@@ -13201,9 +13204,10 @@ async function openSharedGigCard(gigId) {
     } catch (_) {}
   }
   if (owns) {
-    try {
-      closePanel('panel-chat-thread');
-    } catch (_) {}
+    // 2026-04-29 — don't pre-close the chat thread. openGigDetail opens its
+    // own panel which stacks correctly. Closing first sometimes left the
+    // app on a blank screen if openGigDetail's open animation lost a race
+    // with the close.
     if (typeof openGigDetail === 'function') {
       openGigDetail(gigId);
     } else {
