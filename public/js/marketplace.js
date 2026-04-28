@@ -537,7 +537,7 @@
     const statusColor = row.status === 'accepted' ? '#3fb950'
       : row.status === 'rejected' ? 'var(--text-2)' : 'var(--accent)';
     const fee = row.is_free ? freeReasonLabel(row.free_reason) : fmtMoney(row.fee_pence);
-    return `<div onclick="_mktOpenDetail(${row.marketplace_gig_id})" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;cursor:pointer;">
+    return `<div onclick="_mktOpenDetail(${row.id})" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;cursor:pointer;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
         <div style="flex:1;min-width:0;">
           <div style="font-size:14px;font-weight:700;color:var(--text);">${esc(row.title)}</div>
