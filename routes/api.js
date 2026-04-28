@@ -4335,8 +4335,35 @@ router.get('/discover/user/:userId', async (req, res) => {
       [req.user.id, otherId]
     );
     if (result.rows.length === 0) {
-      // Either non-discoverable or blocked — return a minimal name-only
-      // shape so the chat row still renders something legible.
+      // 2026-04-29 multi-tenant audit: non-discoverable fallback path used
+      // to return id/display_name/photo for ANY UUID. That's a UUID-guess
+      // existence probe. Now we only return the fallback shape when the
+      // caller already shares context with the target — same thread, an
+      // existing contact link, or a non-cancelled offer in either
+      // direction. The chat info sheet is the only legitimate caller and
+      // it always satisfies the thread check.
+      const sharedCtx = await db.query(
+        `SELECT
+           EXISTS (
+             SELECT 1 FROM threads
+              WHERE $1 = ANY(participant_ids) AND $2 = ANY(participant_ids)
+           ) AS shared_thread,
+           EXISTS (
+             SELECT 1 FROM contacts
+              WHERE owner_id = $1 AND contact_user_id = $2
+           ) AS contact_link,
+           EXISTS (
+             SELECT 1 FROM offers
+              WHERE status <> 'cancelled'
+                AND ((sender_id = $1 AND recipient_id = $2)
+                  OR (sender_id = $2 AND recipient_id = $1))
+           ) AS shared_offer`,
+        [req.user.id, otherId]
+      );
+      const ctx = sharedCtx.rows[0] || {};
+      if (!ctx.shared_thread && !ctx.contact_link && !ctx.shared_offer) {
+        return res.status(404).json({ error: 'not_found' });
+      }
       const fallback = await db.query(
         `SELECT id, COALESCE(display_name, name, email) AS display_name, photo_url
            FROM users WHERE id = $1`,

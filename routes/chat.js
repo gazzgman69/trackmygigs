@@ -161,13 +161,21 @@ const MESSAGE_MAX_BYTES = 40 * 1024;
 
 router.post('/threads/:threadId/messages', async (req, res) => {
   try {
-    const { content, attachments, attachment } = req.body;
+    const { content, attachment } = req.body;
     const trimmedContent = (content || '').trim();
-    // 2026-04-29 contextual-send batch: messages can now carry an attachment
+    // 2026-04-29 contextual-send batch: messages can carry an attachment
     // payload (kind:'gig' for now, more kinds to follow). Either content OR
     // an attachment is required — not both. We snapshot the referenced
     // object server-side so the receiver always sees what was sent even if
     // the sender later edits or deletes it.
+    //
+    // 2026-04-29 multi-tenant audit: do NOT accept a raw `attachments` field
+    // from the client. Older code merged req.body.attachments straight into
+    // the JSONB column, which would let any thread participant inject a
+    // hand-crafted snapshot (fake fee, fake band_name, fake gig_id) that the
+    // receiver renders verbatim. Forcing every send through
+    // buildAttachmentSnapshot guarantees ownership validation and a trusted
+    // shape. New attachment kinds register here, not via raw body.
     let stagedAttachment = null;
     if (attachment && typeof attachment === 'object' && attachment.kind) {
       stagedAttachment = await buildAttachmentSnapshot(attachment, req.user.id);
@@ -175,7 +183,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
         return res.status(400).json({ error: 'Could not attach that item.' });
       }
     }
-    if (!trimmedContent && !stagedAttachment && !attachments) {
+    if (!trimmedContent && !stagedAttachment) {
       return res.status(400).json({ error: 'Message content is required' });
     }
     if (trimmedContent && Buffer.byteLength(trimmedContent, 'utf8') > MESSAGE_MAX_BYTES) {
@@ -191,12 +199,10 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       return res.status(404).json({ error: 'Thread not found' });
     }
 
-    // Wrap whichever payload we accepted into the JSONB column. Single
+    // Wrap the validated snapshot (if any) into the JSONB column. Single
     // attachment is stored as a one-element array so the column shape stays
     // uniform regardless of how many we attach in the future.
-    const finalAttachments = stagedAttachment
-      ? [stagedAttachment]
-      : (attachments || null);
+    const finalAttachments = stagedAttachment ? [stagedAttachment] : null;
 
     // S12-14: cast read_by seed array explicitly. Without the ::uuid[] cast
     // Postgres plans ARRAY[$2] as text[] and the insert into the uuid[] column
