@@ -60,7 +60,7 @@ async function upsertContactPair(client, userIdA, userIdB, contextNote) {
       const existing = await client.query(
         `SELECT id, notes FROM contacts
            WHERE owner_id = $1 AND linked_user_id = $2
-           ORDER BY created_at ASC
+           ORDER BY id ASC
            LIMIT 1`,
         [owner, other]
       );
