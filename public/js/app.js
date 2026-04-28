@@ -13348,16 +13348,26 @@ async function openSharedGigCard(gigId) {
 function openSharedGigPreviewSheet(gigId) {
   if (!gigId) return;
   // Pull the gig from the latest cached message — that has the full
-  // server-side snapshot the receiver sees too.
+  // server-side snapshot the receiver sees too. Also capture the message
+  // sender so we can decide whether to label the CTA "Open in Gigs"
+  // (sender already owns it) or "Add to my gigs" (receiver, snapshot
+  // only — they get a copy stamped into their own schedule).
   let snapshot = null;
+  let senderId = null;
   const messages = (window._chatThreadCache && window._chatThreadCache.messages) || [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     const atts = Array.isArray(m && m.attachments) ? m.attachments : [];
     const hit = atts.find(a => a && a.kind === 'gig' && a.gig_id === gigId);
-    if (hit) { snapshot = hit.snapshot || {}; break; }
+    if (hit) {
+      snapshot = hit.snapshot || {};
+      senderId = m.sender_id || null;
+      break;
+    }
   }
   if (!snapshot) snapshot = {};
+  const me = window.currentUser || (typeof currentUser !== 'undefined' ? currentUser : null);
+  const isOwner = !!(me && senderId && senderId === me.id);
   closeSharedGigPreviewSheet();
 
   const band = snapshot.band_name || 'Untitled gig';
@@ -13406,7 +13416,7 @@ function openSharedGigPreviewSheet(gigId) {
         ${row('Notes', notesText)}
       </div>
       <div style="padding:12px 20px;border-top:1px solid var(--border);flex-shrink:0;">
-        <button onclick="openFullGigFromShared('${escapeAttr(gigId)}')" style="width:100%;background:var(--accent);border:none;color:#000;padding:12px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;">Open in Gigs &rsaquo;</button>
+        <button onclick="openFullGigFromShared('${escapeAttr(gigId)}', ${isOwner ? 'true' : 'false'})" style="width:100%;background:var(--accent);border:none;color:#000;padding:12px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;">${isOwner ? 'Open in Gigs &rsaquo;' : 'Add to my gigs &rsaquo;'}</button>
       </div>
       <button onclick="closeSharedGigPreviewSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Close</button>
     </div>`;
@@ -13435,32 +13445,100 @@ window.closeSharedGigPreviewSheet = closeSharedGigPreviewSheet;
 // activates the Gigs screen. Then openGigDetail puts the gig panel on
 // top of Gigs — same flow as tapping a gig from the Gigs list. Backing
 // out of gig detail lands on the Gigs tab, which is a clear context.
-async function openFullGigFromShared(gigId) {
+async function openFullGigFromShared(gigId, hintIsOwner) {
   if (!gigId) return;
+  // Locate the snapshot for this gig once so both the owner branch (just
+  // navigates) and the receiver branch (creates a copy from the snapshot)
+  // share the same lookup. We walk cached messages newest-first because
+  // the same gig_id might be sent more than once and we want the most
+  // recent state.
+  let snapshot = null;
+  const messages = (window._chatThreadCache && window._chatThreadCache.messages) || [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const atts = Array.isArray(m && m.attachments) ? m.attachments : [];
+    const hit = atts.find(a => a && a.kind === 'gig' && a.gig_id === gigId);
+    if (hit) { snapshot = hit.snapshot || {}; break; }
+  }
+
   closeSharedGigPreviewSheet();
-  const cache = window._cachedGigs || [];
-  const owns = (Array.isArray(cache) ? cache : []).some(g => g && g.id === gigId);
-  const navigateAndOpen = () => {
+
+  const navigateAndOpen = (id) => {
     try { showScreen('gigs'); } catch (_) {}
     if (typeof openGigDetail === 'function') {
-      openGigDetail(gigId);
+      openGigDetail(id);
     } else {
       try { toast('Could not open gig.'); } catch (_) {}
     }
   };
-  if (owns) {
-    navigateAndOpen();
+
+  // Owner path: sender of the message taps Open in Gigs. Their gig row
+  // already exists, just navigate.
+  if (hintIsOwner) {
+    navigateAndOpen(gigId);
     return;
   }
+
+  // Receiver path: stamp the snapshot into a new gig on the receiver's
+  // own account. Confirm first so we don't silently slurp gigs into
+  // someone's schedule on an accidental tap.
+  if (!snapshot || !snapshot.date) {
+    try { toast('Missing gig details — ask the sender to resend.'); } catch (_) {}
+    return;
+  }
+  const ok = (typeof confirmModal === 'function')
+    ? await confirmModal(`Add "${snapshot.band_name || 'this gig'}" to your schedule?`)
+    : true;
+  if (!ok) return;
+
   try {
-    const r = await fetch('/api/gigs/' + encodeURIComponent(gigId));
-    if (r.ok) {
-      navigateAndOpen();
-    } else {
-      try { toast('You can see what was sent — the full gig stays with the sender.'); } catch (_) {}
+    const body = {
+      band_name: snapshot.band_name || null,
+      venue_name: snapshot.venue_name || null,
+      venue_address: snapshot.venue_address || null,
+      venue_postcode: snapshot.venue_postcode || null,
+      date: snapshot.date,
+      start_time: snapshot.start_time || null,
+      end_time: snapshot.end_time || null,
+      load_in_time: snapshot.load_in_time || null,
+      fee: snapshot.fee != null ? snapshot.fee : null,
+      dress_code: snapshot.dress_code || null,
+      notes: snapshot.notes || null,
+      gig_type: snapshot.gig_type || null,
+      client_name: snapshot.client_name || null,
+      rate_per_hour: snapshot.rate_per_hour != null ? snapshot.rate_per_hour : null,
+      status: 'confirmed',
+      // Tag the source so the receiver can tell where it came from in
+      // their gig list — useful audit trail for dep work.
+      source: 'chat-share'
+    };
+    const r = await fetch('/api/gigs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) {
+      const text = await r.text();
+      console.error('Add gig from share failed:', r.status, text);
+      try { toast('Could not add gig.'); } catch (_) {}
+      return;
     }
-  } catch (_) {
-    try { toast('Could not open gig.'); } catch (_) {}
+    const created = await r.json();
+    const newId = (created && (created.id || (created.gig && created.gig.id))) || null;
+    if (newId) {
+      // Drop into the local cache so openGigDetail paints from cache.
+      window._cachedGigs = window._cachedGigs || [];
+      const newGig = (created && created.gig) ? created.gig : created;
+      if (newGig && newGig.id) window._cachedGigs.unshift(newGig);
+      try { toast('Added to your gigs.'); } catch (_) {}
+      navigateAndOpen(newId);
+    } else {
+      try { toast('Saved — open Gigs to see it.'); } catch (_) {}
+      try { showScreen('gigs'); } catch (_) {}
+    }
+  } catch (e) {
+    console.error('Add gig from share error:', e);
+    try { toast('Could not add gig.'); } catch (_) {}
   }
 }
 window.openFullGigFromShared = openFullGigFromShared;
