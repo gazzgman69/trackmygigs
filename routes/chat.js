@@ -19,10 +19,14 @@ async function buildAttachmentSnapshot(attachment, actorId) {
     // Sender must own the gig to share it. Read-side permission for the
     // receiver is handled by the snapshot itself — they only see what was
     // captured at send time, not the live gig row.
+    // Schema reality check (2026-04-29): the gigs table uses a generic
+    // `notes` column for load-in info, and `load_in_time` for the
+    // earlier-than-start arrival time. There's no `load_in_notes` column.
+    // Earlier shape pulled the wrong name and 500'd every snapshot.
     const r = await db.query(
       `SELECT id, band_name, venue_name, venue_address, venue_postcode,
-              date, start_time, end_time, fee, dress_code, load_in_notes,
-              status, gig_type, client_name, rate_per_hour
+              date, start_time, end_time, load_in_time, fee, dress_code,
+              notes, status, gig_type, client_name, rate_per_hour
          FROM gigs
         WHERE id = $1 AND user_id = $2
         LIMIT 1`,
@@ -42,9 +46,10 @@ async function buildAttachmentSnapshot(attachment, actorId) {
         date: g.date || null,
         start_time: g.start_time || null,
         end_time: g.end_time || null,
+        load_in_time: g.load_in_time || null,
         fee: g.fee != null ? Number(g.fee) : null,
         dress_code: g.dress_code || null,
-        load_in_notes: g.load_in_notes || null,
+        notes: g.notes || null,
         status: g.status || null,
         gig_type: g.gig_type || null,
         client_name: g.client_name || null,

@@ -13140,7 +13140,8 @@ function renderMessageAttachment(att, isMe) {
   const timeLine = timeBits.length ? timeBits.join(' – ') : '';
   const fee = (s.fee != null && Number(s.fee) > 0) ? `£${Number(s.fee).toFixed(0)}` : '';
   const dress = s.dress_code ? String(s.dress_code) : '';
-  const loadIn = s.load_in_notes ? String(s.load_in_notes) : '';
+  const loadInTime = s.load_in_time ? String(s.load_in_time).slice(0, 5) : '';
+  const notesPreview = s.notes ? String(s.notes) : '';
   const gigId = att.gig_id ? escapeAttr(att.gig_id) : '';
   return `
     <div class="chat-gig-card" data-gig-id="${gigId}" onclick="openSharedGigCard('${gigId}')" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer;">
@@ -13150,7 +13151,8 @@ function renderMessageAttachment(att, isMe) {
       ${dateLine ? `<div style="font-size:12px;color:${subColor};margin-top:2px;">${escapeHtml(dateLine)}${timeLine ? ' · ' + escapeHtml(timeLine) : ''}</div>` : ''}
       ${fee ? `<div style="font-size:12px;color:${subColor};margin-top:2px;font-weight:600;">${escapeHtml(fee)}</div>` : ''}
       ${dress ? `<div style="font-size:11px;color:${subColor};margin-top:4px;"><strong>Dress:</strong> ${escapeHtml(dress.length > 60 ? dress.slice(0, 60) + '…' : dress)}</div>` : ''}
-      ${loadIn ? `<div style="font-size:11px;color:${subColor};margin-top:2px;"><strong>Load-in:</strong> ${escapeHtml(loadIn.length > 60 ? loadIn.slice(0, 60) + '…' : loadIn)}</div>` : ''}
+      ${loadInTime ? `<div style="font-size:11px;color:${subColor};margin-top:2px;"><strong>Load-in:</strong> ${escapeHtml(loadInTime)}</div>` : ''}
+      ${notesPreview ? `<div style="font-size:11px;color:${subColor};margin-top:2px;"><strong>Notes:</strong> ${escapeHtml(notesPreview.length > 80 ? notesPreview.slice(0, 80) + '…' : notesPreview)}</div>` : ''}
       <div style="font-size:11px;color:${ctaColor};margin-top:6px;font-weight:600;">View gig &rsaquo;</div>
     </div>`;
 }
