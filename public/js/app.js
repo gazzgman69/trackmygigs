@@ -13094,16 +13094,16 @@ async function openGigChat(gigId) {
 // for both sender and receiver bubbles.
 function renderMessageAttachment(att, isMe) {
   if (!att || typeof att !== 'object') return '';
-  // Card colours adapt to bubble side so it reads as part of the bubble
-  // rather than a foreign block. Defined once so kinds share styling.
-  // Sender side uses white text on a dark inner card so it pops against
-  // the orange bubble background; receiver side keeps the standard
-  // surface/text vars. Updated 2026-04-29 per design feedback.
-  const cardBg = isMe ? 'rgba(0,0,0,.30)' : 'var(--surface)';
-  const cardBorder = isMe ? 'rgba(255,255,255,.18)' : 'var(--border)';
-  const labelColor = isMe ? 'rgba(255,255,255,.7)' : 'var(--text-3)';
+  // Card colours adapt to bubble side. On the sender side we sit DIRECTLY
+  // on the orange bubble — transparent inner card, white text — so the
+  // brand colour reads through and the card feels like part of the
+  // bubble. Earlier dark overlay muddied the orange to brown. Receiver
+  // side keeps the standard surface/text vars on the neutral bubble.
+  const cardBg = isMe ? 'transparent' : 'var(--surface)';
+  const cardBorder = isMe ? 'rgba(255,255,255,.25)' : 'var(--border)';
+  const labelColor = isMe ? 'rgba(255,255,255,.75)' : 'var(--text-3)';
   const titleColor = isMe ? '#fff' : 'var(--text)';
-  const subColor = isMe ? 'rgba(255,255,255,.85)' : 'var(--text-2)';
+  const subColor = isMe ? 'rgba(255,255,255,.9)' : 'var(--text-2)';
   const ctaColor = isMe ? '#fff' : 'var(--accent)';
 
   if (att.kind === 'contact') {
