@@ -12653,9 +12653,14 @@ function _renderChatInboxList() {
   const threads = window._chatInboxThreads || [];
   const query = (window._chatInboxQuery || '').trim().toLowerCase();
 
+  // 2026-04-29 — defensive: sticky to top of the body, escape the body's
+  // 16px padding via negative margins so the bar spans full panel width,
+  // explicit z-index above the rows, type="text" to dodge webkit's quirky
+  // search-input rendering. Each thread row below has its own onclick;
+  // pointer-events:auto guarantees the input wins the hit-test.
   const searchHTML = `
-    <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);">
-      <input id="chatInboxSearch" type="search" value="${escapeAttr(query)}" placeholder="Search conversations..." autocomplete="off" oninput="_onChatInboxSearchInput(this)" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;box-sizing:border-box;" />
+    <div style="position:sticky;top:-16px;z-index:5;margin:-16px -16px 0;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);pointer-events:auto;">
+      <input id="chatInboxSearch" type="text" inputmode="search" value="${escapeAttr(query)}" placeholder="Search conversations..." autocomplete="off" oninput="_onChatInboxSearchInput(this)" onclick="event.stopPropagation()" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;box-sizing:border-box;position:relative;z-index:6;pointer-events:auto;" />
     </div>`;
 
   if (threads.length === 0) {
@@ -12935,9 +12940,9 @@ function renderChatThread(thread, messages, participants) {
   const searchActive = !!window._chatThreadSearchActive;
   const searchQuery = (window._chatThreadSearchQuery || '').trim();
   const searchBarHTML = searchActive ? `
-    <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:center;">
-      <input id="chatThreadSearchInput" type="search" value="${escapeAttr(searchQuery)}" placeholder="Search this conversation..." autocomplete="off" oninput="_onChatThreadSearchInput(this)" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;" />
-      <button onclick="closeChatThreadSearch()" aria-label="Close search" style="background:transparent;border:none;color:var(--text-2);font-size:18px;cursor:pointer;padding:6px 8px;">&times;</button>
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:center;flex-shrink:0;position:relative;z-index:5;pointer-events:auto;">
+      <input id="chatThreadSearchInput" type="text" inputmode="search" value="${escapeAttr(searchQuery)}" placeholder="Search this conversation..." autocomplete="off" oninput="_onChatThreadSearchInput(this)" onclick="event.stopPropagation()" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;position:relative;z-index:6;pointer-events:auto;" />
+      <button onclick="closeChatThreadSearch()" aria-label="Close search" style="background:transparent;border:none;color:var(--text-2);font-size:20px;cursor:pointer;padding:6px 10px;">&times;</button>
     </div>` : '';
 
   // Messages area
