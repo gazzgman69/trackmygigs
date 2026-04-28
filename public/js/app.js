@@ -8068,6 +8068,13 @@ function openChatAttachSheet() {
           <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Venue, date, fee, dress code, load-in</div>
         </div>
       </button>
+      <button onclick="openChatContactPicker()" style="width:100%;text-align:left;background:transparent;border:none;color:var(--text);font-size:15px;padding:14px 20px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+        <span style="font-size:20px;">👤</span>
+        <div>
+          <div style="font-weight:600;">Send a contact</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Introduce someone from your contacts</div>
+        </div>
+      </button>
       <button onclick="closeChatAttachSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;">Cancel</button>
     </div>`;
   wrap.addEventListener('click', (e) => { if (e.target === wrap) closeChatAttachSheet(); });
@@ -8085,6 +8092,41 @@ window.closeChatAttachSheet = closeChatAttachSheet;
 // filters to upcoming + past 30 days (so reposts/recent stay reachable),
 // and lets them tap one to attach. The send happens via sendChatMessage()
 // with an attachment payload — same optimistic-UI path as a text send.
+// 2026-04-29 — render helper for the gig picker list. Pulled out of
+// openChatGigPicker so the SWR path can call it twice (once for the
+// cached paint, once for the fresh response).
+function _renderGigPickerList(gigs) {
+  const container = document.getElementById('chatGigPickerList');
+  if (!container) return;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const cutoffPast = new Date(today.getTime() - 30 * 86400000);
+  const list = (Array.isArray(gigs) ? gigs : [])
+    .filter(g => g && g.date && new Date(g.date) >= cutoffPast)
+    .sort((a, b) => {
+      const ta = Math.abs(new Date(a.date).getTime() - today.getTime());
+      const tb = Math.abs(new Date(b.date).getTime() - today.getTime());
+      return ta - tb;
+    })
+    .slice(0, 30);
+  if (list.length === 0) {
+    container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No gigs to share yet. Add one from the Gigs tab first.</div>`;
+    return;
+  }
+  container.innerHTML = list.map(g => {
+    const dateStr = g.date ? new Date(g.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+    const fee = g.fee != null && Number(g.fee) > 0 ? `£${Number(g.fee).toFixed(0)}` : '';
+    return `<div onclick="attachGigToChat('${escapeAttr(g.id)}')" style="padding:12px 20px;border-bottom:1px solid var(--border);cursor:pointer;">
+      <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(g.band_name || 'Untitled gig')}</div>
+      <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${escapeHtml(g.venue_name || '')}${dateStr ? ' · ' + dateStr : ''}${fee ? ' · ' + fee : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+// 2026-04-29 — gig picker uses a stale-while-revalidate pattern. First
+// open hits the network and stashes the result on window with a timestamp.
+// Subsequent opens within 60s paint instantly from cache and refresh in
+// the background. On Replit wake-from-idle the first /api/gigs call can
+// take 5-10s; without this, every picker open felt broken.
 async function openChatGigPicker() {
   closeChatAttachSheet();
   const wrap = document.createElement('div');
@@ -8096,44 +8138,31 @@ async function openChatGigPicker() {
       <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;flex-shrink:0;">Pick a gig to share</div>
       <div id="chatGigPickerList" style="flex:1;overflow-y:auto;">
-        <div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Loading...</div>
+        <div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Loading your gigs…</div>
       </div>
       <button onclick="closeChatGigPicker()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Cancel</button>
     </div>`;
   wrap.addEventListener('click', (e) => { if (e.target === wrap) closeChatGigPicker(); });
   document.body.appendChild(wrap);
 
+  // SWR cache: paint immediately if we have a recent copy.
+  const cache = window._chatPickerGigsCache;
+  const fresh = cache && (Date.now() - cache.at) < 60_000;
+  if (fresh && Array.isArray(cache.gigs)) {
+    _renderGigPickerList(cache.gigs);
+  }
+
   try {
     const r = await fetch('/api/gigs');
     const gigs = await r.json();
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const cutoffPast = new Date(today.getTime() - 30 * 86400000);
-    // Show upcoming + last 30 days, sorted nearest first.
-    const list = (Array.isArray(gigs) ? gigs : [])
-      .filter(g => g && g.date && new Date(g.date) >= cutoffPast)
-      .sort((a, b) => {
-        const ta = Math.abs(new Date(a.date).getTime() - today.getTime());
-        const tb = Math.abs(new Date(b.date).getTime() - today.getTime());
-        return ta - tb;
-      })
-      .slice(0, 30);
-    const container = document.getElementById('chatGigPickerList');
-    if (!container) return;
-    if (list.length === 0) {
-      container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No gigs to share yet. Add one from the Gigs tab first.</div>`;
-      return;
-    }
-    container.innerHTML = list.map(g => {
-      const dateStr = g.date ? new Date(g.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
-      const fee = g.fee != null && Number(g.fee) > 0 ? `£${Number(g.fee).toFixed(0)}` : '';
-      return `<div onclick="attachGigToChat('${escapeAttr(g.id)}')" style="padding:12px 20px;border-bottom:1px solid var(--border);cursor:pointer;">
-        <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(g.band_name || 'Untitled gig')}</div>
-        <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${escapeHtml(g.venue_name || '')}${dateStr ? ' · ' + dateStr : ''}${fee ? ' · ' + fee : ''}</div>
-      </div>`;
-    }).join('');
+    window._chatPickerGigsCache = { gigs, at: Date.now() };
+    _renderGigPickerList(gigs);
   } catch (err) {
-    const container = document.getElementById('chatGigPickerList');
-    if (container) container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Could not load gigs.</div>`;
+    // Only overwrite if we didn't already paint a cached copy.
+    if (!fresh) {
+      const container = document.getElementById('chatGigPickerList');
+      if (container) container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Could not load gigs.</div>`;
+    }
   }
 }
 window.openChatGigPicker = openChatGigPicker;
@@ -8143,6 +8172,92 @@ function closeChatGigPicker() {
   if (el && el.parentNode) el.parentNode.removeChild(el);
 }
 window.closeChatGigPicker = closeChatGigPicker;
+
+// 2026-04-29 contextual-send batch: contact picker. Pulls /api/contacts,
+// shows a tappable list (TMG-linked first, then non-linked). Tapping a
+// contact attaches it via the same sendChatMessage path. Same SWR pattern
+// as the gig picker so the second open is instant.
+function _renderContactPickerList(contacts) {
+  const container = document.getElementById('chatContactPickerList');
+  if (!container) return;
+  const list = Array.isArray(contacts) ? contacts.slice() : [];
+  if (list.length === 0) {
+    container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No contacts to share yet. Add some from the Contacts tab.</div>`;
+    return;
+  }
+  // TMG-linked contacts first (more useful to share), then alphabetical.
+  list.sort((a, b) => {
+    const al = a.linked_user_id ? 0 : 1;
+    const bl = b.linked_user_id ? 0 : 1;
+    if (al !== bl) return al - bl;
+    return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+  });
+  container.innerHTML = list.slice(0, 100).map(c => {
+    const insts = Array.isArray(c.instruments) && c.instruments.length
+      ? c.instruments.slice(0, 3).join(', ')
+      : '';
+    const tag = c.linked_user_id
+      ? '<span style="font-size:9px;font-weight:700;color:var(--accent);background:var(--accent-dim);padding:2px 6px;border-radius:4px;margin-left:6px;text-transform:uppercase;letter-spacing:0.5px;">TMG</span>'
+      : '';
+    return `<div onclick="attachContactToChat('${escapeAttr(c.id)}')" style="padding:12px 20px;border-bottom:1px solid var(--border);cursor:pointer;">
+      <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(c.name || 'Unnamed contact')}${tag}</div>
+      ${insts ? `<div style="font-size:11px;color:var(--text-2);margin-top:2px;">${escapeHtml(insts)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function openChatContactPicker() {
+  closeChatAttachSheet();
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'chatContactPickerSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;flex-shrink:0;">Pick a contact to share</div>
+      <div id="chatContactPickerList" style="flex:1;overflow-y:auto;">
+        <div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Loading your contacts…</div>
+      </div>
+      <button onclick="closeChatContactPicker()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Cancel</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeChatContactPicker(); });
+  document.body.appendChild(wrap);
+
+  const cache = window._chatPickerContactsCache;
+  const fresh = cache && (Date.now() - cache.at) < 60_000;
+  if (fresh && Array.isArray(cache.contacts)) {
+    _renderContactPickerList(cache.contacts);
+  }
+
+  try {
+    const r = await fetch('/api/contacts');
+    const data = await r.json();
+    const list = Array.isArray(data) ? data : (Array.isArray(data.contacts) ? data.contacts : []);
+    window._chatPickerContactsCache = { contacts: list, at: Date.now() };
+    _renderContactPickerList(list);
+  } catch (err) {
+    if (!fresh) {
+      const container = document.getElementById('chatContactPickerList');
+      if (container) container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Could not load contacts.</div>`;
+    }
+  }
+}
+window.openChatContactPicker = openChatContactPicker;
+
+function closeChatContactPicker() {
+  const el = document.getElementById('chatContactPickerSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeChatContactPicker = closeChatContactPicker;
+
+async function attachContactToChat(contactId) {
+  if (!contactId || !_currentThreadId) return;
+  closeChatContactPicker();
+  window._chatPendingAttachment = { kind: 'contact', contact_id: contactId };
+  await sendChatMessage();
+}
+window.attachContactToChat = attachContactToChat;
 
 async function attachGigToChat(gigId) {
   if (!gigId || !_currentThreadId) return;
@@ -12829,6 +12944,9 @@ function renderThreadItem(thread, type) {
     if (att && att.kind === 'gig') {
       const band = (att.snapshot && att.snapshot.band_name) ? att.snapshot.band_name : 'gig';
       preview = `🎵 Gig: ${band.length > 32 ? band.substring(0, 32) + '...' : band}`;
+    } else if (att && att.kind === 'contact') {
+      const cname = (att.snapshot && att.snapshot.name) ? att.snapshot.name : 'contact';
+      preview = `👤 Contact: ${cname.length > 32 ? cname.substring(0, 32) + '...' : cname}`;
     } else {
       preview = '📎 Attachment';
     }
@@ -12976,6 +13094,33 @@ async function openGigChat(gigId) {
 // for both sender and receiver bubbles.
 function renderMessageAttachment(att, isMe) {
   if (!att || typeof att !== 'object') return '';
+  // Card colours adapt to bubble side so it reads as part of the bubble
+  // rather than a foreign block. Defined once so kinds share styling.
+  const cardBg = isMe ? 'rgba(0,0,0,.18)' : 'var(--surface)';
+  const cardBorder = isMe ? 'rgba(0,0,0,.18)' : 'var(--border)';
+  const labelColor = isMe ? 'rgba(0,0,0,.55)' : 'var(--text-3)';
+  const titleColor = isMe ? '#000' : 'var(--text)';
+  const subColor = isMe ? 'rgba(0,0,0,.7)' : 'var(--text-2)';
+  const ctaColor = isMe ? 'rgba(0,0,0,.65)' : 'var(--accent)';
+
+  if (att.kind === 'contact') {
+    const s = att.snapshot || {};
+    const name = s.name || 'Unnamed contact';
+    const insts = Array.isArray(s.instruments) && s.instruments.length
+      ? s.instruments.slice(0, 3).join(', ')
+      : '';
+    const isTmg = s.is_tmg_user;
+    const linkedId = s.linked_user_id ? escapeAttr(s.linked_user_id) : '';
+    const cta = isTmg ? 'View profile &rsaquo;' : 'Save to contacts &rsaquo;';
+    return `
+      <div class="chat-contact-card" data-contact-name="${escapeAttr(name)}" data-linked-user="${linkedId}" onclick="openSharedContactCard('${linkedId}', this)" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer;">
+        <div style="font-size:10px;font-weight:700;color:${labelColor};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">👤 Contact${isTmg ? ' · On TrackMyGigs' : ''}</div>
+        <div style="font-size:14px;font-weight:700;color:${titleColor};line-height:1.3;">${escapeHtml(name)}</div>
+        ${insts ? `<div style="font-size:12px;color:${subColor};margin-top:2px;">${escapeHtml(insts)}</div>` : ''}
+        <div style="font-size:11px;color:${ctaColor};margin-top:6px;font-weight:600;">${cta}</div>
+      </div>`;
+  }
+
   if (att.kind !== 'gig') return '';
   const s = att.snapshot || {};
   const band = s.band_name || 'Untitled gig';
@@ -12997,13 +13142,6 @@ function renderMessageAttachment(att, isMe) {
   const dress = s.dress_code ? String(s.dress_code) : '';
   const loadIn = s.load_in_notes ? String(s.load_in_notes) : '';
   const gigId = att.gig_id ? escapeAttr(att.gig_id) : '';
-  // Card colours adapt to bubble side so it reads as part of the bubble
-  // rather than a foreign block.
-  const cardBg = isMe ? 'rgba(0,0,0,.18)' : 'var(--surface)';
-  const cardBorder = isMe ? 'rgba(0,0,0,.18)' : 'var(--border)';
-  const labelColor = isMe ? 'rgba(0,0,0,.55)' : 'var(--text-3)';
-  const titleColor = isMe ? '#000' : 'var(--text)';
-  const subColor = isMe ? 'rgba(0,0,0,.7)' : 'var(--text-2)';
   return `
     <div class="chat-gig-card" data-gig-id="${gigId}" onclick="openSharedGigCard('${gigId}')" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer;">
       <div style="font-size:10px;font-weight:700;color:${labelColor};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">🎵 Gig</div>
@@ -13013,7 +13151,7 @@ function renderMessageAttachment(att, isMe) {
       ${fee ? `<div style="font-size:12px;color:${subColor};margin-top:2px;font-weight:600;">${escapeHtml(fee)}</div>` : ''}
       ${dress ? `<div style="font-size:11px;color:${subColor};margin-top:4px;"><strong>Dress:</strong> ${escapeHtml(dress.length > 60 ? dress.slice(0, 60) + '…' : dress)}</div>` : ''}
       ${loadIn ? `<div style="font-size:11px;color:${subColor};margin-top:2px;"><strong>Load-in:</strong> ${escapeHtml(loadIn.length > 60 ? loadIn.slice(0, 60) + '…' : loadIn)}</div>` : ''}
-      <div style="font-size:11px;color:${isMe ? 'rgba(0,0,0,.65)' : 'var(--accent)'};margin-top:6px;font-weight:600;">View gig &rsaquo;</div>
+      <div style="font-size:11px;color:${ctaColor};margin-top:6px;font-weight:600;">View gig &rsaquo;</div>
     </div>`;
 }
 
@@ -13021,6 +13159,30 @@ function renderMessageAttachment(att, isMe) {
 // with this id they jump straight into the detail. Otherwise we surface a
 // toast — they're seeing the snapshot, not their own copy. Sender always
 // owns the gig (server enforces) so this works for both sides.
+// 2026-04-29 contextual-send batch: tap-the-card handler for shared
+// contacts. If the snapshotted contact is a TMG user we open their
+// directory profile (works for sender + receiver). If not, we surface a
+// toast with the name — the receiver can choose to add them manually.
+// Saving directly into the receiver's contacts is a future iteration;
+// for now we keep the receive side read-only to avoid silently slurping
+// names into someone else's address book.
+async function openSharedContactCard(linkedUserId, cardEl) {
+  if (linkedUserId && typeof openUserProfileSheet === 'function') {
+    try { closePanel('panel-chat-thread'); } catch (_) {}
+    openUserProfileSheet(linkedUserId);
+    return;
+  }
+  // Non-TMG contact — try to read the name back off the card for a useful
+  // toast. Receivers can copy/paste it into their own contacts manually.
+  let name = '';
+  try {
+    const el = cardEl || document.querySelector('.chat-contact-card');
+    if (el) name = el.getAttribute('data-contact-name') || '';
+  } catch (_) {}
+  try { toast(name ? `${name} isn't on TrackMyGigs yet — copy their details from chat.` : 'This contact isn’t on TrackMyGigs yet.'); } catch (_) {}
+}
+window.openSharedContactCard = openSharedContactCard;
+
 async function openSharedGigCard(gigId) {
   if (!gigId) return;
   // Try to open the local gig if the user owns it. _gigsCache is the

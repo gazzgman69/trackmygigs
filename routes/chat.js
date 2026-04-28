@@ -52,6 +52,40 @@ async function buildAttachmentSnapshot(attachment, actorId) {
       }
     };
   }
+  if (attachment.kind === 'contact') {
+    const contactId = attachment.contact_id;
+    if (!contactId) return null;
+    // Sender must own the contact row. We only expose name + instruments +
+    // linked_user_id in the snapshot — phone and email are intentionally
+    // withheld even if the sender has them, so contact-sharing doesn't
+    // bypass the contact owner's privacy. The receiver can always look up
+    // the linked_user_id in the directory if they want richer info.
+    const r = await db.query(
+      `SELECT c.id, c.name, c.instruments, c.linked_user_id,
+              u.photo_url, u.allow_direct_messages, u.discoverable
+         FROM contacts c
+         LEFT JOIN users u ON u.id = c.linked_user_id
+        WHERE c.id = $1 AND c.owner_id = $2
+        LIMIT 1`,
+      [contactId, actorId]
+    );
+    if (r.rows.length === 0) return null;
+    const c = r.rows[0];
+    return {
+      kind: 'contact',
+      contact_id: c.id,
+      sent_at: new Date().toISOString(),
+      snapshot: {
+        name: c.name || null,
+        instruments: Array.isArray(c.instruments) ? c.instruments.slice(0, 6) : [],
+        linked_user_id: c.linked_user_id || null,
+        photo_url: c.photo_url || null,
+        is_tmg_user: !!c.linked_user_id,
+        accepts_dms: c.allow_direct_messages !== false,
+        discoverable: c.discoverable === true
+      }
+    };
+  }
   // Unknown kind — refuse rather than store untrusted shape.
   return null;
 }
