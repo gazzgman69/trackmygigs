@@ -13405,6 +13405,9 @@ function openSharedGigPreviewSheet(gigId) {
         ${row('Dress code', dress)}
         ${row('Notes', notesText)}
       </div>
+      <div style="padding:12px 20px;border-top:1px solid var(--border);flex-shrink:0;">
+        <button onclick="openFullGigFromShared('${escapeAttr(gigId)}')" style="width:100%;background:var(--accent);border:none;color:#000;padding:12px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;">Open in Gigs &rsaquo;</button>
+      </div>
       <button onclick="closeSharedGigPreviewSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Close</button>
     </div>`;
   document.body.appendChild(wrap);
@@ -13417,23 +13420,42 @@ function closeSharedGigPreviewSheet() {
 }
 window.closeSharedGigPreviewSheet = closeSharedGigPreviewSheet;
 
-// "Open in Gigs" button from the preview sheet. Closes chat thread first
-// so the gig detail panel isn't hidden behind it, then opens. Falls back
-// to a toast if the user doesn't own the gig (receiver side).
+// "Open in Gigs" button from the preview sheet.
+//
+// Earlier shape just called closePanel('panel-chat-thread') then
+// openGigDetail. Problem: panel-gig-detail appears EARLIER in the DOM
+// than panel-chat-thread (line 547 vs 615 in index.html), so when both
+// have .open class with the same z-index, the chat-thread always paints
+// on top. The result was the user seeing the chat panel close (or
+// disappear into the inbox behind) and the gig panel never visibly
+// opening — exactly the "just goes out of the message" behaviour.
+//
+// Fix: route through showScreen('gigs') first. showScreen closes every
+// open .panel-overlay (including chat-thread and the chat-inbox) and
+// activates the Gigs screen. Then openGigDetail puts the gig panel on
+// top of Gigs — same flow as tapping a gig from the Gigs list. Backing
+// out of gig detail lands on the Gigs tab, which is a clear context.
 async function openFullGigFromShared(gigId) {
   if (!gigId) return;
+  closeSharedGigPreviewSheet();
   const cache = window._cachedGigs || [];
   const owns = (Array.isArray(cache) ? cache : []).some(g => g && g.id === gigId);
-  if (owns && typeof openGigDetail === 'function') {
-    try { closePanel('panel-chat-thread'); } catch (_) {}
-    openGigDetail(gigId);
+  const navigateAndOpen = () => {
+    try { showScreen('gigs'); } catch (_) {}
+    if (typeof openGigDetail === 'function') {
+      openGigDetail(gigId);
+    } else {
+      try { toast('Could not open gig.'); } catch (_) {}
+    }
+  };
+  if (owns) {
+    navigateAndOpen();
     return;
   }
   try {
     const r = await fetch('/api/gigs/' + encodeURIComponent(gigId));
-    if (r.ok && typeof openGigDetail === 'function') {
-      try { closePanel('panel-chat-thread'); } catch (_) {}
-      openGigDetail(gigId);
+    if (r.ok) {
+      navigateAndOpen();
     } else {
       try { toast('You can see what was sent — the full gig stays with the sender.'); } catch (_) {}
     }
