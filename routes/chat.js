@@ -5,6 +5,57 @@ const authMiddleware = require('../middleware/auth');
 const router = express.Router();
 router.use(authMiddleware);
 
+// 2026-04-29 contextual-send batch: take a client-supplied attachment hint
+// (e.g. {kind:'gig', gig_id}) and turn it into a fully-snapshotted server
+// object the receiver can render without trusting client data. Returns null
+// if the user doesn't own the referenced object (or it doesn't exist) so
+// the message endpoint can refuse the send. More kinds (setlist, contact)
+// will follow the same pattern — keep the dispatch flat for readability.
+async function buildAttachmentSnapshot(attachment, actorId) {
+  if (!attachment || typeof attachment !== 'object') return null;
+  if (attachment.kind === 'gig') {
+    const gigId = attachment.gig_id;
+    if (!gigId) return null;
+    // Sender must own the gig to share it. Read-side permission for the
+    // receiver is handled by the snapshot itself — they only see what was
+    // captured at send time, not the live gig row.
+    const r = await db.query(
+      `SELECT id, band_name, venue_name, venue_address, venue_postcode,
+              date, start_time, end_time, fee, dress_code, load_in_notes,
+              status, gig_type, client_name, rate_per_hour
+         FROM gigs
+        WHERE id = $1 AND user_id = $2
+        LIMIT 1`,
+      [gigId, actorId]
+    );
+    if (r.rows.length === 0) return null;
+    const g = r.rows[0];
+    return {
+      kind: 'gig',
+      gig_id: g.id,
+      sent_at: new Date().toISOString(),
+      snapshot: {
+        band_name: g.band_name || null,
+        venue_name: g.venue_name || null,
+        venue_address: g.venue_address || null,
+        venue_postcode: g.venue_postcode || null,
+        date: g.date || null,
+        start_time: g.start_time || null,
+        end_time: g.end_time || null,
+        fee: g.fee != null ? Number(g.fee) : null,
+        dress_code: g.dress_code || null,
+        load_in_notes: g.load_in_notes || null,
+        status: g.status || null,
+        gig_type: g.gig_type || null,
+        client_name: g.client_name || null,
+        rate_per_hour: g.rate_per_hour != null ? Number(g.rate_per_hour) : null
+      }
+    };
+  }
+  // Unknown kind — refuse rather than store untrusted shape.
+  return null;
+}
+
 // ── Get all threads for current user ─────────────────────────────────────────
 
 router.get('/threads', async (req, res) => {
@@ -15,6 +66,7 @@ router.get('/threads', async (req, res) => {
     const result = await db.query(
       `SELECT t.*,
         (SELECT content FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_message,
+        (SELECT attachments FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_attachments,
         (SELECT created_at FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_message_at,
         (SELECT sender_id FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_sender_id,
         (SELECT COUNT(*) FROM messages WHERE thread_id = t.id AND NOT ($1 = ANY(read_by))) AS unread_count,
@@ -109,11 +161,24 @@ const MESSAGE_MAX_BYTES = 40 * 1024;
 
 router.post('/threads/:threadId/messages', async (req, res) => {
   try {
-    const { content, attachments } = req.body;
-    if (!content || !content.trim()) {
+    const { content, attachments, attachment } = req.body;
+    const trimmedContent = (content || '').trim();
+    // 2026-04-29 contextual-send batch: messages can now carry an attachment
+    // payload (kind:'gig' for now, more kinds to follow). Either content OR
+    // an attachment is required — not both. We snapshot the referenced
+    // object server-side so the receiver always sees what was sent even if
+    // the sender later edits or deletes it.
+    let stagedAttachment = null;
+    if (attachment && typeof attachment === 'object' && attachment.kind) {
+      stagedAttachment = await buildAttachmentSnapshot(attachment, req.user.id);
+      if (!stagedAttachment) {
+        return res.status(400).json({ error: 'Could not attach that item.' });
+      }
+    }
+    if (!trimmedContent && !stagedAttachment && !attachments) {
       return res.status(400).json({ error: 'Message content is required' });
     }
-    if (Buffer.byteLength(content, 'utf8') > MESSAGE_MAX_BYTES) {
+    if (trimmedContent && Buffer.byteLength(trimmedContent, 'utf8') > MESSAGE_MAX_BYTES) {
       return res.status(413).json({ error: 'Message is too long. Please keep it under 40,000 characters.' });
     }
 
@@ -126,6 +191,13 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       return res.status(404).json({ error: 'Thread not found' });
     }
 
+    // Wrap whichever payload we accepted into the JSONB column. Single
+    // attachment is stored as a one-element array so the column shape stays
+    // uniform regardless of how many we attach in the future.
+    const finalAttachments = stagedAttachment
+      ? [stagedAttachment]
+      : (attachments || null);
+
     // S12-14: cast read_by seed array explicitly. Without the ::uuid[] cast
     // Postgres plans ARRAY[$2] as text[] and the insert into the uuid[] column
     // fails with "column read_by is of type uuid[] but expression is of type
@@ -134,7 +206,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       `INSERT INTO messages (thread_id, sender_id, content, attachments, read_by)
        VALUES ($1, $2, $3, $4, ARRAY[$2]::uuid[])
        RETURNING *`,
-      [req.params.threadId, req.user.id, content.trim(), attachments || null]
+      [req.params.threadId, req.user.id, trimmedContent || '', finalAttachments]
     );
 
     // Get sender info for the response

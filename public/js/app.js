@@ -8048,6 +8048,112 @@ function openChatThreadMenu(threadId, gigId) {
 }
 window.openChatThreadMenu = openChatThreadMenu;
 
+// 2026-04-29 contextual-send batch: + button at the start of the chat
+// input opens this sheet. For now it's just "Send a gig" — setlist and
+// contact will follow the same pattern. Lifts a bottom sheet rather than a
+// full panel so the user stays oriented in the conversation.
+function openChatAttachSheet() {
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'chatAttachSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;padding-bottom:8px;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;"></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;">Share to chat</div>
+      <button onclick="openChatGigPicker()" style="width:100%;text-align:left;background:transparent;border:none;color:var(--text);font-size:15px;padding:14px 20px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+        <span style="font-size:20px;">🎵</span>
+        <div>
+          <div style="font-weight:600;">Send a gig</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Venue, date, fee, dress code, load-in</div>
+        </div>
+      </button>
+      <button onclick="closeChatAttachSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;">Cancel</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeChatAttachSheet(); });
+  document.body.appendChild(wrap);
+}
+window.openChatAttachSheet = openChatAttachSheet;
+
+function closeChatAttachSheet() {
+  const el = document.getElementById('chatAttachSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeChatAttachSheet = closeChatAttachSheet;
+
+// 2026-04-29 contextual-send batch: gig picker. Pulls the user's gigs,
+// filters to upcoming + past 30 days (so reposts/recent stay reachable),
+// and lets them tap one to attach. The send happens via sendChatMessage()
+// with an attachment payload — same optimistic-UI path as a text send.
+async function openChatGigPicker() {
+  closeChatAttachSheet();
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'chatGigPickerSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;flex-shrink:0;">Pick a gig to share</div>
+      <div id="chatGigPickerList" style="flex:1;overflow-y:auto;">
+        <div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Loading...</div>
+      </div>
+      <button onclick="closeChatGigPicker()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Cancel</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeChatGigPicker(); });
+  document.body.appendChild(wrap);
+
+  try {
+    const r = await fetch('/api/gigs');
+    const gigs = await r.json();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const cutoffPast = new Date(today.getTime() - 30 * 86400000);
+    // Show upcoming + last 30 days, sorted nearest first.
+    const list = (Array.isArray(gigs) ? gigs : [])
+      .filter(g => g && g.date && new Date(g.date) >= cutoffPast)
+      .sort((a, b) => {
+        const ta = Math.abs(new Date(a.date).getTime() - today.getTime());
+        const tb = Math.abs(new Date(b.date).getTime() - today.getTime());
+        return ta - tb;
+      })
+      .slice(0, 30);
+    const container = document.getElementById('chatGigPickerList');
+    if (!container) return;
+    if (list.length === 0) {
+      container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No gigs to share yet. Add one from the Gigs tab first.</div>`;
+      return;
+    }
+    container.innerHTML = list.map(g => {
+      const dateStr = g.date ? new Date(g.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+      const fee = g.fee != null && Number(g.fee) > 0 ? `£${Number(g.fee).toFixed(0)}` : '';
+      return `<div onclick="attachGigToChat('${escapeAttr(g.id)}')" style="padding:12px 20px;border-bottom:1px solid var(--border);cursor:pointer;">
+        <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(g.band_name || 'Untitled gig')}</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${escapeHtml(g.venue_name || '')}${dateStr ? ' · ' + dateStr : ''}${fee ? ' · ' + fee : ''}</div>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    const container = document.getElementById('chatGigPickerList');
+    if (container) container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Could not load gigs.</div>`;
+  }
+}
+window.openChatGigPicker = openChatGigPicker;
+
+function closeChatGigPicker() {
+  const el = document.getElementById('chatGigPickerSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeChatGigPicker = closeChatGigPicker;
+
+async function attachGigToChat(gigId) {
+  if (!gigId || !_currentThreadId) return;
+  closeChatGigPicker();
+  // Stash the pending attachment on window so sendChatMessage picks it up.
+  // Empty content + attachment is allowed by the server now.
+  window._chatPendingAttachment = { kind: 'gig', gig_id: gigId };
+  await sendChatMessage();
+}
+window.attachGigToChat = attachGigToChat;
+
 // 2026-04-29 chat-info batch: tap-the-header → chat info sheet. Shows
 // the editable chat name + a list of members with photos. Each member row
 // opens a profile sheet (delegating to openUserProfileSheet) so the user
@@ -12622,7 +12728,15 @@ async function openChatInbox() {
     // shown because Pick spawns them deliberately and the user expects the
     // person they just connected with to be one tap away even before the
     // first message goes out.
-    const threads = (data.threads || []).filter(t => !!t.last_message || t.thread_type === 'dep');
+    // 2026-04-29 — accept attachment-only threads (e.g. someone shared a gig
+    // with no caption). Previously we filtered on last_message which is
+    // empty string for those rows, so the conversation would silently
+    // vanish from the inbox.
+    const threads = (data.threads || []).filter(t =>
+      !!t.last_message ||
+      (Array.isArray(t.last_attachments) && t.last_attachments.length > 0) ||
+      t.thread_type === 'dep'
+    );
 
     // 2026-04-29 — stash so the search filter can re-render without a refetch.
     window._chatInboxThreads = threads;
@@ -12704,7 +12818,21 @@ function renderThreadItem(thread, type) {
   const displayName = thread.name || thread.band_name || otherParticipants.map(p => p.name || p.email).join(', ') || 'Unknown';
   const initial = displayName.charAt(0).toUpperCase();
   const subtitle = thread.venue_name ? `${thread.venue_name}` : '';
-  const preview = thread.last_message ? (thread.last_message.length > 40 ? thread.last_message.substring(0, 40) + '...' : thread.last_message) : 'No messages yet';
+  // 2026-04-29 — preview falls through: text → attachment label → fallback.
+  // For an attachment-only message we render "🎵 Gig: BandName" so the
+  // inbox row still tells the user what was sent.
+  let preview = 'No messages yet';
+  if (thread.last_message && thread.last_message.trim()) {
+    preview = thread.last_message.length > 40 ? thread.last_message.substring(0, 40) + '...' : thread.last_message;
+  } else if (Array.isArray(thread.last_attachments) && thread.last_attachments.length > 0) {
+    const att = thread.last_attachments[0];
+    if (att && att.kind === 'gig') {
+      const band = (att.snapshot && att.snapshot.band_name) ? att.snapshot.band_name : 'gig';
+      preview = `🎵 Gig: ${band.length > 32 ? band.substring(0, 32) + '...' : band}`;
+    } else {
+      preview = '📎 Attachment';
+    }
+  }
   const timeAgo = thread.last_message_at ? formatTimeAgo(new Date(thread.last_message_at)) : '';
 
   const bgTint = isUnread
@@ -12841,6 +12969,85 @@ async function openGigChat(gigId) {
   }
 }
 
+// 2026-04-29 contextual-send batch: render a single attachment as an
+// inline card inside a message bubble. Server snapshots gig state at send
+// time so we read everything off att.snapshot — never the live gig row.
+// Keep this purely visual; click handler is wired separately so it works
+// for both sender and receiver bubbles.
+function renderMessageAttachment(att, isMe) {
+  if (!att || typeof att !== 'object') return '';
+  if (att.kind !== 'gig') return '';
+  const s = att.snapshot || {};
+  const band = s.band_name || 'Untitled gig';
+  const venue = s.venue_name || '';
+  const postcode = s.venue_postcode || '';
+  const venueLine = [venue, postcode].filter(Boolean).join(' · ');
+  let dateLine = '';
+  if (s.date) {
+    try {
+      const d = new Date(s.date);
+      dateLine = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    } catch (_) { dateLine = s.date; }
+  }
+  const timeBits = [];
+  if (s.start_time) timeBits.push(String(s.start_time).slice(0, 5));
+  if (s.end_time) timeBits.push(String(s.end_time).slice(0, 5));
+  const timeLine = timeBits.length ? timeBits.join(' – ') : '';
+  const fee = (s.fee != null && Number(s.fee) > 0) ? `£${Number(s.fee).toFixed(0)}` : '';
+  const dress = s.dress_code ? String(s.dress_code) : '';
+  const loadIn = s.load_in_notes ? String(s.load_in_notes) : '';
+  const gigId = att.gig_id ? escapeAttr(att.gig_id) : '';
+  // Card colours adapt to bubble side so it reads as part of the bubble
+  // rather than a foreign block.
+  const cardBg = isMe ? 'rgba(0,0,0,.18)' : 'var(--surface)';
+  const cardBorder = isMe ? 'rgba(0,0,0,.18)' : 'var(--border)';
+  const labelColor = isMe ? 'rgba(0,0,0,.55)' : 'var(--text-3)';
+  const titleColor = isMe ? '#000' : 'var(--text)';
+  const subColor = isMe ? 'rgba(0,0,0,.7)' : 'var(--text-2)';
+  return `
+    <div class="chat-gig-card" data-gig-id="${gigId}" onclick="openSharedGigCard('${gigId}')" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer;">
+      <div style="font-size:10px;font-weight:700;color:${labelColor};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">🎵 Gig</div>
+      <div style="font-size:14px;font-weight:700;color:${titleColor};line-height:1.3;">${escapeHtml(band)}</div>
+      ${venueLine ? `<div style="font-size:12px;color:${subColor};margin-top:2px;">${escapeHtml(venueLine)}</div>` : ''}
+      ${dateLine ? `<div style="font-size:12px;color:${subColor};margin-top:2px;">${escapeHtml(dateLine)}${timeLine ? ' · ' + escapeHtml(timeLine) : ''}</div>` : ''}
+      ${fee ? `<div style="font-size:12px;color:${subColor};margin-top:2px;font-weight:600;">${escapeHtml(fee)}</div>` : ''}
+      ${dress ? `<div style="font-size:11px;color:${subColor};margin-top:4px;"><strong>Dress:</strong> ${escapeHtml(dress.length > 60 ? dress.slice(0, 60) + '…' : dress)}</div>` : ''}
+      ${loadIn ? `<div style="font-size:11px;color:${subColor};margin-top:2px;"><strong>Load-in:</strong> ${escapeHtml(loadIn.length > 60 ? loadIn.slice(0, 60) + '…' : loadIn)}</div>` : ''}
+      <div style="font-size:11px;color:${isMe ? 'rgba(0,0,0,.65)' : 'var(--accent)'};margin-top:6px;font-weight:600;">View gig &rsaquo;</div>
+    </div>`;
+}
+
+// Click handler for shared gig cards in chat. If the receiver owns a gig
+// with this id they jump straight into the detail. Otherwise we surface a
+// toast — they're seeing the snapshot, not their own copy. Sender always
+// owns the gig (server enforces) so this works for both sides.
+async function openSharedGigCard(gigId) {
+  if (!gigId) return;
+  // Try to open the local gig if the user owns it. _gigsCache is the
+  // hottest source; fall back to a fetch in case the cache is cold.
+  const cache = window._gigsCache || (typeof gigsCache !== 'undefined' ? gigsCache : null) || [];
+  let owns = (Array.isArray(cache) ? cache : []).some(g => g && g.id === gigId);
+  if (!owns) {
+    try {
+      const r = await fetch(`/api/gigs/${gigId}`);
+      if (r.ok) owns = true;
+    } catch (_) {}
+  }
+  if (owns) {
+    try {
+      closePanel('panel-chat-thread');
+    } catch (_) {}
+    if (typeof openGigDetail === 'function') {
+      openGigDetail(gigId);
+    } else {
+      try { toast('Could not open gig.'); } catch (_) {}
+    }
+  } else {
+    try { toast('You can see what was sent — the full gig stays with the sender.'); } catch (_) {}
+  }
+}
+window.openSharedGigCard = openSharedGigCard;
+
 function renderChatThread(thread, messages, participants) {
   // 2026-04-29 — keep a cache of the last-rendered thread so sendChatMessage
   // can append optimistically without a refetch round-trip.
@@ -12922,18 +13129,28 @@ function renderChatThread(thread, messages, participants) {
     const time = new Date(msg.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     const allRead = (msg.read_by || []).length >= participantCount;
 
+    // 2026-04-29 contextual-send batch: render any attachments above the
+    // text content. Server stores them as a JSONB array; we treat both
+    // array and single-object shapes defensively in case older rows exist.
+    const atts = Array.isArray(msg.attachments)
+      ? msg.attachments
+      : (msg.attachments ? [msg.attachments] : []);
+    const hasContent = !!(msg.content && String(msg.content).trim());
+
     if (isMe) {
       // 2026-04-29 \u2014 per-message delete affordance removed at user request.
       // Leave-conversation in the header overflow is the only destructive
       // surface. msg.pending \u2192 dimmed bubble + "Sending..." footer for the
       // optimistic UI added the same session.
       const pending = msg.pending === true;
+      const attsHTML = atts.map(a => renderMessageAttachment(a, true)).join('');
       messagesHTML += `
         <div style="display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;${pending ? 'opacity:0.55;' : ''}" data-msg-id="${escapeAttr(msg.id || msg.tempId || '')}">
           <div style="width:30px;height:30px;border-radius:15px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">${userInitial}</div>
           <div style="max-width:85%;">
             <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:14px 0 14px 14px;padding:10px 14px;">
-              <div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>
+              ${attsHTML}
+              ${hasContent ? `<div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>` : ''}
             </div>
             <div style="font-size:10px;color:var(--text-3);margin-top:2px;text-align:right;">
               ${pending ? '<span>Sending\u2026</span>' : (allRead ? '<span style="color:var(--success);">\u2713\u2713</span> ' : '\u2713 ') + time}
@@ -12942,13 +13159,15 @@ function renderChatThread(thread, messages, participants) {
         </div>
       `;
     } else {
+      const attsHTML = atts.map(a => renderMessageAttachment(a, false)).join('');
       messagesHTML += `
         <div style="display:flex;gap:8px;margin-bottom:12px;">
           <div style="width:30px;height:30px;border-radius:15px;background:var(--info-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--info);flex-shrink:0;">${senderInitial}</div>
           <div style="max-width:85%;">
             <div style="font-size:11px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(msg.sender_name || 'Unknown')} \u00B7 ${time}</div>
             <div style="background:var(--card);border:1px solid var(--border);border-radius:0 14px 14px 14px;padding:10px 14px;">
-              <div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>
+              ${attsHTML}
+              ${hasContent ? `<div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>` : ''}
             </div>
           </div>
         </div>
@@ -12961,8 +13180,12 @@ function renderChatThread(thread, messages, participants) {
   // Input bar
   // S12-12: textarea so users can compose multi-line messages. Shift+Enter
   // inserts a newline; Enter alone sends. Auto-grows up to 5 lines then scrolls.
+  // 2026-04-29 contextual-send batch: + button at the start of the bar
+  // opens a sheet for sharing TrackMyGigs objects (gig today, more later)
+  // straight into the conversation.
   const inputHTML = `
-    <div style="padding:12px 20px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:flex-end;">
+    <div style="padding:12px 16px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:6px;align-items:flex-end;">
+      <button id="chatAttachBtn" onclick="openChatAttachSheet()" aria-label="Send gig" title="Send gig" style="width:36px;height:36px;border-radius:18px;background:var(--card);border:1px solid var(--border);color:var(--text);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1;">+</button>
       <textarea id="chatMessageInput" rows="1" placeholder="Message..." style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:9px 16px;color:var(--text);font-size:14px;outline:none;resize:none;font-family:inherit;line-height:1.4;max-height:108px;" oninput="autoGrowChatInput(this)" onkeydown="handleChatKey(event)"></textarea>
       <button id="chatSendBtn" onclick="sendChatMessage()" style="width:36px;height:36px;border-radius:18px;background:var(--accent);border:none;color:#000;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">&#x2191;</button>
     </div>
@@ -13065,13 +13288,23 @@ let _chatSendInFlight = false;
 async function sendChatMessage() {
   const input = document.getElementById('chatMessageInput');
   const sendBtn = document.getElementById('chatSendBtn');
-  if (!input || !input.value.trim() || !_currentThreadId) return;
+  if (!input || !_currentThreadId) return;
+
+  // 2026-04-29 contextual-send batch: a send can now carry text, an
+  // attachment, or both. The picker stashes window._chatPendingAttachment
+  // before invoking sendChatMessage(), so we consume it here. Either text or
+  // an attachment is required — server enforces the same rule.
+  const pendingAttachment = window._chatPendingAttachment || null;
+  if (!input.value.trim() && !pendingAttachment) return;
 
   // S12-09: guard against double-sends. On slow links the previous response
   // may not have come back yet; we disable the button and ignore re-entrant
   // sends until this one resolves.
   if (_chatSendInFlight) return;
   _chatSendInFlight = true;
+  // Clear the pending stash now so a later text-only send doesn't re-attach
+  // the same gig accidentally.
+  window._chatPendingAttachment = null;
 
   const content = input.value.trim();
   input.value = '';
@@ -13090,12 +13323,53 @@ async function sendChatMessage() {
   //   3. On failure, drop the placeholder, restore the draft, toast.
   const tempId = 'tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   const me = window.currentUser || (typeof currentUser !== 'undefined' ? currentUser : null);
+  // For optimistic gig cards: pull the gig out of the cached gigs list so we
+  // can paint a real-looking card immediately. The server still does the
+  // authoritative snapshot — this is purely visual.
+  let optimisticAttachments = null;
+  if (pendingAttachment && pendingAttachment.kind === 'gig') {
+    const gigs = window._gigsCache || (typeof gigsCache !== 'undefined' ? gigsCache : null) || [];
+    const g = (Array.isArray(gigs) ? gigs : []).find(x => x && x.id === pendingAttachment.gig_id);
+    if (g) {
+      optimisticAttachments = [{
+        kind: 'gig',
+        gig_id: g.id,
+        sent_at: new Date().toISOString(),
+        snapshot: {
+          band_name: g.band_name || null,
+          venue_name: g.venue_name || null,
+          venue_address: g.venue_address || null,
+          venue_postcode: g.venue_postcode || null,
+          date: g.date || null,
+          start_time: g.start_time || null,
+          end_time: g.end_time || null,
+          fee: g.fee != null ? Number(g.fee) : null,
+          dress_code: g.dress_code || null,
+          load_in_notes: g.load_in_notes || null,
+          status: g.status || null,
+          gig_type: g.gig_type || null,
+          client_name: g.client_name || null,
+          rate_per_hour: g.rate_per_hour != null ? Number(g.rate_per_hour) : null
+        }
+      }];
+    } else {
+      // We don't have the gig locally — paint a stub card while the server
+      // snapshot resolves.
+      optimisticAttachments = [{
+        kind: 'gig',
+        gig_id: pendingAttachment.gig_id,
+        sent_at: new Date().toISOString(),
+        snapshot: { band_name: 'Loading gig…' }
+      }];
+    }
+  }
   const optimistic = {
     id: tempId,
     tempId,
     sender_id: me && me.id,
     sender_name: (me && (me.name || me.email)) || 'You',
     content,
+    attachments: optimisticAttachments,
     created_at: new Date().toISOString(),
     read_by: [me && me.id].filter(Boolean),
     pending: true,
@@ -13116,10 +13390,12 @@ async function sendChatMessage() {
   }
 
   try {
+    const body = { content };
+    if (pendingAttachment) body.attachment = pendingAttachment;
     const res = await fetch(`/api/chat/threads/${_currentThreadId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       let errMsg = 'Message failed to send.';
@@ -13153,8 +13429,14 @@ async function sendChatMessage() {
       window._chatThreadCache.messages = window._chatThreadCache.messages.filter(m => m && m.tempId !== tempId);
       renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages);
     }
-    input.value = content;
-    autoGrowChatInput(input);
+    if (content) {
+      input.value = content;
+      autoGrowChatInput(input);
+    }
+    // Restore the pending attachment so the user can retry with the same
+    // gig still queued — gives them a one-tap retry instead of re-walking
+    // the picker.
+    if (pendingAttachment) window._chatPendingAttachment = pendingAttachment;
     try { toast(err.message || 'Message failed to send.'); } catch (_) {}
   } finally {
     _chatSendInFlight = false;
@@ -13175,6 +13457,11 @@ function _appendOptimisticBubble(msg) {
   if (!area) return;
   const me = window.currentUser || (typeof currentUser !== 'undefined' ? currentUser : null);
   const userInitial = ((me && (me.name || me.email)) || 'G')[0].toUpperCase();
+  const atts = Array.isArray(msg.attachments)
+    ? msg.attachments
+    : (msg.attachments ? [msg.attachments] : []);
+  const attsHTML = atts.map(a => renderMessageAttachment(a, true)).join('');
+  const hasContent = !!(msg.content && String(msg.content).trim());
   const div = document.createElement('div');
   div.style.cssText = 'display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;opacity:0.55;';
   div.dataset.msgId = msg.tempId;
@@ -13182,7 +13469,8 @@ function _appendOptimisticBubble(msg) {
     <div style="width:30px;height:30px;border-radius:15px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">${userInitial}</div>
     <div style="max-width:85%;">
       <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:14px 0 14px 14px;padding:10px 14px;">
-        <div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>
+        ${attsHTML}
+        ${hasContent ? `<div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>` : ''}
       </div>
       <div style="font-size:10px;color:var(--text-3);margin-top:2px;text-align:right;">Sending…</div>
     </div>`;
