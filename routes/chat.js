@@ -48,12 +48,29 @@ router.get('/threads', async (req, res) => {
 
 router.get('/threads/:threadId/messages', async (req, res) => {
   try {
-    // Verify user is a participant
-    const threadCheck = await db.query(
-      'SELECT * FROM threads WHERE id = $1 AND $2 = ANY(participant_ids)',
+    // 2026-04-29 chat-info batch: pull thread + joined participants in one
+    // shot so the chat info sheet has photos/names without an extra round
+    // trip. Membership check is now folded into the same query — earlier
+    // shape returned the raw thread row with only participant_ids, which
+    // left the info sheet showing "No members loaded".
+    const threadRes = await db.query(
+      `SELECT t.*,
+         COALESCE(p.participants, '[]'::jsonb) AS participants
+         FROM threads t
+         LEFT JOIN LATERAL (
+           SELECT jsonb_agg(jsonb_build_object(
+             'id', u.id,
+             'name', u.name,
+             'email', u.email,
+             'avatar_url', u.avatar_url
+           )) AS participants
+           FROM users u
+           WHERE u.id = ANY(t.participant_ids)
+         ) p ON TRUE
+        WHERE t.id = $1 AND $2 = ANY(t.participant_ids)`,
       [req.params.threadId, req.user.id]
     );
-    if (threadCheck.rows.length === 0) {
+    if (threadRes.rows.length === 0) {
       return res.status(404).json({ error: 'Thread not found' });
     }
 
@@ -74,7 +91,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     );
 
     res.json({
-      thread: threadCheck.rows[0],
+      thread: threadRes.rows[0],
       messages: result.rows,
     });
   } catch (error) {

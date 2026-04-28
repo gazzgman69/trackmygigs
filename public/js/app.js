@@ -8106,31 +8106,55 @@ async function saveChatInfoName(threadId) {
   if (!threadId) return;
   const input = document.getElementById('chatInfoNameInput');
   if (!input) return;
-  const name = input.value.trim();
+  const nextName = input.value.trim() || null;
+
+  // 2026-04-29 — optimistic rename. Same root cause as the slow-send bug:
+  // waiting on Replit's PATCH round-trip before painting felt like 5-10s of
+  // dead air. Mutate the cache and re-render right away; on failure revert
+  // and surface a toast. New name flows through to the inbox row + thread
+  // header on the next render because both readers fall through to
+  // thread.name first.
+  const prevName = window._chatThreadCache && window._chatThreadCache.thread ? window._chatThreadCache.thread.name || null : null;
+  if (window._chatThreadCache && window._chatThreadCache.thread) {
+    window._chatThreadCache.thread.name = nextName;
+  }
+  if (threadId && window._chatThreadCacheById && window._chatThreadCacheById[threadId]) {
+    window._chatThreadCacheById[threadId].thread.name = nextName;
+  }
+  closeChatInfoSheet();
+  if (window._chatThreadCache) {
+    renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages, window._chatThreadCache.participants);
+  }
+  if (typeof toast === 'function') toast(nextName ? 'Chat renamed' : 'Chat name reset');
+
   try {
     const r = await fetch('/api/chat/threads/' + encodeURIComponent(threadId), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name || null })
+      body: JSON.stringify({ name: nextName })
     });
     if (!r.ok) throw new Error('rename_failed');
+    // Server is the source of truth — re-sync from the response in case
+    // the server normalised the value (trimming, capping, etc).
     const j = await r.json();
-    // Sync the cache so the header re-renders with the new name and
-    // subsequent re-entries paint from cache with the right title.
-    if (window._chatThreadCache && window._chatThreadCache.thread) {
+    if (window._chatThreadCache && window._chatThreadCache.thread && j && j.thread) {
       window._chatThreadCache.thread.name = j.thread.name;
     }
-    if (threadId && window._chatThreadCacheById && window._chatThreadCacheById[threadId]) {
+    if (threadId && window._chatThreadCacheById && window._chatThreadCacheById[threadId] && j && j.thread) {
       window._chatThreadCacheById[threadId].thread.name = j.thread.name;
-    }
-    if (typeof toast === 'function') toast(name ? 'Chat renamed' : 'Chat name reset');
-    closeChatInfoSheet();
-    // Re-render the current thread header in place.
-    if (window._chatThreadCache) {
-      renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages, window._chatThreadCache.participants);
     }
   } catch (err) {
     console.error('saveChatInfoName error:', err);
+    // Revert optimistic update.
+    if (window._chatThreadCache && window._chatThreadCache.thread) {
+      window._chatThreadCache.thread.name = prevName;
+    }
+    if (threadId && window._chatThreadCacheById && window._chatThreadCacheById[threadId]) {
+      window._chatThreadCacheById[threadId].thread.name = prevName;
+    }
+    if (window._chatThreadCache) {
+      renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages, window._chatThreadCache.participants);
+    }
     if (typeof toast === 'function') toast('Could not rename');
   }
 }
@@ -12592,7 +12616,11 @@ async function openChatInbox() {
 function renderThreadItem(thread, type) {
   const isUnread = parseInt(thread.unread_count) > 0;
   const otherParticipants = (thread.participants || []).filter(p => p.id !== currentUser?.id);
-  const displayName = thread.band_name || otherParticipants.map(p => p.name || p.email).join(', ') || 'Unknown';
+  // 2026-04-29 chat-info batch: inbox row reflects custom thread name when
+  // set, falling through to band_name (gig threads) or the other party's
+  // display (1-to-1 / group). Same ladder the in-thread header uses so the
+  // two surfaces stay consistent after a rename.
+  const displayName = thread.name || thread.band_name || otherParticipants.map(p => p.name || p.email).join(', ') || 'Unknown';
   const initial = displayName.charAt(0).toUpperCase();
   const subtitle = thread.venue_name ? `${thread.venue_name}` : '';
   const preview = thread.last_message ? (thread.last_message.length > 40 ? thread.last_message.substring(0, 40) + '...' : thread.last_message) : 'No messages yet';
