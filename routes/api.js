@@ -27,6 +27,64 @@ function toTextArray(v) {
   return null;
 }
 
+// 2026-04-28 dep-network batch: idempotent two-way contact upsert. Called
+// inside the same transaction as Pick / FCFS take / dep-offer accept so the
+// contact list stays in lockstep with the work agreement that triggered it.
+// For each direction (A → B and B → A) we either INSERT a new contact row
+// linked to the other user, or UPDATE notes to append the new gig context
+// when one already exists. Failures are caught and logged: the chat thread
+// already shipped, so a contact-write hiccup must never roll back the Pick.
+async function upsertContactPair(client, userIdA, userIdB, contextNote) {
+  if (!userIdA || !userIdB || userIdA === userIdB) return;
+  try {
+    // Snapshot both users at the moment of agreement. Using their current
+    // display_name + instruments + outward postcode keeps the contact card
+    // useful even if either side later edits their profile.
+    const snap = await client.query(
+      `SELECT id, COALESCE(display_name, name, email) AS name, instruments, home_postcode
+         FROM users WHERE id = ANY($1::uuid[])`,
+      [[userIdA, userIdB]]
+    );
+    const byId = {};
+    for (const r of snap.rows) {
+      const outward = r.home_postcode ? String(r.home_postcode).split(' ')[0] : null;
+      byId[r.id] = { name: r.name || 'Musician', instruments: Array.isArray(r.instruments) ? r.instruments : [], outward };
+    }
+    const stamp = `Auto-added: ${contextNote}`;
+    const note = `\n• ${contextNote}`;
+    const pairs = [[userIdA, userIdB], [userIdB, userIdA]];
+    for (const [owner, other] of pairs) {
+      const target = byId[other];
+      if (!target) continue;
+      // Existing linked row? Append note (skip if already mentions this gig).
+      const existing = await client.query(
+        `SELECT id, notes FROM contacts
+           WHERE owner_id = $1 AND linked_user_id = $2
+           ORDER BY created_at ASC
+           LIMIT 1`,
+        [owner, other]
+      );
+      if (existing.rows.length > 0) {
+        const row = existing.rows[0];
+        if (row.notes && row.notes.includes(contextNote)) continue;
+        const nextNotes = row.notes ? row.notes + note : stamp;
+        await client.query(
+          `UPDATE contacts SET notes = $1 WHERE id = $2`,
+          [nextNotes, row.id]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO contacts (owner_id, name, instruments, notes, location, linked_user_id)
+           VALUES ($1, $2, $3::text[], $4, $5, $6)`,
+          [owner, target.name, target.instruments, stamp, target.outward, other]
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[upsertContactPair] non-fatal:', err && err.message);
+  }
+}
+
 // Fire-and-forget helper — never let sync failures break API responses.
 // The gig has already been saved locally; Google is a mirror. Phase D
 // (2026-04-27) extends this to also mirror writes to the user's linked
@@ -874,6 +932,27 @@ router.patch('/offers/:id', async (req, res) => {
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Offer not found' });
+    }
+
+    // 2026-04-28 dep-network batch: when a dep accepts an offer, mirror the
+    // Pick / FCFS auto-save behaviour so the band leader and dep both end up
+    // in each other's contacts. Best-effort: a failure here must never roll
+    // back the offer status flip, so it runs after the UPDATE has committed.
+    if (status === 'accepted') {
+      try {
+        const offerRow = result.rows[0];
+        const ctxRow = await db.query(
+          `SELECT g.band_name, g.venue_name, g.date AS gig_date
+             FROM gigs g WHERE g.id = $1`,
+          [offerRow.gig_id]
+        );
+        const ctx = ctxRow.rows[0] || {};
+        const dateStr = ctx.gig_date ? new Date(ctx.gig_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+        const ctxNote = `Dep offer: ${ctx.band_name || 'gig'}${ctx.venue_name ? ' at ' + ctx.venue_name : ''}${dateStr ? ', ' + dateStr : ''}`;
+        await upsertContactPair(db, offerRow.sender_id, offerRow.recipient_id, ctxNote);
+      } catch (contactErr) {
+        console.warn('[PATCH /offers/:id] contact upsert failed:', contactErr);
+      }
     }
 
     res.json(result.rows[0]);
@@ -5351,6 +5430,22 @@ router.post('/marketplace/:id/apply', async (req, res) => {
          WHERE id = $1`,
         [id, userId]
       );
+
+      // 2026-04-28 dep-network batch: auto-add the contact pair on a successful
+      // first-come-first-served take. Symmetric with the Pick path above.
+      try {
+        const ctxRow = await client.query(
+          `SELECT title, venue_name, gig_date FROM marketplace_gigs WHERE id = $1`,
+          [id]
+        );
+        const ctx = ctxRow.rows[0] || {};
+        const dateStr = ctx.gig_date ? new Date(ctx.gig_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+        const ctxNote = `Marketplace: ${ctx.title || 'gig'} at ${ctx.venue_name || 'venue'}${dateStr ? ', ' + dateStr : ''}`;
+        await upsertContactPair(client, gig.poster_user_id, userId, ctxNote);
+      } catch (contactErr) {
+        console.warn('[POST /marketplace/:id/apply fcfs] contact upsert failed:', contactErr);
+      }
+
       await client.query('COMMIT');
       return res.json({ ok: true, mode: 'fcfs', status: 'accepted' });
     }
@@ -5423,8 +5518,9 @@ router.post('/marketplace/:id/pick', async (req, res) => {
     // without leaving the app. Re-uses any existing 1-to-1 thread between the
     // pair so back-and-forth Pick/Cancel/Pick cycles don't pile up empties.
     let threadId = null;
+    const posterIdForChat = own.rows[0].poster_user_id;
     try {
-      const posterId = own.rows[0].poster_user_id;
+      const posterId = posterIdForChat;
       const pair = [posterId, applicant_user_id].sort();
       const existing = await client.query(
         `SELECT id FROM threads
@@ -5450,6 +5546,22 @@ router.post('/marketplace/:id/pick', async (req, res) => {
       // Don't roll back the Pick if thread bootstrap fails — the user can
       // still open the conversation manually from the directory or inbox.
       console.warn('[POST /marketplace/:id/pick] thread bootstrap failed:', threadErr);
+    }
+
+    // 2026-04-28 dep-network batch: auto-save the dep relationship on both
+    // sides. Pull venue + date from the just-locked marketplace row so the
+    // note has real context the user will recognise next time they see it.
+    try {
+      const ctxRow = await client.query(
+        `SELECT title, venue_name, gig_date FROM marketplace_gigs WHERE id = $1`,
+        [id]
+      );
+      const ctx = ctxRow.rows[0] || {};
+      const dateStr = ctx.gig_date ? new Date(ctx.gig_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+      const ctxNote = `Marketplace: ${ctx.title || 'gig'} at ${ctx.venue_name || 'venue'}${dateStr ? ', ' + dateStr : ''}`;
+      await upsertContactPair(client, posterIdForChat, applicant_user_id, ctxNote);
+    } catch (contactErr) {
+      console.warn('[POST /marketplace/:id/pick] contact upsert failed:', contactErr);
     }
 
     await client.query('COMMIT');
