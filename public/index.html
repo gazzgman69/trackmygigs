@@ -590,6 +590,9 @@
       <div class="panel-title">Messages</div>
       <button class="panel-back" style="text-align:right;color:var(--accent);font-weight:600;" onclick="openChatComposeNew()" aria-label="New message" title="New message">+ New</button>
     </div>
+    <div id="chatInboxSearchBar" style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;">
+      <input id="chatInboxSearch" type="text" inputmode="search" placeholder="Search conversations..." autocomplete="off" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;box-sizing:border-box;" />
+    </div>
     <div class="panel-body" id="chatInboxBody"></div>
   </div>
 

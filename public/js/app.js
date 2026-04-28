@@ -8117,51 +8117,8 @@ function closeChatInfoSheet() {
 }
 window.closeChatInfoSheet = closeChatInfoSheet;
 
-// 2026-04-29 — in-chat search toggle + handlers. State lives on window
-// so the renderChatThread call can read it on every render. Re-rendering
-// from the cache means the filter applies to the existing message set
-// without a refetch — pure client-side filter.
-function toggleChatThreadSearch() {
-  window._chatThreadSearchActive = !window._chatThreadSearchActive;
-  if (!window._chatThreadSearchActive) window._chatThreadSearchQuery = '';
-  if (window._chatThreadCache) {
-    renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages, window._chatThreadCache.participants);
-  }
-  // Auto-focus the input when opening.
-  if (window._chatThreadSearchActive) {
-    setTimeout(() => {
-      const input = document.getElementById('chatThreadSearchInput');
-      if (input) input.focus();
-    }, 30);
-  }
-}
-window.toggleChatThreadSearch = toggleChatThreadSearch;
-
-function closeChatThreadSearch() {
-  window._chatThreadSearchActive = false;
-  window._chatThreadSearchQuery = '';
-  if (window._chatThreadCache) {
-    renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages, window._chatThreadCache.participants);
-  }
-}
-window.closeChatThreadSearch = closeChatThreadSearch;
-
-function _onChatThreadSearchInput(el) {
-  window._chatThreadSearchQuery = el.value || '';
-  if (window._chatThreadCache) {
-    renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages, window._chatThreadCache.participants);
-  }
-  // Restore focus + caret after re-render so typing stays in the field.
-  setTimeout(() => {
-    const input = document.getElementById('chatThreadSearchInput');
-    if (input && document.activeElement !== input) {
-      input.focus();
-      const v = input.value;
-      input.setSelectionRange(v.length, v.length);
-    }
-  }, 0);
-}
-window._onChatThreadSearchInput = _onChatThreadSearchInput;
+// 2026-04-29 — in-thread search removed. Inbox-level search covers both
+// thread discovery and message lookup once you open one.
 
 async function saveChatInfoName(threadId) {
   if (!threadId) return;
@@ -8288,10 +8245,6 @@ function closePanel(id) {
   // S12-06: stop chat polling whenever the chat thread panel closes.
   if (id === 'panel-chat-thread' && typeof stopChatThreadPolling === 'function') {
     stopChatThreadPolling();
-    // 2026-04-29 — reset search state so a stale filter doesn't survive
-    // across thread switches.
-    window._chatThreadSearchActive = false;
-    window._chatThreadSearchQuery = '';
   }
   // 2026-04-29 — same reset for the inbox search when leaving the inbox.
   if (id === 'panel-chat-inbox') {
@@ -12647,6 +12600,20 @@ async function openChatInbox() {
   body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading messages...</div>';
   openPanel('panel-chat-inbox');
 
+  // 2026-04-29 — bind the static search input once. The input lives in the
+  // panel HTML (not the body's innerHTML) so it never gets destroyed by a
+  // re-render, keeping focus and pointer events on a real DOM node that
+  // sits outside the body's overflow/sticky context. Re-binding is idempotent
+  // — second open just refreshes the value and re-attaches the listener.
+  const searchInput = document.getElementById('chatInboxSearch');
+  if (searchInput) {
+    searchInput.value = window._chatInboxQuery || '';
+    searchInput.oninput = function () {
+      window._chatInboxQuery = this.value || '';
+      _renderChatInboxList();
+    };
+  }
+
   try {
     const resp = await fetch('/api/chat/threads');
     const data = await resp.json();
@@ -12673,23 +12640,16 @@ async function openChatInbox() {
 // the last-message preview, so users can find a thread by any string they
 // remember from it.
 function _renderChatInboxList() {
+  // 2026-04-29 — search input is now a static element in index.html that
+  // sits between panel-header and panel-body, so it never gets destroyed
+  // by this re-render. We only repaint the threads list inside the body.
   const body = document.getElementById('chatInboxBody');
   if (!body) return;
   const threads = window._chatInboxThreads || [];
   const query = (window._chatInboxQuery || '').trim().toLowerCase();
 
-  // 2026-04-29 — defensive: sticky to top of the body, escape the body's
-  // 16px padding via negative margins so the bar spans full panel width,
-  // explicit z-index above the rows, type="text" to dodge webkit's quirky
-  // search-input rendering. Each thread row below has its own onclick;
-  // pointer-events:auto guarantees the input wins the hit-test.
-  const searchHTML = `
-    <div style="position:sticky;top:-16px;z-index:5;margin:-16px -16px 0;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);pointer-events:auto;">
-      <input id="chatInboxSearch" type="text" inputmode="search" value="${escapeAttr(query)}" placeholder="Search conversations..." autocomplete="off" oninput="_onChatInboxSearchInput(this)" onclick="event.stopPropagation()" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;box-sizing:border-box;position:relative;z-index:6;pointer-events:auto;" />
-    </div>`;
-
   if (threads.length === 0) {
-    body.innerHTML = searchHTML + `
+    body.innerHTML = `
       <div style="padding:40px;text-align:center;">
         <div style="font-size:32px;margin-bottom:8px;">💬</div>
         <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No messages yet</div>
@@ -12698,8 +12658,6 @@ function _renderChatInboxList() {
     return;
   }
 
-  // Filter step. Match against all the strings the row displays so the
-  // user can search by chat name, member name, or words from the preview.
   const filtered = !query
     ? threads
     : threads.filter(t => {
@@ -12716,7 +12674,7 @@ function _renderChatInboxList() {
       });
 
   if (filtered.length === 0) {
-    body.innerHTML = searchHTML + `
+    body.innerHTML = `
       <div style="padding:40px;text-align:center;color:var(--text-2);font-size:13px;">No matches for &ldquo;${escapeHtml(query)}&rdquo;.</div>`;
     return;
   }
@@ -12733,21 +12691,8 @@ function _renderChatInboxList() {
     html += depThreads.map(t => renderThreadItem(t, 'dep')).join('');
   }
   html += '</div>';
-  body.innerHTML = searchHTML + html;
-  // Restore focus + caret position after re-render so typing in the
-  // search box doesn't lose focus on every keystroke.
-  const input = document.getElementById('chatInboxSearch');
-  if (input && document.activeElement !== input && query) {
-    input.focus();
-    input.setSelectionRange(query.length, query.length);
-  }
+  body.innerHTML = html;
 }
-
-function _onChatInboxSearchInput(el) {
-  window._chatInboxQuery = el.value || '';
-  _renderChatInboxList();
-}
-window._onChatInboxSearchInput = _onChatInboxSearchInput;
 
 function renderThreadItem(thread, type) {
   const isUnread = parseInt(thread.unread_count) > 0;
@@ -12932,7 +12877,8 @@ function renderChatThread(thread, messages, participants) {
     // and a destructive Leave conversation action. Keeps the destructive
     // path one tap away without cluttering the header.
     const tid = thread.id || _currentThreadId;
-    const searchBtn = `<button class="panel-back" style="text-align:right;font-size:16px;padding:0 4px;" aria-label="Search messages" onclick="toggleChatThreadSearch()">\u{1F50D}</button>`;
+    // 2026-04-29 — in-thread search removed; the inbox-level search covers
+    // both finding a thread and the messages within once you open one.
     const overflowBtn = `<button class="panel-back" style="text-align:right;" aria-label="Conversation menu" onclick="openChatThreadMenu('${tid}', ${thread.gig_id ? `'${thread.gig_id}'` : 'null'})">&#x22EE;</button>`;
     // 2026-04-29 chat-info batch: derived title.
     //   1. thread.name (custom rename)  →  what the user set
@@ -12954,46 +12900,21 @@ function renderChatThread(thread, messages, participants) {
         <div class="panel-title" style="font-size:15px;">${escapeHtml(derivedTitle)}</div>
         <div style="font-size:10px;color:var(--text-3);">${participantCount} ${participantCount === 1 ? 'person' : 'people'} · Tap for info</div>
       </div>
-      <div style="display:flex;align-items:center;gap:2px;">${searchBtn}${overflowBtn}</div>
+      ${overflowBtn}
     `;
   }
 
-  // 2026-04-29 — in-chat search bar. Toggled by the 🔍 button in the
-  // header. When _chatThreadSearchActive is true we render the bar above
-  // the message area and filter messages by content match. Tap × to
-  // close. WhatsApp-style: matches stay visible, non-matches collapse.
-  const searchActive = !!window._chatThreadSearchActive;
-  const searchQuery = (window._chatThreadSearchQuery || '').trim();
-  const searchBarHTML = searchActive ? `
-    <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:center;flex-shrink:0;position:relative;z-index:5;pointer-events:auto;">
-      <input id="chatThreadSearchInput" type="text" inputmode="search" value="${escapeAttr(searchQuery)}" placeholder="Search this conversation..." autocomplete="off" oninput="_onChatThreadSearchInput(this)" onclick="event.stopPropagation()" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;position:relative;z-index:6;pointer-events:auto;" />
-      <button onclick="closeChatThreadSearch()" aria-label="Close search" style="background:transparent;border:none;color:var(--text-2);font-size:20px;cursor:pointer;padding:6px 10px;">&times;</button>
-    </div>` : '';
+  // 2026-04-29 — in-thread search removed; inbox-level search is the
+  // single canonical surface for finding conversations and messages.
+  let messagesHTML = '<div style="flex:1;overflow-y:auto;padding:16px 20px;" id="chatMessagesArea">';
 
-  // Messages area
-  let messagesHTML = searchBarHTML + '<div style="flex:1;overflow-y:auto;padding:16px 20px;" id="chatMessagesArea">';
-
-  // Filtered list when search is active. Empty query = no filter (all
-  // messages visible). Substring match against content, case-insensitive.
-  const visibleMessages = (searchActive && searchQuery)
-    ? messages.filter(m => (m.content || '').toLowerCase().includes(searchQuery.toLowerCase()))
-    : messages;
-
-  if (visibleMessages.length === 0 && !searchActive) {
+  if (messages.length === 0) {
     messagesHTML += `
       <div style="text-align:center;padding:20px;">
         <div style="font-size:11px;color:var(--text-3);background:var(--card);border-radius:12px;padding:6px 12px;display:inline-block;">Start the conversation</div>
       </div>
     `;
-  } else if (visibleMessages.length === 0 && searchActive) {
-    messagesHTML += `
-      <div style="text-align:center;padding:20px;">
-        <div style="font-size:12px;color:var(--text-2);background:var(--card);border-radius:12px;padding:8px 14px;display:inline-block;">No messages match &ldquo;${escapeHtml(searchQuery)}&rdquo;.</div>
-      </div>
-    `;
   }
-  // Override the messages we'll iterate with the filtered set.
-  messages = visibleMessages;
 
   for (const msg of messages) {
     const isMe = msg.sender_id === currentUser?.id;
