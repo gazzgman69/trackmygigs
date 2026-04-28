@@ -242,11 +242,21 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     // Postgres plans ARRAY[$2] as text[] and the insert into the uuid[] column
     // fails with "column read_by is of type uuid[] but expression is of type
     // text[]". Repros as a 500 on every send.
+    // 2026-04-29 — pg can't auto-bind a JS array of objects to a JSONB
+    // column (it tries to coerce to a Postgres ARRAY and the insert fails
+    // with "could not determine data type"). Stringify so the driver
+    // treats it as text and Postgres parses it as JSONB. Cast to ::jsonb
+    // explicitly because $4 starts as text otherwise.
     const result = await db.query(
       `INSERT INTO messages (thread_id, sender_id, content, attachments, read_by)
-       VALUES ($1, $2, $3, $4, ARRAY[$2]::uuid[])
+       VALUES ($1, $2, $3, $4::jsonb, ARRAY[$2]::uuid[])
        RETURNING *`,
-      [req.params.threadId, req.user.id, trimmedContent || '', finalAttachments]
+      [
+        req.params.threadId,
+        req.user.id,
+        trimmedContent || '',
+        finalAttachments ? JSON.stringify(finalAttachments) : null
+      ]
     );
 
     // Get sender info for the response
@@ -260,7 +270,9 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
     res.json({ message: msg });
   } catch (error) {
-    console.error('Send message error:', error);
+    // Log the real error shape so attachment-shape regressions don't hide
+    // behind the generic "Failed to send message" toast next time.
+    console.error('Send message error:', error.code || '', error.message || error);
     res.status(500).json({ error: 'Failed to send message' });
   }
 });
