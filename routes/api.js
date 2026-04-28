@@ -85,7 +85,7 @@ async function upsertContactPair(client, userIdA, userIdB, contextNote, fallback
       if (!target) continue;
       // Existing linked row? Append note (skip if already mentions this gig).
       const existing = await client.query(
-        `SELECT id, notes FROM contacts
+        `SELECT id, notes, instruments FROM contacts
            WHERE owner_id = $1 AND linked_user_id = $2
            ORDER BY id ASC
            LIMIT 1`,
@@ -93,12 +93,22 @@ async function upsertContactPair(client, userIdA, userIdB, contextNote, fallback
       );
       if (existing.rows.length > 0) {
         const row = existing.rows[0];
-        if (row.notes && row.notes.includes(contextNote)) continue;
-        const nextNotes = row.notes ? row.notes + note : stamp;
-        await client.query(
-          `UPDATE contacts SET notes = $1 WHERE id = $2`,
-          [nextNotes, row.id]
-        );
+        const noteAlreadyMentions = row.notes && row.notes.includes(contextNote);
+        const nextNotes = noteAlreadyMentions ? row.notes : (row.notes ? row.notes + note : stamp);
+        // If the existing row has no instruments and we have a fallback list
+        // (the gig's instrument set), backfill so /network/suggested-deps
+        // will surface this contact for that slot from now on.
+        const existingInstr = Array.isArray(row.instruments) ? row.instruments : [];
+        const shouldBackfill = existingInstr.length === 0 && target.instruments.length > 0;
+        if (shouldBackfill || !noteAlreadyMentions) {
+          await client.query(
+            `UPDATE contacts
+                SET notes = $1,
+                    instruments = CASE WHEN $3::boolean THEN $4::text[] ELSE instruments END
+              WHERE id = $2`,
+            [nextNotes, row.id, shouldBackfill, target.instruments]
+          );
+        }
       } else {
         await client.query(
           `INSERT INTO contacts (owner_id, name, instruments, notes, location, linked_user_id)
