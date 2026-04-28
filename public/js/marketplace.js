@@ -755,10 +755,14 @@
     const newBadge = a.is_new_to_tmg
       ? `<span style="margin-left:6px;padding:1px 6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">New</span>` : '';
     // 2026-04-28 dep-network batch: Worked-together pill is the highest signal
-    // a poster has at Pick time. Show count when it's >1 (single gigs read as
-    // "Worked together" without a number to keep the chip tidy).
+    // a poster has at Pick time. Compact copy so the chip never wraps inside
+    // a word — "Worked 4×" reads cleanly at chip width, full count is in the
+    // tooltip / profile if anyone wants the breakdown.
+    const togetherLabel = a.gigs_together_count > 1
+      ? `✓ Worked ${a.gigs_together_count}×`
+      : '✓ Worked together';
     const togetherBadge = (a.gigs_together_count > 0)
-      ? `<span style="margin-left:6px;padding:2px 8px;background:rgba(63,184,95,.15);border:1px solid rgba(63,184,95,.5);border-radius:8px;font-size:9px;color:#3fb85f;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">${a.gigs_together_count > 1 ? '✓ ' + a.gigs_together_count + ' gigs together' : '✓ Worked together'}</span>`
+      ? `<span title="${a.gigs_together_count > 1 ? a.gigs_together_count + ' completed gigs together' : 'You’ve worked together before'}" style="margin-left:6px;padding:2px 8px;background:rgba(63,184,95,.15);border:1px solid rgba(63,184,95,.5);border-radius:8px;font-size:9px;color:#3fb85f;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;display:inline-block;vertical-align:middle;">${togetherLabel}</span>`
       : '';
     const applicantId = String(a.user_id || a.applicant_user_id || '');
     return `<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:8px;">
