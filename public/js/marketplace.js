@@ -917,6 +917,8 @@
         <div style="font-size:11px;color:var(--text-3);margin-top:8px;">Tap any that fit the slot.</div>
       </div>
 
+      <div id="mktCSuggestedDeps" style="margin-bottom:16px;display:none;"></div>
+
       <div style="${grp}">
         <label for="mktCDesc" style="${lbl}">Details</label>
         <textarea id="mktCDesc" rows="4" placeholder="Setlist vibe, dress code, load-in notes, anything else the dep needs to know." style="${fld}resize:vertical;min-height:96px;"></textarea>
@@ -960,6 +962,57 @@
       btn.style.color = on ? '#000' : 'var(--text)';
       btn.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
     }
+    // 2026-04-28 dep-network batch: refresh the Suggested deps rail with the
+    // current instrument set. Server returns up to 5 contacts with linked
+    // TMG users matching at least one of the instruments, ordered by gigs
+    // together. Empty result → hide the rail entirely.
+    _mktRefreshSuggestedDeps();
+  };
+
+  async function _mktRefreshSuggestedDeps() {
+    const wrap = document.getElementById('mktCSuggestedDeps');
+    if (!wrap) return;
+    const set = window._mktComposeInstruments || new Set();
+    if (set.size === 0) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+    try {
+      const qs = encodeURIComponent(Array.from(set).join(','));
+      const r = await fetch('/api/network/suggested-deps?instruments=' + qs);
+      const j = await r.json();
+      const list = (j && j.suggestions) || [];
+      if (list.length === 0) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+      const chips = list.map(s => {
+        const initial = ((s.name || '?').charAt(0) || '?').toUpperCase();
+        const count = s.gigs_together_count > 0 ? `<span style="margin-left:6px;color:#3fb85f;font-weight:700;">·${s.gigs_together_count}×</span>` : '';
+        return `<button type="button" onclick="_mktSuggestedDepClick('${escAttr(s.user_id || '')}','${escAttr(s.name || '')}')" style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:18px;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;margin:0 6px 6px 0;white-space:nowrap;">
+          <span style="width:20px;height:20px;border-radius:10px;background:var(--accent-dim);display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:var(--accent);">${initial}</span>
+          ${esc(s.name || 'Musician')}${count}
+        </button>`;
+      }).join('');
+      wrap.style.display = 'block';
+      wrap.innerHTML = `
+        <div style="padding:12px;background:rgba(63,184,95,.06);border:1px solid rgba(63,184,95,.3);border-radius:10px;">
+          <div style="font-size:11px;font-weight:700;color:#3fb85f;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Your usual deps for this</div>
+          <div>${chips}</div>
+          <div style="font-size:10px;color:var(--text-3);margin-top:6px;">Tap to send a direct dep offer alongside the marketplace post.</div>
+        </div>`;
+    } catch (err) {
+      console.warn('Suggested deps refresh failed:', err);
+      wrap.style.display = 'none';
+    }
+  }
+
+  // 2026-04-28 dep-network batch: hand off to the existing Send Dep flow
+  // with the contact pre-selected. Marketplace post is broadcast-open;
+  // sending a direct offer to a known dep alongside it is a strict win
+  // for fill rate, especially for early-bird / specialist instruments.
+  window._mktSuggestedDepClick = function (userId, name) {
+    if (!userId) return;
+    if (typeof showToast === 'function') showToast(`Opening direct offer to ${name}...`);
+    // Stash for the dep panel pre-fill (same hook the Find Musicians
+    // "Send dep offer" button uses) and open the dep flow.
+    window._depPrefillDiscoveredUserId = userId;
+    if (typeof openPanel === 'function') openPanel('panel-dep');
+    if (typeof initDepPanel === 'function') initDepPanel();
   };
 
   window._mktComposeFeeKind = function (kind) {

@@ -27,6 +27,25 @@ function toTextArray(v) {
   return null;
 }
 
+// 2026-04-28 dep-network batch: directory ranking that floats faces you
+// already know to the top, then falls back to geo distance, with
+// distance-nulls last. Reused by name / nearby / instrument_match modes so
+// they stay in lockstep. Ties on count fall through to distance, ties on
+// distance fall through to display name for stable ordering.
+function networkRankComparator(a, b) {
+  const ac = (a && a.gigs_together_count) || 0;
+  const bc = (b && b.gigs_together_count) || 0;
+  if (ac !== bc) return bc - ac;
+  const ad = a && a.distance_miles, bd = b && b.distance_miles;
+  if (ad == null && bd == null) {
+    return String(a && a.display_name || '').localeCompare(String(b && b.display_name || ''));
+  }
+  if (ad == null) return 1;
+  if (bd == null) return -1;
+  if (ad !== bd) return ad - bd;
+  return String(a && a.display_name || '').localeCompare(String(b && b.display_name || ''));
+}
+
 // 2026-04-28 dep-network batch: idempotent two-way contact upsert. Called
 // inside the same transaction as Pick / FCFS take / dep-offer accept so the
 // contact list stays in lockstep with the work agreement that triggered it.
@@ -4203,6 +4222,210 @@ router.get('/print/finance', async (req, res) => {
 });
 
 // =============================================================================
+// 2026-04-28 dep-network batch: suggested deps for a given instrument set.
+// Used by the marketplace compose rail and (later) the Send Dep panel to
+// remind the user which of their existing contacts plays the instrument
+// they're trying to fill. Returns up to `limit` (default 5) contacts that
+// (a) are linked to a real TMG user, (b) have at least one matching
+// instrument, ordered by completed gigs together with the actor (most
+// reliable deps first), then name. Only contacts with notes auto-stamped
+// from accepted work get the count baked in via marketplace_applications +
+// offers, so brand-new contacts who've not yet worked together still show
+// (count = 0) but rank below actual collaborators.
+router.get('/network/suggested-deps', async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(20, parseInt(req.query.limit, 10) || 5));
+    const raw = String(req.query.instruments || '').trim();
+    if (!raw) return res.json({ suggestions: [] });
+    const instruments = raw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 8);
+    if (instruments.length === 0) return res.json({ suggestions: [] });
+
+    const q = await db.query(
+      `SELECT
+         c.id AS contact_id,
+         c.name,
+         c.instruments,
+         c.linked_user_id,
+         u.photo_url,
+         u.allow_direct_messages,
+         (
+           (SELECT COUNT(*)::int FROM marketplace_applications ma2
+              JOIN marketplace_gigs mg2 ON mg2.id = ma2.marketplace_gig_id
+              WHERE ma2.status = 'accepted'
+                AND ((mg2.poster_user_id = $1 AND ma2.applicant_user_id = u.id)
+                  OR (mg2.poster_user_id = u.id AND ma2.applicant_user_id = $1)))
+           +
+           (SELECT COUNT(*)::int FROM offers o2
+              WHERE o2.status = 'accepted'
+                AND ((o2.sender_id = $1 AND o2.recipient_id = u.id)
+                  OR (o2.sender_id = u.id AND o2.recipient_id = $1)))
+         ) AS gigs_together_count
+       FROM contacts c
+       LEFT JOIN users u ON u.id = c.linked_user_id
+       WHERE c.owner_id = $1
+         AND c.linked_user_id IS NOT NULL
+         AND c.instruments && $2::text[]
+       ORDER BY gigs_together_count DESC, LOWER(c.name) ASC
+       LIMIT $3`,
+      [req.user.id, instruments, limit]
+    );
+    res.json({
+      suggestions: q.rows.map(r => ({
+        contact_id: r.contact_id,
+        user_id: r.linked_user_id,
+        name: r.name,
+        instruments: Array.isArray(r.instruments) ? r.instruments : [],
+        photo_url: r.photo_url || null,
+        gigs_together_count: parseInt(r.gigs_together_count || 0, 10),
+        accepts_dms: r.allow_direct_messages !== false
+      }))
+    });
+  } catch (err) {
+    console.error('[GET /network/suggested-deps]', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// 2026-04-28 dep-network batch: top deps over the last 90 days. Drives
+// the Home insights card "Your top deps this quarter" — counts accepted
+// marketplace fills + accepted dep offers in either direction over the
+// rolling 90-day window, returns the top N (default 3) other users by
+// frequency. Skipping anything older keeps the card feeling current and
+// stops it from ossifying around a relationship that's gone cold.
+router.get('/network/top-deps', async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(10, parseInt(req.query.limit, 10) || 3));
+    const sinceDays = Math.max(7, Math.min(365, parseInt(req.query.since_days, 10) || 90));
+    const rows = await db.query(
+      `WITH events AS (
+         SELECT
+           CASE WHEN mg.poster_user_id = $1 THEN ma.applicant_user_id ELSE mg.poster_user_id END AS other_id,
+           mg.gig_date AS event_date
+           FROM marketplace_applications ma
+           JOIN marketplace_gigs mg ON mg.id = ma.marketplace_gig_id
+          WHERE ma.status = 'accepted'
+            AND ((mg.poster_user_id = $1 AND ma.applicant_user_id IS NOT NULL)
+              OR (ma.applicant_user_id = $1))
+            AND mg.gig_date >= (CURRENT_DATE - $2::int)
+         UNION ALL
+         SELECT
+           CASE WHEN o.sender_id = $1 THEN o.recipient_id ELSE o.sender_id END AS other_id,
+           g.date AS event_date
+           FROM offers o
+           JOIN gigs g ON g.id = o.gig_id
+          WHERE o.status = 'accepted'
+            AND (o.sender_id = $1 OR o.recipient_id = $1)
+            AND g.date >= (CURRENT_DATE - $2::int)
+       )
+       SELECT
+         e.other_id,
+         COALESCE(u.display_name, u.name, u.email) AS name,
+         u.photo_url,
+         u.instruments,
+         COUNT(*)::int AS gig_count,
+         MAX(e.event_date) AS most_recent
+       FROM events e
+       JOIN users u ON u.id = e.other_id
+       WHERE e.other_id IS NOT NULL AND e.other_id <> $1
+       GROUP BY e.other_id, u.display_name, u.name, u.email, u.photo_url, u.instruments
+       ORDER BY gig_count DESC, most_recent DESC NULLS LAST
+       LIMIT $3`,
+      [req.user.id, sinceDays, limit]
+    );
+    res.json({
+      since_days: sinceDays,
+      top: rows.rows.map(r => ({
+        user_id: r.other_id,
+        name: r.name,
+        photo_url: r.photo_url || null,
+        instruments: Array.isArray(r.instruments) ? r.instruments.slice(0, 3) : [],
+        gig_count: r.gig_count,
+        most_recent: r.most_recent
+      }))
+    });
+  } catch (err) {
+    console.error('[GET /network/top-deps]', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// 2026-04-28 dep-network batch: shared work history between the actor and
+// another TMG user. Lists every accepted marketplace fill + accepted dep
+// offer in either direction, newest first, capped at 25. Used by the
+// directory kebab sheet so the actor can answer "what have we worked on
+// together?" without leaving the directory.
+router.get('/network/shared-history/:userId', async (req, res) => {
+  try {
+    const otherId = req.params.userId;
+    if (!otherId || otherId === req.user.id) {
+      return res.status(400).json({ error: 'invalid_target' });
+    }
+    const exists = await db.query('SELECT id FROM users WHERE id = $1', [otherId]);
+    if (exists.rows.length === 0) return res.status(404).json({ error: 'not_found' });
+
+    // Marketplace history. Either side might be poster vs applicant.
+    const mp = await db.query(
+      `SELECT mg.id, mg.title, mg.venue_name, mg.gig_date, mg.fee_pence, mg.is_free,
+              CASE WHEN mg.poster_user_id = $1 THEN 'posted' ELSE 'applied' END AS my_role,
+              ma.created_at AS event_at
+         FROM marketplace_applications ma
+         JOIN marketplace_gigs mg ON mg.id = ma.marketplace_gig_id
+        WHERE ma.status = 'accepted'
+          AND ((mg.poster_user_id = $1 AND ma.applicant_user_id = $2)
+            OR (mg.poster_user_id = $2 AND ma.applicant_user_id = $1))
+        ORDER BY mg.gig_date DESC NULLS LAST
+        LIMIT 25`,
+      [req.user.id, otherId]
+    );
+
+    // Dep offer history. The offer carries the gig FK; reach through to gigs
+    // for venue + date the same way.
+    const off = await db.query(
+      `SELECT g.id AS gig_id, g.band_name, g.venue_name, g.date AS gig_date, g.fee,
+              CASE WHEN o.sender_id = $1 THEN 'sent_offer' ELSE 'accepted_offer' END AS my_role,
+              o.responded_at AS event_at
+         FROM offers o
+         JOIN gigs g ON g.id = o.gig_id
+        WHERE o.status = 'accepted'
+          AND ((o.sender_id = $1 AND o.recipient_id = $2)
+            OR (o.sender_id = $2 AND o.recipient_id = $1))
+        ORDER BY g.date DESC NULLS LAST
+        LIMIT 25`,
+      [req.user.id, otherId]
+    );
+
+    const items = [
+      ...mp.rows.map(r => ({
+        kind: 'marketplace',
+        title: r.title,
+        venue_name: r.venue_name,
+        gig_date: r.gig_date,
+        fee_pence: r.fee_pence,
+        is_free: r.is_free,
+        my_role: r.my_role
+      })),
+      ...off.rows.map(r => ({
+        kind: 'offer',
+        title: r.band_name,
+        venue_name: r.venue_name,
+        gig_date: r.gig_date,
+        fee_pence: r.fee != null ? Math.round(parseFloat(r.fee) * 100) : null,
+        is_free: false,
+        my_role: r.my_role
+      }))
+    ].sort((a, b) => {
+      const ad = a.gig_date ? new Date(a.gig_date).getTime() : 0;
+      const bd = b.gig_date ? new Date(b.gig_date).getTime() : 0;
+      return bd - ad;
+    }).slice(0, 25);
+
+    res.json({ count: items.length, items });
+  } catch (err) {
+    console.error('[GET /network/shared-history]', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 // Phase IX-B: GET /api/discover — Find Musicians directory.
 //
 // Modes:
@@ -4496,13 +4719,10 @@ router.get('/discover', async (req, res) => {
       const rows = await db.query(sql, params);
       const cards = rows.rows.map(r => toCardRow(r, actor.home_lat, actor.home_lng));
 
-      // Geo-rank: closer first, nulls last (searcher with no postcode).
-      cards.sort((a, b) => {
-        if (a.distance_miles == null && b.distance_miles == null) return 0;
-        if (a.distance_miles == null) return 1;
-        if (b.distance_miles == null) return -1;
-        return a.distance_miles - b.distance_miles;
-      });
+      // 2026-04-28 dep-network batch: rank by shared work history first
+      // (so faces you already know float to the top), then geo distance,
+      // then distance nulls last. Same key reused in nearby + instrument_match.
+      cards.sort(networkRankComparator);
 
       await logLookup(actorId, 'name', q.toLowerCase());
       return res.json({
@@ -4530,7 +4750,7 @@ router.get('/discover', async (req, res) => {
       const cards = rows.rows
         .map(r => toCardRow(r, actor.home_lat, actor.home_lng))
         .filter(c => c.distance_miles != null && c.distance_miles <= DISCOVER_NEARBY_RADIUS_MILES)
-        .sort((a, b) => a.distance_miles - b.distance_miles);
+        .sort(networkRankComparator);
 
       await logLookup(actorId, 'nearby', 'rail');
       return res.json({
@@ -4556,12 +4776,7 @@ router.get('/discover', async (req, res) => {
       );
       const cards = rows.rows
         .map(r => toCardRow(r, actor.home_lat, actor.home_lng))
-        .sort((a, b) => {
-          if (a.distance_miles == null && b.distance_miles == null) return 0;
-          if (a.distance_miles == null) return 1;
-          if (b.distance_miles == null) return -1;
-          return a.distance_miles - b.distance_miles;
-        });
+        .sort(networkRankComparator);
 
       await logLookup(actorId, 'instrument_match', actorInstruments.slice().sort().join(','));
       return res.json({

@@ -974,13 +974,67 @@ function buildHomeHTML(content, stats) {
       </div>`;
     }
 
+    // 2026-04-28 dep-network batch: placeholder for the "Top deps this
+    // quarter" insights card. Populated asynchronously by loadTopDepsCard()
+    // after the main Home render so we don't block above-the-fold paint;
+    // hidden by default and only shown if the actor has any 90-day work
+    // history with another TMG user.
+    html += `<div id="homeTopDepsCard" style="display:none;margin:16px;"></div>`;
+
     html += '</div>';
     content.innerHTML = html;
 
     // Colour the Next 7 days strip using cached gigs + a light blocked-dates
     // fetch. Strip still works if either source fails — cells just stay white.
     hydrateNext7DaysStrip();
+    // Kick off the top-deps fetch in the background; renders into the
+    // placeholder above when ready.
+    loadTopDepsCard();
 }
+
+// 2026-04-28 dep-network batch: pull the 90-day top deps and render a
+// compact card above the bottom nav. Click on a row jumps to Find Musicians
+// (the kebab sheet then surfaces the shared history). Empty result keeps
+// the placeholder hidden so first-time / lapsed users don't see a stub.
+async function loadTopDepsCard() {
+  const wrap = document.getElementById('homeTopDepsCard');
+  if (!wrap) return;
+  try {
+    const r = await fetch('/api/network/top-deps?limit=3');
+    if (!r.ok) return;
+    const j = await r.json();
+    const top = (j && j.top) || [];
+    if (top.length === 0) { wrap.style.display = 'none'; return; }
+    const rows = top.map(t => {
+      const initial = ((t.name || '?').charAt(0) || '?').toUpperCase();
+      const photo = t.photo_url
+        ? `<img src="${escapeAttr(t.photo_url)}" style="width:32px;height:32px;border-radius:16px;object-fit:cover;" />`
+        : `<div style="width:32px;height:32px;border-radius:16px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--accent);">${initial}</div>`;
+      const instr = (t.instruments || []).slice(0, 2).join(' · ');
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+        ${photo}
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.name || 'Musician')}</div>
+          ${instr ? `<div style="font-size:10px;color:var(--text-3);">${escapeHtml(instr)}</div>` : ''}
+        </div>
+        <div style="font-size:11px;font-weight:700;color:#3fb85f;white-space:nowrap;">${t.gig_count}× this quarter</div>
+      </div>`;
+    }).join('');
+    wrap.style.display = 'block';
+    wrap.innerHTML = `
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">Top deps this quarter</div>
+          <div style="font-size:10px;color:var(--text-3);">Last ${j.since_days || 90} days</div>
+        </div>
+        ${rows}
+      </div>`;
+  } catch (err) {
+    // Silent fail — Home is fine without this card.
+    console.warn('Top deps load failed:', err && err.message);
+  }
+}
+window.loadTopDepsCard = loadTopDepsCard;
 
 async function hydrateNext7DaysStrip() {
   const strip = document.getElementById('next7DaysStrip');
@@ -9764,10 +9818,24 @@ function openDiscoverKebab(userId) {
   const messageBtn = u.allow_direct_messages !== false
     ? `<button class="sheet-btn" onclick="discoverAction_message('${escapeAttr(userId)}')">\u{1F4AC} Send message</button>`
     : '';
+  // 2026-04-28 dep-network batch: when the target is someone we've worked
+  // with before, surface a "Worked together · N" header that expands into a
+  // mini gig list when tapped. Loads via /network/shared-history on demand
+  // so we don't pay the round-trip for unknown users.
+  const togetherCount = u.gigs_together_count || 0;
+  const togetherHeader = togetherCount > 0
+    ? `<div id="discSharedToggle" onclick="discoverAction_loadSharedHistory('${escapeAttr(userId)}')" style="margin:6px 0 10px;padding:10px 14px;background:rgba(63,184,95,.08);border:1px solid rgba(63,184,95,.3);border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+        <div style="font-size:13px;font-weight:700;color:#3fb85f;">✓ Worked together · ${togetherCount}×</div>
+        <div style="font-size:11px;color:var(--text-2);">Tap to see gigs &#9662;</div>
+      </div>
+      <div id="discSharedList" style="display:none;margin-bottom:10px;"></div>`
+    : '';
+
   overlay.innerHTML = `
     <div class="sheet-panel" onclick="event.stopPropagation()">
       <div class="sheet-handle"></div>
       <div class="sheet-title">${escapeHtml(u.display_name || u.name || 'Musician')}</div>
+      ${togetherHeader}
       ${messageBtn}
       <button class="sheet-btn" onclick="discoverAction_addContact('${escapeAttr(userId)}')">Add to contacts</button>
       <button class="sheet-btn" onclick="discoverAction_sendDep('${escapeAttr(userId)}')">Send dep offer</button>
@@ -9826,6 +9894,57 @@ function discoverAction_message(userId) {
   if (typeof openChatWithUser === 'function') openChatWithUser(userId);
 }
 window.discoverAction_message = discoverAction_message;
+
+// 2026-04-28 dep-network batch: lazy-load the shared work history on tap.
+// First click expands the list; second click collapses (toggle). The fetch
+// is one-shot — once loaded we keep the rendered list in the DOM so the
+// expand/collapse stays instant.
+async function discoverAction_loadSharedHistory(userId) {
+  const list = document.getElementById('discSharedList');
+  const toggle = document.getElementById('discSharedToggle');
+  if (!list || !toggle) return;
+  if (list.style.display !== 'none' && list.dataset.loaded === '1') {
+    list.style.display = 'none';
+    const hint = toggle.querySelector('div:last-child');
+    if (hint) hint.innerHTML = 'Tap to see gigs &#9662;';
+    return;
+  }
+  if (list.dataset.loaded !== '1') {
+    list.innerHTML = `<div style="padding:12px;color:var(--text-2);font-size:12px;text-align:center;">Loading...</div>`;
+    list.style.display = 'block';
+    try {
+      const r = await fetch('/api/network/shared-history/' + encodeURIComponent(userId));
+      const j = await r.json();
+      const items = (j && j.items) || [];
+      if (items.length === 0) {
+        list.innerHTML = `<div style="padding:12px;color:var(--text-3);font-size:12px;text-align:center;">No shared gigs found.</div>`;
+      } else {
+        list.innerHTML = items.map(it => {
+          const dStr = it.gig_date
+            ? new Date(it.gig_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+            : '';
+          const fee = (!it.is_free && it.fee_pence != null && it.fee_pence > 0)
+            ? `£${(it.fee_pence / 100).toFixed(0)}`
+            : (it.is_free ? 'Free' : '');
+          const role = it.my_role === 'posted' || it.my_role === 'sent_offer' ? 'You posted' : 'You took it';
+          return `<div style="padding:10px 14px;border-bottom:1px solid var(--border);">
+            <div style="font-size:13px;color:var(--text);font-weight:600;">${escapeHtml(it.title || 'Gig')}</div>
+            <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${escapeHtml(it.venue_name || '')}${dStr ? ' · ' + dStr : ''}</div>
+            <div style="font-size:10px;color:var(--text-3);margin-top:2px;">${role}${fee ? ' · ' + fee : ''}</div>
+          </div>`;
+        }).join('');
+      }
+      list.dataset.loaded = '1';
+    } catch (err) {
+      list.innerHTML = `<div style="padding:12px;color:var(--text-2);font-size:12px;text-align:center;">Could not load history.</div>`;
+    }
+  } else {
+    list.style.display = 'block';
+  }
+  const hint = toggle.querySelector('div:last-child');
+  if (hint) hint.innerHTML = 'Tap to hide &#9652;';
+}
+window.discoverAction_loadSharedHistory = discoverAction_loadSharedHistory;
 
 function discoverAction_sendDep(userId) {
   closeDiscoverSheet();
