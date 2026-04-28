@@ -53,7 +53,7 @@ function networkRankComparator(a, b) {
 // linked to the other user, or UPDATE notes to append the new gig context
 // when one already exists. Failures are caught and logged: the chat thread
 // already shipped, so a contact-write hiccup must never roll back the Pick.
-async function upsertContactPair(client, userIdA, userIdB, contextNote) {
+async function upsertContactPair(client, userIdA, userIdB, contextNote, fallbackInstruments) {
   if (!userIdA || !userIdB || userIdA === userIdB) return;
   try {
     // Snapshot both users at the moment of agreement. Using their current
@@ -64,10 +64,18 @@ async function upsertContactPair(client, userIdA, userIdB, contextNote) {
          FROM users WHERE id = ANY($1::uuid[])`,
       [[userIdA, userIdB]]
     );
+    const fallback = Array.isArray(fallbackInstruments)
+      ? fallbackInstruments.map(s => String(s || '').trim()).filter(Boolean)
+      : [];
     const byId = {};
     for (const r of snap.rows) {
       const outward = r.home_postcode ? String(r.home_postcode).split(' ')[0] : null;
-      byId[r.id] = { name: r.name || 'Musician', instruments: Array.isArray(r.instruments) ? r.instruments : [], outward };
+      // Prefer the user's own instruments. Fall back to the gig's instrument
+      // list if the user hasn't filled theirs in — that way the new contact
+      // still surfaces in /network/suggested-deps for the matching slot.
+      let instr = Array.isArray(r.instruments) ? r.instruments : [];
+      if (instr.length === 0 && fallback.length) instr = fallback;
+      byId[r.id] = { name: r.name || 'Musician', instruments: instr, outward };
     }
     const stamp = `Auto-added: ${contextNote}`;
     const note = `\n• ${contextNote}`;
@@ -5691,13 +5699,13 @@ router.post('/marketplace/:id/apply', async (req, res) => {
       // first-come-first-served take. Symmetric with the Pick path above.
       try {
         const ctxRow = await client.query(
-          `SELECT title, venue_name, gig_date FROM marketplace_gigs WHERE id = $1`,
+          `SELECT title, venue_name, gig_date, instruments FROM marketplace_gigs WHERE id = $1`,
           [id]
         );
         const ctx = ctxRow.rows[0] || {};
         const dateStr = ctx.gig_date ? new Date(ctx.gig_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
         const ctxNote = `Marketplace: ${ctx.title || 'gig'} at ${ctx.venue_name || 'venue'}${dateStr ? ', ' + dateStr : ''}`;
-        await upsertContactPair(client, gig.poster_user_id, userId, ctxNote);
+        await upsertContactPair(client, gig.poster_user_id, userId, ctxNote, ctx.instruments);
       } catch (contactErr) {
         console.warn('[POST /marketplace/:id/apply fcfs] contact upsert failed:', contactErr);
       }
@@ -5809,13 +5817,13 @@ router.post('/marketplace/:id/pick', async (req, res) => {
     // note has real context the user will recognise next time they see it.
     try {
       const ctxRow = await client.query(
-        `SELECT title, venue_name, gig_date FROM marketplace_gigs WHERE id = $1`,
+        `SELECT title, venue_name, gig_date, instruments FROM marketplace_gigs WHERE id = $1`,
         [id]
       );
       const ctx = ctxRow.rows[0] || {};
       const dateStr = ctx.gig_date ? new Date(ctx.gig_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
       const ctxNote = `Marketplace: ${ctx.title || 'gig'} at ${ctx.venue_name || 'venue'}${dateStr ? ', ' + dateStr : ''}`;
-      await upsertContactPair(client, posterIdForChat, applicant_user_id, ctxNote);
+      await upsertContactPair(client, posterIdForChat, applicant_user_id, ctxNote, ctx.instruments);
     } catch (contactErr) {
       console.warn('[POST /marketplace/:id/pick] contact upsert failed:', contactErr);
     }
