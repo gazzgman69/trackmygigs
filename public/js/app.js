@@ -8102,6 +8102,52 @@ function closeChatInfoSheet() {
 }
 window.closeChatInfoSheet = closeChatInfoSheet;
 
+// 2026-04-29 — in-chat search toggle + handlers. State lives on window
+// so the renderChatThread call can read it on every render. Re-rendering
+// from the cache means the filter applies to the existing message set
+// without a refetch — pure client-side filter.
+function toggleChatThreadSearch() {
+  window._chatThreadSearchActive = !window._chatThreadSearchActive;
+  if (!window._chatThreadSearchActive) window._chatThreadSearchQuery = '';
+  if (window._chatThreadCache) {
+    renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages, window._chatThreadCache.participants);
+  }
+  // Auto-focus the input when opening.
+  if (window._chatThreadSearchActive) {
+    setTimeout(() => {
+      const input = document.getElementById('chatThreadSearchInput');
+      if (input) input.focus();
+    }, 30);
+  }
+}
+window.toggleChatThreadSearch = toggleChatThreadSearch;
+
+function closeChatThreadSearch() {
+  window._chatThreadSearchActive = false;
+  window._chatThreadSearchQuery = '';
+  if (window._chatThreadCache) {
+    renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages, window._chatThreadCache.participants);
+  }
+}
+window.closeChatThreadSearch = closeChatThreadSearch;
+
+function _onChatThreadSearchInput(el) {
+  window._chatThreadSearchQuery = el.value || '';
+  if (window._chatThreadCache) {
+    renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages, window._chatThreadCache.participants);
+  }
+  // Restore focus + caret after re-render so typing stays in the field.
+  setTimeout(() => {
+    const input = document.getElementById('chatThreadSearchInput');
+    if (input && document.activeElement !== input) {
+      input.focus();
+      const v = input.value;
+      input.setSelectionRange(v.length, v.length);
+    }
+  }, 0);
+}
+window._onChatThreadSearchInput = _onChatThreadSearchInput;
+
 async function saveChatInfoName(threadId) {
   if (!threadId) return;
   const input = document.getElementById('chatInfoNameInput');
@@ -8227,6 +8273,14 @@ function closePanel(id) {
   // S12-06: stop chat polling whenever the chat thread panel closes.
   if (id === 'panel-chat-thread' && typeof stopChatThreadPolling === 'function') {
     stopChatThreadPolling();
+    // 2026-04-29 — reset search state so a stale filter doesn't survive
+    // across thread switches.
+    window._chatThreadSearchActive = false;
+    window._chatThreadSearchQuery = '';
+  }
+  // 2026-04-29 — same reset for the inbox search when leaving the inbox.
+  if (id === 'panel-chat-inbox') {
+    window._chatInboxQuery = '';
   }
 }
 
@@ -12578,40 +12632,92 @@ async function openChatInbox() {
     // first message goes out.
     const threads = (data.threads || []).filter(t => !!t.last_message || t.thread_type === 'dep');
 
-    if (threads.length === 0) {
-      body.innerHTML = `
-        <div style="padding:40px;text-align:center;">
-          <div style="font-size:32px;margin-bottom:8px;">💬</div>
-          <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No messages yet</div>
-          <div style="font-size:13px;color:var(--text-2);">Messages will appear here when you message a band or dep</div>
-        </div>
-      `;
-      return;
-    }
-
-    // Split into gig threads and dep threads
-    const gigThreads = threads.filter(t => t.thread_type === 'gig');
-    const depThreads = threads.filter(t => t.thread_type === 'dep');
-
-    let html = '<div>';
-
-    if (gigThreads.length > 0) {
-      html += '<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;padding:12px 20px 6px;">Upcoming gigs</div>';
-      html += gigThreads.map(t => renderThreadItem(t, 'gig')).join('');
-    }
-
-    if (depThreads.length > 0) {
-      html += '<div style="font-size:11px;font-weight:600;color:#A78BFA;text-transform:uppercase;letter-spacing:1px;padding:12px 20px 6px;">Dep conversations</div>';
-      html += depThreads.map(t => renderThreadItem(t, 'dep')).join('');
-    }
-
-    html += '</div>';
-    body.innerHTML = html;
+    // 2026-04-29 — stash so the search filter can re-render without a refetch.
+    window._chatInboxThreads = threads;
+    _renderChatInboxList();
   } catch (err) {
     console.error('Chat inbox error:', err);
     body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load messages.</div>';
   }
 }
+
+// 2026-04-29 — render the inbox list with optional search filter. Reads
+// the cached threads array stashed by openChatInbox so the search can
+// filter in place without a refetch. Filter checks the same fields the
+// inbox row shows: chat name, band name, participant names/emails, and
+// the last-message preview, so users can find a thread by any string they
+// remember from it.
+function _renderChatInboxList() {
+  const body = document.getElementById('chatInboxBody');
+  if (!body) return;
+  const threads = window._chatInboxThreads || [];
+  const query = (window._chatInboxQuery || '').trim().toLowerCase();
+
+  const searchHTML = `
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);">
+      <input id="chatInboxSearch" type="search" value="${escapeAttr(query)}" placeholder="Search conversations..." autocomplete="off" oninput="_onChatInboxSearchInput(this)" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;box-sizing:border-box;" />
+    </div>`;
+
+  if (threads.length === 0) {
+    body.innerHTML = searchHTML + `
+      <div style="padding:40px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:8px;">💬</div>
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No messages yet</div>
+        <div style="font-size:13px;color:var(--text-2);">Messages will appear here when you message a band or dep</div>
+      </div>`;
+    return;
+  }
+
+  // Filter step. Match against all the strings the row displays so the
+  // user can search by chat name, member name, or words from the preview.
+  const filtered = !query
+    ? threads
+    : threads.filter(t => {
+        const others = (t.participants || []).filter(p => p && p.id !== currentUser?.id);
+        const haystack = [
+          t.name,
+          t.band_name,
+          t.venue_name,
+          t.last_message,
+          ...others.map(p => p.name || ''),
+          ...others.map(p => p.email || '')
+        ].filter(Boolean).join(' ').toLowerCase();
+        return haystack.includes(query);
+      });
+
+  if (filtered.length === 0) {
+    body.innerHTML = searchHTML + `
+      <div style="padding:40px;text-align:center;color:var(--text-2);font-size:13px;">No matches for &ldquo;${escapeHtml(query)}&rdquo;.</div>`;
+    return;
+  }
+
+  const gigThreads = filtered.filter(t => t.thread_type === 'gig');
+  const depThreads = filtered.filter(t => t.thread_type === 'dep');
+  let html = '<div>';
+  if (gigThreads.length > 0) {
+    html += '<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;padding:12px 20px 6px;">Upcoming gigs</div>';
+    html += gigThreads.map(t => renderThreadItem(t, 'gig')).join('');
+  }
+  if (depThreads.length > 0) {
+    html += '<div style="font-size:11px;font-weight:600;color:#A78BFA;text-transform:uppercase;letter-spacing:1px;padding:12px 20px 6px;">Dep conversations</div>';
+    html += depThreads.map(t => renderThreadItem(t, 'dep')).join('');
+  }
+  html += '</div>';
+  body.innerHTML = searchHTML + html;
+  // Restore focus + caret position after re-render so typing in the
+  // search box doesn't lose focus on every keystroke.
+  const input = document.getElementById('chatInboxSearch');
+  if (input && document.activeElement !== input && query) {
+    input.focus();
+    input.setSelectionRange(query.length, query.length);
+  }
+}
+
+function _onChatInboxSearchInput(el) {
+  window._chatInboxQuery = el.value || '';
+  _renderChatInboxList();
+}
+window._onChatInboxSearchInput = _onChatInboxSearchInput;
 
 function renderThreadItem(thread, type) {
   const isUnread = parseInt(thread.unread_count) > 0;
@@ -12796,6 +12902,7 @@ function renderChatThread(thread, messages, participants) {
     // and a destructive Leave conversation action. Keeps the destructive
     // path one tap away without cluttering the header.
     const tid = thread.id || _currentThreadId;
+    const searchBtn = `<button class="panel-back" style="text-align:right;font-size:16px;padding:0 4px;" aria-label="Search messages" onclick="toggleChatThreadSearch()">\u{1F50D}</button>`;
     const overflowBtn = `<button class="panel-back" style="text-align:right;" aria-label="Conversation menu" onclick="openChatThreadMenu('${tid}', ${thread.gig_id ? `'${thread.gig_id}'` : 'null'})">&#x22EE;</button>`;
     // 2026-04-29 chat-info batch: derived title.
     //   1. thread.name (custom rename)  →  what the user set
@@ -12817,20 +12924,46 @@ function renderChatThread(thread, messages, participants) {
         <div class="panel-title" style="font-size:15px;">${escapeHtml(derivedTitle)}</div>
         <div style="font-size:10px;color:var(--text-3);">${participantCount} ${participantCount === 1 ? 'person' : 'people'} · Tap for info</div>
       </div>
-      ${overflowBtn}
+      <div style="display:flex;align-items:center;gap:2px;">${searchBtn}${overflowBtn}</div>
     `;
   }
 
-  // Messages area
-  let messagesHTML = '<div style="flex:1;overflow-y:auto;padding:16px 20px;" id="chatMessagesArea">';
+  // 2026-04-29 — in-chat search bar. Toggled by the 🔍 button in the
+  // header. When _chatThreadSearchActive is true we render the bar above
+  // the message area and filter messages by content match. Tap × to
+  // close. WhatsApp-style: matches stay visible, non-matches collapse.
+  const searchActive = !!window._chatThreadSearchActive;
+  const searchQuery = (window._chatThreadSearchQuery || '').trim();
+  const searchBarHTML = searchActive ? `
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:center;">
+      <input id="chatThreadSearchInput" type="search" value="${escapeAttr(searchQuery)}" placeholder="Search this conversation..." autocomplete="off" oninput="_onChatThreadSearchInput(this)" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;" />
+      <button onclick="closeChatThreadSearch()" aria-label="Close search" style="background:transparent;border:none;color:var(--text-2);font-size:18px;cursor:pointer;padding:6px 8px;">&times;</button>
+    </div>` : '';
 
-  if (messages.length === 0) {
+  // Messages area
+  let messagesHTML = searchBarHTML + '<div style="flex:1;overflow-y:auto;padding:16px 20px;" id="chatMessagesArea">';
+
+  // Filtered list when search is active. Empty query = no filter (all
+  // messages visible). Substring match against content, case-insensitive.
+  const visibleMessages = (searchActive && searchQuery)
+    ? messages.filter(m => (m.content || '').toLowerCase().includes(searchQuery.toLowerCase()))
+    : messages;
+
+  if (visibleMessages.length === 0 && !searchActive) {
     messagesHTML += `
       <div style="text-align:center;padding:20px;">
         <div style="font-size:11px;color:var(--text-3);background:var(--card);border-radius:12px;padding:6px 12px;display:inline-block;">Start the conversation</div>
       </div>
     `;
+  } else if (visibleMessages.length === 0 && searchActive) {
+    messagesHTML += `
+      <div style="text-align:center;padding:20px;">
+        <div style="font-size:12px;color:var(--text-2);background:var(--card);border-radius:12px;padding:8px 14px;display:inline-block;">No messages match &ldquo;${escapeHtml(searchQuery)}&rdquo;.</div>
+      </div>
+    `;
   }
+  // Override the messages we'll iterate with the filtered set.
+  messages = visibleMessages;
 
   for (const msg of messages) {
     const isMe = msg.sender_id === currentUser?.id;
