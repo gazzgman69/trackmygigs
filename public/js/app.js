@@ -7791,6 +7791,224 @@ async function renderChatInbox() {
 }
 window.renderChatInbox = renderChatInbox;
 
+// 2026-04-28 chat batch: compose-new contact picker. Opens the picker panel,
+// fetches candidates (own contacts + directory users with allow_direct_messages
+// when the actor is themselves opted-in), and lets the user click one to spawn
+// a 1-to-1 thread on the spot. Reuses an existing thread between the same
+// pair if there is one (server-side dedupes on participant set).
+let _chatComposeCandidates = [];
+let _chatComposeQuery = '';
+let _chatComposeFetchTimer = null;
+
+function openChatComposeNew() {
+  _chatComposeCandidates = [];
+  _chatComposeQuery = '';
+  const search = document.getElementById('chatComposeSearch');
+  if (search) search.value = '';
+  const results = document.getElementById('chatComposeResults');
+  if (results) results.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Loading...</div>';
+  openPanel('panel-chat-compose');
+  fetchChatComposeCandidates('');
+  setTimeout(() => { if (search) search.focus(); }, 60);
+}
+window.openChatComposeNew = openChatComposeNew;
+
+async function fetchChatComposeCandidates(q) {
+  try {
+    const resp = await fetch('/api/chat/contacts?q=' + encodeURIComponent(q || ''));
+    const data = await resp.json();
+    _chatComposeCandidates = Array.isArray(data.candidates) ? data.candidates : [];
+    renderChatComposeResults();
+  } catch (err) {
+    console.error('Compose candidates error:', err);
+    const results = document.getElementById('chatComposeResults');
+    if (results) results.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Could not load contacts.</div>';
+  }
+}
+
+function renderChatComposeResults() {
+  const search = document.getElementById('chatComposeSearch');
+  const q = (search && search.value || '').trim();
+  // Debounce server fetches when the query string changes so we're not
+  // hammering the API on every keystroke.
+  if (q !== _chatComposeQuery) {
+    _chatComposeQuery = q;
+    if (_chatComposeFetchTimer) clearTimeout(_chatComposeFetchTimer);
+    _chatComposeFetchTimer = setTimeout(() => fetchChatComposeCandidates(q), 220);
+  }
+  const results = document.getElementById('chatComposeResults');
+  if (!results) return;
+  if (!_chatComposeCandidates.length) {
+    results.innerHTML = `
+      <div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">
+        ${q ? 'No matches.' : 'No contacts yet. Start typing to search the directory.'}
+      </div>`;
+    return;
+  }
+  // Group: own contacts first, then directory.
+  const contacts = _chatComposeCandidates.filter(c => c.source === 'contact');
+  const directory = _chatComposeCandidates.filter(c => c.source === 'directory');
+  let html = '';
+  if (contacts.length) {
+    html += '<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;padding:10px 20px 4px;">Your contacts</div>';
+    html += contacts.map(renderChatComposeRow).join('');
+  }
+  if (directory.length) {
+    html += '<div style="font-size:11px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:1px;padding:14px 20px 4px;">Directory (open DMs)</div>';
+    html += directory.map(renderChatComposeRow).join('');
+  }
+  results.innerHTML = html;
+}
+window.renderChatComposeResults = renderChatComposeResults;
+
+function renderChatComposeRow(c) {
+  const initial = ((c.name || c.email || '?').charAt(0) || '?').toUpperCase();
+  const display = escapeHtml(c.name || c.email || 'Unnamed');
+  const sub = c.email && c.name ? `<div style="font-size:11px;color:var(--text-3);">${escapeHtml(c.email)}</div>` : '';
+  return `
+    <div onclick="startChatWith('${c.id}')" style="padding:12px 20px;display:flex;align-items:center;gap:12px;cursor:pointer;border-bottom:1px solid var(--border);">
+      <div style="width:36px;height:36px;border-radius:18px;background:var(--info-dim);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--text);flex-shrink:0;">${initial}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${display}</div>
+        ${sub}
+      </div>
+    </div>`;
+}
+
+async function startChatWith(userId) {
+  if (!userId) return;
+  try {
+    const resp = await fetch('/api/chat/threads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_type: 'dep', participant_ids: [userId] })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const msg = (data && data.error) || 'Could not start chat.';
+      if (typeof toast === 'function') toast(msg);
+      else alert(msg);
+      return;
+    }
+    closePanel('panel-chat-compose');
+    if (data.thread && data.thread.id) {
+      openChatThread(data.thread.id);
+    }
+  } catch (err) {
+    console.error('startChatWith error:', err);
+  }
+}
+window.startChatWith = startChatWith;
+
+// Open (or reuse) a 1-to-1 thread with a given user, then jump straight to
+// the thread view. Used by directory cards, marketplace filled-state, and any
+// other "Message X" affordance.
+async function openChatWithUser(userId) {
+  return startChatWith(userId);
+}
+window.openChatWithUser = openChatWithUser;
+
+// 2026-04-28 chat batch: delete one of your own messages. Confirm via in-app
+// modal (never window.confirm — that locks the renderer in our automation),
+// then DELETE and re-render the thread.
+async function deleteChatMessage(messageId) {
+  if (!_currentThreadId || !messageId) return;
+  const ok = await (typeof confirmModal === 'function'
+    ? confirmModal('Delete this message? It will be removed for everyone in the thread.')
+    : Promise.resolve(true));
+  if (!ok) return;
+  try {
+    const resp = await fetch(`/api/chat/threads/${_currentThreadId}/messages/${messageId}`, {
+      method: 'DELETE'
+    });
+    if (!resp.ok) throw new Error('delete_failed');
+    openChatThread(_currentThreadId);
+  } catch (err) {
+    console.error('Delete message error:', err);
+    if (typeof toast === 'function') toast('Could not delete message.');
+  }
+}
+window.deleteChatMessage = deleteChatMessage;
+
+// Leave the current thread. For solo threads or empty threads this hard-deletes
+// on the server; otherwise the caller is just removed from participant_ids and
+// the conversation continues for the other side.
+async function deleteChatThread(threadId) {
+  if (!threadId) return;
+  const ok = await (typeof confirmModal === 'function'
+    ? confirmModal('Leave this conversation? You will no longer see it in your inbox.')
+    : Promise.resolve(true));
+  if (!ok) return;
+  try {
+    const resp = await fetch(`/api/chat/threads/${threadId}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error('delete_failed');
+    if (_currentThreadId === threadId) {
+      stopChatThreadPolling();
+      _currentThreadId = null;
+      closePanel('panel-chat-thread');
+    }
+    if (typeof openChatInbox === 'function') openChatInbox();
+  } catch (err) {
+    console.error('Delete thread error:', err);
+    if (typeof toast === 'function') toast('Could not leave thread.');
+  }
+}
+window.deleteChatThread = deleteChatThread;
+
+// Bottom-sheet style menu for the conversation header overflow. Right now this
+// just exposes Gig info (when applicable) and Leave conversation, but it's the
+// natural place to drop Mute / Block / Report later without re-architecting
+// the header.
+function openChatThreadMenu(threadId, gigId) {
+  if (!threadId) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  const items = [];
+  if (gigId && gigId !== 'null') {
+    items.push(`<button onclick="(function(){document.body.removeChild(this.closest('.tmg-chat-menu'));closePanel('panel-chat-thread');openGigDetail('${gigId}')}).call(this)" style="text-align:left;background:transparent;border:none;color:var(--text);font-size:15px;padding:14px 20px;border-bottom:1px solid var(--border);cursor:pointer;">View gig</button>`);
+  }
+  items.push(`<button onclick="(function(btn){document.body.removeChild(btn.closest('.tmg-chat-menu'));deleteChatThread('${threadId}');})(this)" style="text-align:left;background:transparent;border:none;color:#EF4444;font-size:15px;padding:14px 20px;cursor:pointer;">Leave conversation</button>`);
+  wrap.innerHTML = `
+    <div class="tmg-chat-menu" style="background:var(--card);border-top:1px solid var(--border);border-radius:14px 14px 0 0;width:100%;max-width:480px;display:flex;flex-direction:column;padding-bottom:8px;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;"></div>
+      ${items.join('')}
+      <button onclick="document.body.removeChild(this.closest('.tmg-chat-menu').parentElement)" style="text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px 20px;cursor:pointer;">Cancel</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) document.body.removeChild(wrap); });
+  document.body.appendChild(wrap);
+}
+window.openChatThreadMenu = openChatThreadMenu;
+
+// Tiny in-app confirm modal so we never use window.confirm() (it deadlocks
+// the Chrome MCP renderer during automation, per memory). Resolves to true
+// on Yes, false on No or backdrop click.
+if (typeof window !== 'undefined' && typeof window.confirmModal !== 'function') {
+  window.confirmModal = function(message) {
+    return new Promise((resolve) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+      wrap.innerHTML = `
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;max-width:340px;width:100%;padding:20px;">
+          <div style="color:var(--text);font-size:14px;line-height:1.5;margin-bottom:18px;">${(message || '').replace(/</g,'&lt;')}</div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button data-cm="no"  style="background:transparent;border:1px solid var(--border);color:var(--text);border-radius:10px;padding:8px 14px;cursor:pointer;font-size:13px;">Cancel</button>
+            <button data-cm="yes" style="background:var(--accent);border:none;color:#000;border-radius:10px;padding:8px 14px;cursor:pointer;font-size:13px;font-weight:700;">Confirm</button>
+          </div>
+        </div>`;
+      const finish = (v) => { document.body.removeChild(wrap); resolve(v); };
+      wrap.addEventListener('click', (e) => {
+        const tgt = e.target.closest('[data-cm]');
+        if (!tgt) {
+          if (e.target === wrap) finish(false);
+          return;
+        }
+        finish(tgt.getAttribute('data-cm') === 'yes');
+      });
+      document.body.appendChild(wrap);
+    });
+  };
+}
+
 function closePanel(id) {
   document.getElementById(id).classList.remove('open');
   // S12-06: stop chat polling whenever the chat thread panel closes.
@@ -8463,6 +8681,11 @@ function buildDirectoryProfileEditor(profile) {
   const minFeePence = Number.isFinite(profile.min_fee_pence) ? profile.min_fee_pence : 3000;
   const minFeePounds = Math.max(0, Math.round(minFeePence / 100));
   const notifyFreeGigs = profile.notify_free_gigs === true;
+  // 2026-04-28 chat batch: directory open-DM toggle. Defaults TRUE (column
+  // default in the migration) so existing users are reachable from Find
+  // Musicians without an explicit opt-in. Power users who don't want
+  // unsolicited DMs flip it off here.
+  const allowDms = profile.allow_direct_messages !== false;
   const genreSeeds = [
     'Vocals', 'Guitar', 'Bass', 'Keys', 'Piano', 'Drums',
     'Saxophone', 'Trumpet', 'Trombone', 'Violin', 'Cello',
@@ -8486,6 +8709,19 @@ function buildDirectoryProfileEditor(profile) {
         <div style="flex:1;min-width:0;">
           <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Appear in Find Musicians</div>
           <div style="font-size:11px;color:var(--text-2);line-height:1.4;">Lets other TrackMyGigs users discover you by name, instrument or location. Your email and phone stay private and are only matched for Add Contact lookups you control.</div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-bottom:14px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">
+      <div style="display:flex;align-items:flex-start;gap:12px;">
+        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
+          <input id="editAllowDms" type="checkbox" ${allowDms ? 'checked' : ''} style="opacity:0;width:0;height:0;" onchange="this.parentElement.querySelector('.tmg-toggle-dot').style.transform = this.checked ? 'translateX(20px)' : 'translateX(0)'; this.parentElement.querySelector('.tmg-toggle-bg').style.background = this.checked ? 'var(--accent)' : 'var(--border)';" />
+          <span class="tmg-toggle-bg" style="position:absolute;inset:0;background:${allowDms ? 'var(--accent)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
+          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${allowDms ? 'translateX(20px)' : 'translateX(0)'};"></span>
+        </label>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Allow direct messages</div>
+          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">When on, anyone in Find Musicians can send you a chat. Off restricts new chats to people you've added as contacts. Either way, gig and dep conversations always work.</div>
         </div>
       </div>
     </div>
@@ -8729,6 +8965,9 @@ async function saveProfile() {
   }
   const notifyFreeGigsEl = document.getElementById('editNotifyFreeGigs');
   const notifyFreeGigs = notifyFreeGigsEl ? !!notifyFreeGigsEl.checked : undefined;
+  // 2026-04-28 chat batch: open-DM toggle.
+  const allowDmsEl = document.getElementById('editAllowDms');
+  const allowDms = allowDmsEl ? !!allowDmsEl.checked : undefined;
 
   try {
     const payload = {
@@ -8755,6 +8994,7 @@ async function saveProfile() {
     if (genres !== undefined) payload.genres = genres;
     if (minFeePence !== undefined) payload.min_fee_pence = minFeePence;
     if (notifyFreeGigs !== undefined) payload.notify_free_gigs = notifyFreeGigs;
+    if (allowDms !== undefined) payload.allow_direct_messages = allowDms;
 
     const res = await fetch('/api/user/profile', {
       method: 'PATCH',
@@ -9508,10 +9748,17 @@ function openDiscoverKebab(userId) {
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
   overlay.id = 'discoverSheet';
+  // 2026-04-28 chat batch: Message button shows when the target user has
+  // allow_direct_messages = TRUE. The server still enforces the same gate
+  // on POST /threads, so a stale UI can't bypass the toggle.
+  const messageBtn = u.allow_direct_messages !== false
+    ? `<button class="sheet-btn" onclick="discoverAction_message('${escapeAttr(userId)}')">\u{1F4AC} Send message</button>`
+    : '';
   overlay.innerHTML = `
     <div class="sheet-panel" onclick="event.stopPropagation()">
       <div class="sheet-handle"></div>
       <div class="sheet-title">${escapeHtml(u.display_name || u.name || 'Musician')}</div>
+      ${messageBtn}
       <button class="sheet-btn" onclick="discoverAction_addContact('${escapeAttr(userId)}')">Add to contacts</button>
       <button class="sheet-btn" onclick="discoverAction_sendDep('${escapeAttr(userId)}')">Send dep offer</button>
       <button class="sheet-btn danger" onclick="discoverAction_report('${escapeAttr(userId)}')">Report</button>
@@ -9563,6 +9810,12 @@ async function discoverAction_addContact(userId) {
   }
 }
 window.discoverAction_addContact = discoverAction_addContact;
+
+function discoverAction_message(userId) {
+  closeDiscoverSheet();
+  if (typeof openChatWithUser === 'function') openChatWithUser(userId);
+}
+window.discoverAction_message = discoverAction_message;
 
 function discoverAction_sendDep(userId) {
   closeDiscoverSheet();
@@ -12030,11 +12283,12 @@ async function openChatInbox() {
   try {
     const resp = await fetch('/api/chat/threads');
     const data = await resp.json();
-    // S12-13: Hide empty threads the user never actually sent a message in.
-    // "Message band" auto-creates a thread on open; if the user never types
-    // anything, it's just clutter in the inbox. We keep the row only if a
-    // message has been sent (last_message is non-null).
-    const threads = (data.threads || []).filter(t => !!t.last_message);
+    // S12-13: Hide empty gig threads (band-message auto-creates one on open;
+    // if the user never types, it's just clutter). Dep threads are always
+    // shown because Pick spawns them deliberately and the user expects the
+    // person they just connected with to be one tap away even before the
+    // first message goes out.
+    const threads = (data.threads || []).filter(t => !!t.last_message || t.thread_type === 'dep');
 
     if (threads.length === 0) {
       body.innerHTML = `
@@ -12175,16 +12429,19 @@ function renderChatThread(thread, messages, participants) {
     // S12-08: Gig info only makes sense if this thread is attached to a gig.
     // Wire the onclick to openGigDetail; otherwise hide the button entirely so
     // it isn't a dead tap target.
-    const gigInfoBtn = thread.gig_id
-      ? `<div onclick="closePanel('panel-chat-thread');openGigDetail('${thread.gig_id}')" style="font-size:11px;color:var(--accent);cursor:pointer;width:50px;text-align:right;">Gig info</div>`
-      : `<div style="width:50px;"></div>`;
+    // 2026-04-28 chat batch: replace the static Gig-info / spacer slot with
+    // a tiny overflow button that lifts a sheet with Gig info (if present)
+    // and a destructive Leave conversation action. Keeps the destructive
+    // path one tap away without cluttering the header.
+    const tid = thread.id || _currentThreadId;
+    const overflowBtn = `<button class="panel-back" style="text-align:right;" aria-label="Conversation menu" onclick="openChatThreadMenu('${tid}', ${thread.gig_id ? `'${thread.gig_id}'` : 'null'})">&#x22EE;</button>`;
     header.innerHTML = `
       <button class="panel-back" onclick="closePanel('panel-chat-thread')">&#8249; Back</button>
       <div style="text-align:center;flex:1;">
         <div class="panel-title" style="font-size:15px;">${escapeHtml(thread.band_name || 'Messages')}</div>
         <div style="font-size:10px;color:var(--text-3);">${participantCount} ${participantCount === 1 ? 'person' : 'people'}</div>
       </div>
-      ${gigInfoBtn}
+      ${overflowBtn}
     `;
   }
 
@@ -12206,14 +12463,21 @@ function renderChatThread(thread, messages, participants) {
     const allRead = (msg.read_by || []).length >= participantCount;
 
     if (isMe) {
+      // 2026-04-28 chat batch: tiny trash affordance on every own message.
+      // Tap deletes after a confirm \u2014 same pattern as iMessage hold-to-delete
+      // but discoverable on first tap. Doesn't render on other people's
+      // messages because the server enforces sender-only deletion anyway.
       messagesHTML += `
         <div style="display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;">
           <div style="width:30px;height:30px;border-radius:15px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">${userInitial}</div>
           <div style="max-width:85%;">
-            <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:14px 0 14px 14px;padding:10px 14px;">
+            <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:14px 0 14px 14px;padding:10px 14px;position:relative;">
               <div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>
             </div>
-            <div style="font-size:10px;color:var(--text-3);margin-top:2px;text-align:right;">${allRead ? '<span style="color:var(--success);">\u2713\u2713</span> ' : '\u2713 '}${time}</div>
+            <div style="font-size:10px;color:var(--text-3);margin-top:2px;text-align:right;display:flex;justify-content:flex-end;align-items:center;gap:8px;">
+              <button onclick="deleteChatMessage('${msg.id}')" aria-label="Delete message" title="Delete" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:11px;padding:0;line-height:1;">\u{1F5D1}</button>
+              <span>${allRead ? '<span style="color:var(--success);">\u2713\u2713</span> ' : '\u2713 '}${time}</span>
+            </div>
           </div>
         </div>
       `;

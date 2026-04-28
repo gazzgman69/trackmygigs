@@ -670,9 +670,18 @@
              <button onclick="_mktEditNote(${gig.id})" style="background:none;border:1px solid var(--border);color:var(--text);border-radius:16px;padding:6px 14px;font-size:12px;cursor:pointer;">Edit note</button>
              <button onclick="_mktWithdraw(${gig.id})" style="background:none;border:1px solid var(--danger,#f85149);color:var(--danger,#f85149);border-radius:16px;padding:6px 14px;font-size:12px;cursor:pointer;">Withdraw</button>
            </div>` : '';
+      // 2026-04-28 chat batch: when accepted, expose a Message button to the
+      // poster. Pick endpoint already spawned a thread on the server side; we
+      // call the same openChatWithUser path so a stale UI still resolves to
+      // the correct thread (server dedupes 1-to-1 by participant set).
+      const messageRow = (s === 'accepted' && gig.poster_user_id && typeof window.openChatWithUser === 'function')
+        ? `<div style="display:flex;gap:8px;margin-top:12px;justify-content:center;flex-wrap:wrap;">
+             <button onclick="window.openChatWithUser('${escAttr(gig.poster_user_id)}')" style="background:var(--accent);color:#000;border:none;border-radius:16px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;">\u{1F4AC} Message ${esc(gig.poster_name || 'the poster')}</button>
+           </div>` : '';
       return `<div style="margin-top:20px;padding:14px;background:var(--card);border:1px solid var(--accent);border-radius:12px;text-align:center;">
         <div style="font-size:14px;color:var(--text);font-weight:600;">${esc(label)}</div>
         ${noteBlock}
+        ${messageRow}
         ${manageRow}
       </div>`;
     }
@@ -689,12 +698,17 @@
       ? `<button onclick="_mktCancel(${gig.id})" style="background:none;border:1px solid var(--border);color:var(--text-2);border-radius:18px;padding:8px 14px;font-size:13px;cursor:pointer;">Cancel post</button>` : '';
     const repostBtn = (gig.status === 'cancelled' || gig.status === 'expired' || gig.status === 'filled')
       ? `<button onclick="_mktRepost(${gig.id})" style="background:var(--accent);color:#000;border:none;border-radius:18px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">Repost</button>` : '';
+    // 2026-04-28 chat batch: as the poster, message the person who took or
+    // was picked for this gig. openChatWithUser dedupes 1-to-1 threads, so
+    // this resolves to the same thread the Pick endpoint just opened.
+    const messageBtn = (gig.status === 'filled' && gig.filled_by_user_id && typeof window.openChatWithUser === 'function')
+      ? `<button onclick="window.openChatWithUser('${escAttr(gig.filled_by_user_id)}')" style="background:var(--accent);color:#000;border:none;border-radius:18px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">\u{1F4AC} Message ${esc(gig.filled_by_name || 'the dep')}</button>` : '';
 
     if (gig.mode === 'fcfs' && gig.status === 'filled') {
       return `<div style="margin-top:20px;padding:14px;background:var(--card);border:1px solid var(--border);border-radius:12px;">
         <div style="font-size:13px;color:var(--text);font-weight:600;">Filled automatically — first-come-first-served.</div>
         <div style="font-size:11px;color:var(--text-3);margin-top:6px;">Filled by ${esc(gig.filled_by_name || 'someone')}.</div>
-        <div style="display:flex;gap:8px;margin-top:12px;">${repostBtn}</div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">${messageBtn}${repostBtn}</div>
       </div>`;
     }
 
@@ -707,7 +721,7 @@
       </div>`;
     }
 
-    return `<div style="margin-top:20px;display:flex;gap:8px;">${cancelBtn}${repostBtn}</div>`;
+    return `<div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;">${messageBtn}${cancelBtn}${repostBtn}</div>`;
   }
 
   async function loadApplicants(gigId) {

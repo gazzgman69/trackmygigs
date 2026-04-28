@@ -187,16 +187,58 @@ router.post('/threads', async (req, res) => {
         return res.json({ thread: existing.rows[0], existing: true });
       }
     } else {
-      // Non-gig thread (1-to-1 or group DM): each invitee must already be in
-      // the caller's contacts as a linked TMG user. Prevents starting private
-      // chats with strangers by guessing UUIDs.
+      // Non-gig thread (1-to-1 or group DM): each invitee must either
+      //   (a) already be in the caller's contacts as a linked TMG user, OR
+      //   (b) have allow_direct_messages = TRUE (directory open-DM toggle).
+      // The actor must also have allow_direct_messages = TRUE to send a
+      // cold DM, otherwise users could DM strangers without exposing a
+      // reverse channel. Same gate applies on both sides.
       for (const pid of others) {
         const contactCheck = await db.query(
           `SELECT 1 FROM contacts WHERE owner_id = $1 AND contact_user_id = $2 LIMIT 1`,
           [req.user.id, pid]
         );
-        if (contactCheck.rows.length === 0) {
-          return res.status(403).json({ error: 'Participant is not in your contacts' });
+        if (contactCheck.rows.length > 0) continue;
+        // Not a contact -> fall back to the open-DM toggle. Both ends must
+        // have it on. We also verify the target is a real, non-blocked user
+        // so a guessed UUID can't slip through.
+        const dmCheck = await db.query(
+          `SELECT
+             (SELECT allow_direct_messages FROM users WHERE id = $1) AS actor_open,
+             (SELECT allow_direct_messages FROM users WHERE id = $2) AS target_open,
+             EXISTS (SELECT 1 FROM users WHERE id = $2) AS target_exists,
+             EXISTS (SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2) AS actor_blocks_target,
+             EXISTS (SELECT 1 FROM user_blocks WHERE blocker_id = $2 AND blocked_id = $1) AS target_blocks_actor`,
+          [req.user.id, pid]
+        );
+        const r = dmCheck.rows[0] || {};
+        if (!r.target_exists) {
+          return res.status(404).json({ error: 'User not found' });
+        }
+        if (r.actor_blocks_target || r.target_blocks_actor) {
+          return res.status(403).json({ error: 'Cannot message this user' });
+        }
+        if (r.actor_open !== true || r.target_open !== true) {
+          return res.status(403).json({ error: 'This user is not accepting direct messages' });
+        }
+      }
+
+      // For 1-to-1 DMs, return any existing thread between the same two
+      // people so we don't pile up empty threads when the user clicks
+      // Message twice. Group DMs (>2 participants) always create a fresh
+      // thread because the set semantics get fiddly fast.
+      if (allParticipants.length === 2) {
+        const existing = await db.query(
+          `SELECT * FROM threads
+           WHERE gig_id IS NULL
+             AND participant_ids @> $1::uuid[]
+             AND participant_ids <@ $1::uuid[]
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [allParticipants]
+        );
+        if (existing.rows.length > 0) {
+          return res.json({ thread: existing.rows[0], existing: true });
         }
       }
     }
@@ -212,6 +254,143 @@ router.post('/threads', async (req, res) => {
   } catch (error) {
     console.error('Create thread error:', error);
     res.status(500).json({ error: 'Failed to create thread' });
+  }
+});
+
+// ── Delete one of your own messages ─────────────────────────────────────────
+//
+// Soft-delete pattern would be nicer (preserve "Message deleted" placeholder
+// the way iMessage does) but we don't have a deleted_at column on messages
+// yet. Hard delete + UI tombstone via the next render is fine for v1; users
+// only ever see a thread-list refresh, never a phantom row. Caller must own
+// the message — no admin-style deletes via this endpoint.
+router.delete('/threads/:threadId/messages/:messageId', async (req, res) => {
+  try {
+    const { threadId, messageId } = req.params;
+    // Confirm caller is in the thread first so we don't leak existence of
+    // foreign messageIds via a different error code.
+    const threadCheck = await db.query(
+      'SELECT 1 FROM threads WHERE id = $1 AND $2 = ANY(participant_ids)',
+      [threadId, req.user.id]
+    );
+    if (threadCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Thread not found' });
+    }
+    const result = await db.query(
+      `DELETE FROM messages
+       WHERE id = $1 AND thread_id = $2 AND sender_id = $3
+       RETURNING id`,
+      [messageId, threadId, req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    res.json({ ok: true, id: result.rows[0].id });
+  } catch (error) {
+    console.error('Delete message error:', error);
+    res.status(500).json({ error: 'Failed to delete message' });
+  }
+});
+
+// ── Leave / delete a thread ─────────────────────────────────────────────────
+//
+// Semantics:
+//   - 1-to-1 / group with messages: caller is removed from participant_ids
+//     (they "leave" the thread) so the other side keeps history. If they were
+//     the last participant, the thread + messages are wiped.
+//   - 1-to-1 with zero messages: hard-delete (it's basically a stale draft).
+// Either way, caller no longer sees the thread in their inbox after the call.
+router.delete('/threads/:threadId', async (req, res) => {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const tRow = await client.query(
+      'SELECT * FROM threads WHERE id = $1 FOR UPDATE',
+      [req.params.threadId]
+    );
+    if (tRow.rows.length === 0 || !tRow.rows[0].participant_ids.includes(req.user.id)) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Thread not found' });
+    }
+    const remaining = tRow.rows[0].participant_ids.filter(id => id !== req.user.id);
+    const msgCount = await client.query(
+      'SELECT COUNT(*)::int AS n FROM messages WHERE thread_id = $1',
+      [req.params.threadId]
+    );
+    const hasMessages = (msgCount.rows[0]?.n || 0) > 0;
+    if (remaining.length === 0 || !hasMessages) {
+      await client.query('DELETE FROM messages WHERE thread_id = $1', [req.params.threadId]);
+      await client.query('DELETE FROM threads WHERE id = $1', [req.params.threadId]);
+    } else {
+      await client.query(
+        'UPDATE threads SET participant_ids = $1 WHERE id = $2',
+        [remaining, req.params.threadId]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Delete thread error:', error);
+    res.status(500).json({ error: 'Failed to delete thread' });
+  } finally {
+    client.release();
+  }
+});
+
+// ── Contact picker for compose-new ──────────────────────────────────────────
+//
+// Returns DM-eligible candidates for the inbox "+ New" button:
+//   - everyone in the caller's contacts table that's linked to a TMG user
+//   - plus directory users with allow_direct_messages = TRUE (only if the
+//     caller themselves has the toggle on; otherwise contacts-only)
+// Includes a `q` substring filter (case-insensitive on name + email) so the
+// list scales as the user types. Caps at 50 results to keep payloads small.
+router.get('/contacts', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim().toLowerCase();
+    const like = q ? `%${q}%` : '%';
+
+    const me = await db.query(
+      'SELECT allow_direct_messages FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const actorOpen = !!(me.rows[0] && me.rows[0].allow_direct_messages);
+
+    const params = [req.user.id, like];
+    let directoryClause = '';
+    if (actorOpen) {
+      directoryClause = `
+        UNION
+        SELECT u.id, u.name, u.email, u.avatar_url, 'directory'::text AS source
+          FROM users u
+         WHERE u.id <> $1
+           AND u.allow_direct_messages = TRUE
+           AND u.discoverable = TRUE
+           AND (LOWER(u.name) LIKE $2 OR LOWER(u.email) LIKE $2)
+           AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_id = u.id)
+           AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $1)
+      `;
+    }
+
+    const sql = `
+      SELECT * FROM (
+        SELECT u.id, u.name, u.email, u.avatar_url, 'contact'::text AS source
+          FROM contacts c
+          JOIN users u ON u.id = c.contact_user_id
+         WHERE c.owner_id = $1
+           AND c.contact_user_id IS NOT NULL
+           AND (LOWER(u.name) LIKE $2 OR LOWER(u.email) LIKE $2 OR LOWER(c.name) LIKE $2)
+        ${directoryClause}
+      ) s
+      ORDER BY (source = 'contact') DESC, name ASC
+      LIMIT 50
+    `;
+    const rows = await db.query(sql, params);
+    res.json({ candidates: rows.rows });
+  } catch (error) {
+    console.error('Chat contacts error:', error);
+    res.status(500).json({ error: 'Failed to load contacts' });
   }
 });
 

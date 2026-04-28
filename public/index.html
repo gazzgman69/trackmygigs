@@ -587,10 +587,25 @@
   <div class="panel-overlay" id="panel-chat-inbox">
     <div class="panel-header">
       <button class="panel-back" onclick="closePanel('panel-chat-inbox')">&#8249; Back</button>
-      <div class="panel-title">Gig Messages</div>
-      <div style="width:50px;"></div>
+      <div class="panel-title">Messages</div>
+      <button class="panel-back" style="text-align:right;color:var(--accent);font-weight:600;" onclick="openChatComposeNew()" aria-label="New message" title="New message">+ New</button>
     </div>
     <div class="panel-body" id="chatInboxBody"></div>
+  </div>
+
+  <!-- Chat compose-new contact picker -->
+  <div class="panel-overlay" id="panel-chat-compose">
+    <div class="panel-header">
+      <button class="panel-back" onclick="closePanel('panel-chat-compose')">&#8249; Back</button>
+      <div class="panel-title">New message</div>
+      <div style="width:50px;"></div>
+    </div>
+    <div class="panel-body" id="chatComposeBody" style="padding:0;">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);">
+        <input id="chatComposeSearch" type="search" placeholder="Search contacts or directory..." autocomplete="off" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;" oninput="renderChatComposeResults()">
+      </div>
+      <div id="chatComposeResults" style="padding:8px 0;"></div>
+    </div>
   </div>
 
   <!-- Chat Thread Panel -->

@@ -1151,7 +1151,7 @@ router.patch('/user/profile', async (req, res) => {
             business_address, business_phone, vat_number,
             discoverable, bio, photo_url, genres,
             min_fee_pence, notify_free_gigs,
-            payment_link_url } = req.body;
+            payment_link_url, allow_direct_messages } = req.body;
 
     // Universal pay-link (#292): http(s) URLs only, capped at 500 chars.
     // Empty string clears the field (user opts out of the pay-link button).
@@ -1255,6 +1255,16 @@ router.patch('/user/profile', async (req, res) => {
       notifyFreeValue = !!notify_free_gigs;
     }
 
+    // 2026-04-28 chat batch: directory open-DM toggle. Same provided-flag
+    // pattern as discoverable so a missing field doesn't get coerced to
+    // FALSE (which would silently turn the toggle off on every other patch).
+    let allowDmProvided = false;
+    let allowDmValue = null;
+    if (allow_direct_messages !== undefined) {
+      allowDmProvided = true;
+      allowDmValue = !!allow_direct_messages;
+    }
+
     // Distance filter (roadmap Phase VI): whenever the user supplies a
     // home_postcode, resolve it to lat/lng via postcodes.io and store the
     // normalised postcode alongside. If the postcode is present but invalid,
@@ -1327,7 +1337,8 @@ router.patch('/user/profile', async (req, res) => {
        business_phone = COALESCE($38, business_phone),
        vat_number = COALESCE($39, vat_number),
        min_fee_pence = CASE WHEN $40::boolean THEN $41::integer ELSE min_fee_pence END,
-       notify_free_gigs = CASE WHEN $42::boolean THEN $43::boolean ELSE notify_free_gigs END
+       notify_free_gigs = CASE WHEN $42::boolean THEN $43::boolean ELSE notify_free_gigs END,
+       allow_direct_messages = CASE WHEN $44::boolean THEN $45::boolean ELSE allow_direct_messages END
        WHERE id = $8 RETURNING *`,
       [name, phone, instrumentsArr, normalisedPostcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
        bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name,
@@ -1344,7 +1355,8 @@ router.patch('/user/profile', async (req, res) => {
        (business_phone !== undefined && business_phone !== null) ? String(business_phone).slice(0, 64) : null,
        (vat_number !== undefined && vat_number !== null) ? String(vat_number).slice(0, 64) : null,
        minFeeProvided, minFeeValue,
-       notifyFreeProvided, notifyFreeValue]
+       notifyFreeProvided, notifyFreeValue,
+       allowDmProvided, allowDmValue]
     );
 
     // Apply payment_link_url as a follow-up UPDATE so we don't have to thread
@@ -4199,7 +4211,11 @@ function toCardRow(row, actorLat, actorLng) {
       gigs_bucket: gigsBucket(row.gigs_count),
       acceptance_pct: acceptancePct
     },
-    distance_miles: distanceMiles
+    distance_miles: distanceMiles,
+    // 2026-04-28 chat batch: directory cards expose the open-DM flag so the
+    // Find Musicians card can show Message vs Send dep contextually. Cards
+    // never see other private fields (email, phone, etc.).
+    allow_direct_messages: row.allow_direct_messages !== false
   };
 }
 
@@ -4221,6 +4237,7 @@ const DISCOVER_SELECT = `
     u.travel_radius_miles,
     u.subscription_tier,
     u.created_at,
+    u.allow_direct_messages,
     (u.google_id IS NOT NULL) AS email_verified,
     (SELECT COUNT(*)::int FROM gigs g WHERE g.user_id = u.id) AS gigs_count,
     (SELECT COUNT(*)::int FROM offers o
@@ -4234,6 +4251,7 @@ const DISCOVER_SELECT = `
     AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_id = u.id)
     AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $1)
 `;
+
 
 async function countRecentLookups(actorId, modes) {
   const rows = await db.query(
@@ -5399,8 +5417,43 @@ router.post('/marketplace/:id/pick', async (req, res) => {
        WHERE id = $1`,
       [id, applicant_user_id]
     );
+
+    // 2026-04-28 chat batch: open a chat thread between poster and applicant
+    // so both parties can sort logistics (load-in, dress code, fee confirm)
+    // without leaving the app. Re-uses any existing 1-to-1 thread between the
+    // pair so back-and-forth Pick/Cancel/Pick cycles don't pile up empties.
+    let threadId = null;
+    try {
+      const posterId = own.rows[0].poster_user_id;
+      const pair = [posterId, applicant_user_id].sort();
+      const existing = await client.query(
+        `SELECT id FROM threads
+         WHERE gig_id IS NULL
+           AND participant_ids @> $1::uuid[]
+           AND participant_ids <@ $1::uuid[]
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [pair]
+      );
+      if (existing.rows.length > 0) {
+        threadId = existing.rows[0].id;
+      } else {
+        const ins = await client.query(
+          `INSERT INTO threads (gig_id, thread_type, participant_ids)
+           VALUES (NULL, 'dep', $1::uuid[])
+           RETURNING id`,
+          [pair]
+        );
+        threadId = ins.rows[0].id;
+      }
+    } catch (threadErr) {
+      // Don't roll back the Pick if thread bootstrap fails — the user can
+      // still open the conversation manually from the directory or inbox.
+      console.warn('[POST /marketplace/:id/pick] thread bootstrap failed:', threadErr);
+    }
+
     await client.query('COMMIT');
-    return res.json({ ok: true });
+    return res.json({ ok: true, thread_id: threadId });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[POST /marketplace/:id/pick]', err);
