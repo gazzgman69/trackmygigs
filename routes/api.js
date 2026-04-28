@@ -5207,7 +5207,10 @@ router.get('/marketplace/:id', async (req, res) => {
     return res.json({ gig });
   } catch (err) {
     console.error('[GET /marketplace/:id]', err);
-    return res.status(500).json({ error: 'server_error' });
+    // Surface the message so we can debug from the client during the demo —
+    // applicants were getting a generic server_error on filled gigs and we
+    // need to see why. Stack stays in server logs.
+    return res.status(500).json({ error: 'server_error', message: err && err.message });
   }
 });
 

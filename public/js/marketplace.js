@@ -82,9 +82,40 @@
   function fmtDate(iso) {
     if (!iso) return '';
     try {
-      const d = new Date(iso + 'T00:00:00');
+      // Demo 2026-04-28 fix: API returns full ISO timestamps for gig_date
+      // (e.g. "2026-04-29T00:00:00.000Z"), not bare YYYY-MM-DD. Appending
+      // 'T00:00:00' to a full timestamp produced an invalid date string and
+      // every marketplace surface rendered "Invalid Date". Detect both
+      // shapes and parse correctly.
+      const s = String(iso);
+      const d = /T/.test(s) ? new Date(s) : new Date(s + 'T00:00:00');
+      if (isNaN(d.getTime())) return '';
       return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-    } catch (e) { return iso; }
+    } catch (e) { return ''; }
+  }
+  // In-app replacement for window.confirm() — Promise<boolean>. Used by the
+  // Pick / Withdraw / Cancel-post flows because native confirm() blocks the
+  // event loop in a way that breaks our automated demo + is generally a worse
+  // UX than a styled modal.
+  function confirmModal(message) {
+    return new Promise(function (resolve) {
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;';
+      var box = document.createElement('div');
+      box.style.cssText = 'background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:360px;width:100%;color:var(--text);';
+      box.innerHTML = ''
+        + '<div style="font-size:14px;line-height:1.4;margin-bottom:16px;">' + (String(message).replace(/&/g,'&amp;').replace(/</g,'&lt;')) + '</div>'
+        + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
+        +   '<button data-act="cancel" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:18px;padding:8px 16px;font-size:13px;cursor:pointer;">Cancel</button>'
+        +   '<button data-act="ok" style="background:var(--accent);color:#000;border:none;border-radius:18px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;">OK</button>'
+        + '</div>';
+      function done(ok) { try { document.body.removeChild(overlay); } catch (_) {} resolve(ok); }
+      box.querySelector('[data-act=cancel]').onclick = function () { done(false); };
+      box.querySelector('[data-act=ok]').onclick = function () { done(true); };
+      overlay.onclick = function (e) { if (e.target === overlay) done(false); };
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+    });
   }
   function fmtTime(t) {
     if (!t) return '';
@@ -1086,7 +1117,7 @@
   };
 
   window._mktWithdraw = async function (gigId) {
-    if (!confirm('Withdraw your application? You can re-apply while the post is still open.')) return;
+    if (!(await confirmModal('Withdraw your application? You can re-apply while the post is still open.'))) return;
     try {
       await api('/api/marketplace/' + encodeURIComponent(gigId) + '/withdraw', { method: 'POST' });
       toast('Application withdrawn.');
@@ -1121,7 +1152,7 @@
   };
 
   window._mktPick = async function (gigId, userId) {
-    if (!confirm('Pick this applicant? Others will be notified they weren\u2019t selected.')) return;
+    if (!(await confirmModal('Pick this applicant? Others will be notified they weren\u2019t selected.'))) return;
     try {
       await api('/api/marketplace/' + encodeURIComponent(gigId) + '/pick', {
         method: 'POST',
@@ -1136,7 +1167,7 @@
   };
 
   window._mktCancel = async function (gigId) {
-    if (!confirm('Cancel this post? Applicants will be notified.')) return;
+    if (!(await confirmModal('Cancel this post? Applicants will be notified.'))) return;
     try {
       await api('/api/marketplace/' + encodeURIComponent(gigId) + '/cancel', { method: 'POST' });
       toast('Post cancelled.');

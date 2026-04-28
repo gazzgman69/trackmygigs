@@ -72,6 +72,10 @@
           </div>
         </div>
         <div class="header-right">
+          <button class="notification-bell" id="messagesIcon" onclick="openPanel('panel-chat-inbox'); if (typeof renderChatInbox === 'function') renderChatInbox();" aria-label="Messages" title="Messages">
+            💬
+            <span class="notification-dot" id="messagesDot" style="display:none;"></span>
+          </button>
           <button class="notification-bell" id="notificationBell" onclick="openPanel('panel-notifications')">
             🔔
             <span class="notification-dot" id="notificationDot"></span>
