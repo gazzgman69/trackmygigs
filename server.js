@@ -172,6 +172,87 @@ function handleReload(req, res) {
 app.get('/api/admin/reload', handleReload);
 app.post('/api/admin/reload', handleReload);
 
+// 2026-04-29 — populate demo accounts with realistic profile data so the
+// directory + chat profile sheets actually render something interesting.
+// Demo users currently have empty instruments/bio/genres/postcode, which
+// makes the contact-share preview look bare. Idempotent: only fills
+// fields that are still null/empty so re-running won't clobber tweaks.
+app.get('/api/admin/seed-demo-profiles', async (req, res) => {
+  const expected = process.env.RELOAD_SECRET;
+  if (!expected || req.query.key !== expected) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  try {
+    const db = require('./db');
+    const seeds = [
+      {
+        match: ['demo-one@example.com'],
+        bio: 'Keys player based in Manchester. Available for function bands, jazz quartets, and dep work across the North West. Reads chord charts, comfortable in any pad.',
+        instruments: ['Keys', 'Piano', 'Hammond'],
+        genres: ['Jazz', 'Soul', 'Blues', 'Function'],
+        home_postcode: 'M1 1AE'
+      },
+      {
+        match: ['demo-fresh-2026-v2@trackmygigs.app'],
+        bio: 'Drummer, ten years on the circuit. Pop, rock, indie, weddings — bring me the chart. Birmingham-based, happy to travel.',
+        instruments: ['Drums', 'Percussion'],
+        genres: ['Rock', 'Indie', 'Pop', 'Function'],
+        home_postcode: 'B1 1AA'
+      },
+      {
+        match: ['demo-fresh-2026-v3@trackmygigs.app', 'demo-fresh-2026-v3@example.com'],
+        bio: 'Bass player and MD. Bristol & Bath area. Soul, funk, motown, and the occasional jazz gig. Six-string, fretless, double — covered.',
+        instruments: ['Bass', 'Double bass'],
+        genres: ['Soul', 'Funk', 'Motown', 'Jazz'],
+        home_postcode: 'BS1 4DJ'
+      },
+      {
+        match: ['demo-fresh-2026@trackmygigs.app'],
+        bio: 'Session guitarist, London. Function band leader for ten years. Pop, rock, country, jazz — happy to learn anything with notice.',
+        instruments: ['Guitar', 'Acoustic guitar'],
+        genres: ['Pop', 'Rock', 'Country', 'Function'],
+        home_postcode: 'EC1A 1BB'
+      },
+      {
+        match: ['sarah.demo@trackmygigs.app'],
+        bio: 'Vocalist & frontwoman. Liverpool-based, will travel. Jazz standards, soul covers, function sets — comfortable in any room.',
+        instruments: ['Vocals'],
+        genres: ['Jazz', 'Soul', 'Function', 'Standards'],
+        home_postcode: 'L1 8JQ'
+      }
+    ];
+    const results = [];
+    for (const s of seeds) {
+      // Update only fields that are still null/empty so we don't clobber
+      // any manual changes Gareth may have made on these accounts.
+      const r = await db.query(
+        `UPDATE users
+            SET bio = COALESCE(NULLIF(bio, ''), $2),
+                instruments = CASE
+                  WHEN instruments IS NULL OR array_length(instruments, 1) IS NULL THEN $3::text[]
+                  ELSE instruments
+                END,
+                genres = CASE
+                  WHEN genres IS NULL OR array_length(genres, 1) IS NULL THEN $4::text[]
+                  ELSE genres
+                END,
+                home_postcode = COALESCE(NULLIF(home_postcode, ''), $5),
+                travel_radius_miles = COALESCE(travel_radius_miles, 50),
+                discoverable = COALESCE(discoverable, TRUE),
+                allow_direct_messages = COALESCE(allow_direct_messages, TRUE)
+          WHERE email = ANY($1::text[])
+          RETURNING id, email, display_name, instruments, genres, home_postcode`,
+        [s.match, s.bio, s.instruments, s.genres, s.home_postcode]
+      );
+      results.push({ matched: s.match, rows: r.rows });
+    }
+    res.json({ ok: true, results });
+  } catch (e) {
+    console.error('[seed-demo-profiles]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 2026-04-29 — one-shot migration runner for the messages.attachments
 // column-type promotion. Startup migrations only run on a clean process
 // boot, and Replit's hot-reload sometimes doesn't restart nodemon
