@@ -176,6 +176,22 @@ app.post('/api/admin/reload', handleReload);
 // optionally run the cleanup query out-of-cycle. Gated by RELOAD_SECRET.
 // Kept around because the cross-source dedup is exactly the kind of thing
 // that goes quiet for weeks then bites you again on a new edge case.
+app.get('/api/admin/list-users', async (req, res) => {
+  if (!process.env.RELOAD_SECRET || req.query.key !== process.env.RELOAD_SECRET) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  try {
+    const db = require('./db');
+    const r = await db.query(`
+      SELECT u.id, u.email, u.name, u.display_name,
+        (SELECT COUNT(*)::int FROM gigs WHERE user_id = u.id) AS gigs
+      FROM users u
+      WHERE u.name ILIKE '%demo%' OR u.email ILIKE '%demo%' OR u.display_name ILIKE '%demo%'
+      ORDER BY gigs DESC LIMIT 20`);
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/admin/dedup-debug', async (req, res) => {
   const expected = process.env.RELOAD_SECRET;
   if (!expected || req.query.key !== expected) {
