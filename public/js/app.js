@@ -12500,13 +12500,27 @@ function formatTimeAgo(date) {
   return weeks + 'w';
 }
 
+// 2026-04-29 — per-thread cache for stale-while-revalidate. Keyed by
+// thread id; each entry stores the last-known thread + messages + a
+// timestamp so we can decide between "paint from cache" and "show skeleton".
+// Lives on window so it survives screen switches but resets on reload.
+if (!window._chatThreadCacheById) window._chatThreadCacheById = {};
+
 async function openChatThread(threadId) {
   _currentThreadId = threadId;
   const body = document.getElementById('chatThreadBody');
   if (!body) return;
 
-  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>';
+  // Paint from cache immediately if we have a previous render of this thread
+  // — cuts the perceived load time from "wait for Replit" to "instant".
+  // Background fetch still runs to sync any messages from the other side.
+  const cached = window._chatThreadCacheById[threadId];
   openPanel('panel-chat-thread');
+  if (cached && cached.thread && Array.isArray(cached.messages)) {
+    renderChatThread(cached.thread, cached.messages);
+  } else {
+    body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>';
+  }
 
   try {
     const resp = await fetch(`/api/chat/threads/${threadId}/messages`);
@@ -12518,10 +12532,23 @@ async function openChatThread(threadId) {
     window._cachedStats = null;
     window._cachedStatsTime = 0;
 
-    renderChatThread(data.thread, data.messages);
+    // Only re-render if the user is still on this thread — they might have
+    // navigated away during the fetch.
+    if (_currentThreadId === threadId) {
+      window._chatThreadCacheById[threadId] = {
+        thread: data.thread,
+        messages: data.messages || [],
+        cachedAt: Date.now()
+      };
+      renderChatThread(data.thread, data.messages);
+    }
   } catch (err) {
     console.error('Chat thread error:', err);
-    body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load messages.</div>';
+    if (!cached) {
+      // Only show the error message if we never painted anything; if cached
+      // already on screen, leave it there rather than wiping it for an error.
+      body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load messages.</div>';
+    }
   }
 }
 window.openChatThread = openChatThread;
@@ -12530,18 +12557,43 @@ async function openGigChat(gigId) {
   const body = document.getElementById('chatThreadBody');
   if (!body) return;
 
-  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>';
+  // Same SWR pattern as openChatThread but keyed by gig id since at this
+  // entry point we don't yet know the thread id.
+  const cachedKey = 'gig:' + gigId;
+  const cached = window._chatThreadCacheById[cachedKey];
   openPanel('panel-chat-thread');
+  if (cached && cached.thread && Array.isArray(cached.messages)) {
+    _currentThreadId = cached.thread.id;
+    renderChatThread(cached.thread, cached.messages, cached.participants);
+  } else {
+    body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading...</div>';
+  }
 
   try {
     const resp = await fetch(`/api/chat/gig/${gigId}`);
     const data = await resp.json();
-
-    _currentThreadId = data.thread.id;
-    renderChatThread(data.thread, data.messages, data.participants);
+    if (data && data.thread && data.thread.id) {
+      _currentThreadId = data.thread.id;
+      window._chatThreadCacheById[cachedKey] = {
+        thread: data.thread,
+        messages: data.messages || [],
+        participants: data.participants,
+        cachedAt: Date.now()
+      };
+      // Also cache by the resolved thread id so a subsequent
+      // openChatThread() call from the inbox hits warm cache.
+      window._chatThreadCacheById[data.thread.id] = {
+        thread: data.thread,
+        messages: data.messages || [],
+        cachedAt: Date.now()
+      };
+      renderChatThread(data.thread, data.messages, data.participants);
+    }
   } catch (err) {
     console.error('Gig chat error:', err);
-    body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load messages.</div>';
+    if (!cached) {
+      body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load messages.</div>';
+    }
   }
 }
 
@@ -12553,6 +12605,17 @@ function renderChatThread(thread, messages, participants) {
     messages: Array.isArray(messages) ? messages.slice() : [],
     participants: Array.isArray(participants) ? participants : null
   };
+  // 2026-04-29 — also feed the per-thread cache so the next entry to this
+  // thread paints instantly via openChatThread()'s stale-while-revalidate
+  // path. Includes optimistic + polled updates, not just initial loads.
+  if (thread && thread.id && window._chatThreadCacheById) {
+    window._chatThreadCacheById[thread.id] = {
+      thread,
+      messages: Array.isArray(messages) ? messages.slice() : [],
+      participants: Array.isArray(participants) ? participants : null,
+      cachedAt: Date.now()
+    };
+  }
   const body = document.getElementById('chatThreadBody');
   if (!body) return;
 
