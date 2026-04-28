@@ -13096,12 +13096,15 @@ function renderMessageAttachment(att, isMe) {
   if (!att || typeof att !== 'object') return '';
   // Card colours adapt to bubble side so it reads as part of the bubble
   // rather than a foreign block. Defined once so kinds share styling.
-  const cardBg = isMe ? 'rgba(0,0,0,.18)' : 'var(--surface)';
-  const cardBorder = isMe ? 'rgba(0,0,0,.18)' : 'var(--border)';
-  const labelColor = isMe ? 'rgba(0,0,0,.55)' : 'var(--text-3)';
-  const titleColor = isMe ? '#000' : 'var(--text)';
-  const subColor = isMe ? 'rgba(0,0,0,.7)' : 'var(--text-2)';
-  const ctaColor = isMe ? 'rgba(0,0,0,.65)' : 'var(--accent)';
+  // Sender side uses white text on a dark inner card so it pops against
+  // the orange bubble background; receiver side keeps the standard
+  // surface/text vars. Updated 2026-04-29 per design feedback.
+  const cardBg = isMe ? 'rgba(0,0,0,.30)' : 'var(--surface)';
+  const cardBorder = isMe ? 'rgba(255,255,255,.18)' : 'var(--border)';
+  const labelColor = isMe ? 'rgba(255,255,255,.7)' : 'var(--text-3)';
+  const titleColor = isMe ? '#fff' : 'var(--text)';
+  const subColor = isMe ? 'rgba(255,255,255,.85)' : 'var(--text-2)';
+  const ctaColor = isMe ? '#fff' : 'var(--accent)';
 
   if (att.kind === 'contact') {
     const s = att.snapshot || {};
