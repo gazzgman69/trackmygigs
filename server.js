@@ -172,6 +172,46 @@ function handleReload(req, res) {
 app.get('/api/admin/reload', handleReload);
 app.post('/api/admin/reload', handleReload);
 
+// 2026-04-29 — one-shot migration runner for the messages.attachments
+// column-type promotion. Startup migrations only run on a clean process
+// boot, and Replit's hot-reload sometimes doesn't restart nodemon
+// reliably. This endpoint runs the same idempotent migration on demand.
+// Gated by RELOAD_SECRET, idempotent, returns the post-migration column
+// type so we can confirm visually.
+app.get('/api/admin/migrate-attachments', async (req, res) => {
+  const expected = process.env.RELOAD_SECRET;
+  if (!expected || req.query.key !== expected) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  try {
+    const db = require('./db');
+    await db.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'messages'
+             AND column_name = 'attachments'
+             AND data_type = 'ARRAY'
+        ) THEN
+          ALTER TABLE messages
+            ALTER COLUMN attachments TYPE JSONB USING NULL;
+        END IF;
+      END
+      $$;
+    `);
+    const after = await db.query(
+      `SELECT data_type, udt_name
+         FROM information_schema.columns
+        WHERE table_name = 'messages' AND column_name = 'attachments'`
+    );
+    res.json({ ok: true, column: after.rows[0] || null });
+  } catch (e) {
+    console.error('[migrate-attachments]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Debug endpoint (Demo 2026-04-28): inspect cross-source dedup state and
 // optionally run the cleanup query out-of-cycle. Gated by RELOAD_SECRET.
 // Kept around because the cross-source dedup is exactly the kind of thing
