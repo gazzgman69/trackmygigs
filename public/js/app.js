@@ -5893,6 +5893,21 @@ function handleQuickAction(action) {
 function openPanel(id) {
   const el = document.getElementById(id);
   if (!el) { console.warn('openPanel: panel not found', id); return; }
+  // 2026-04-29 — defensive sweep for stale bottom-sheet overlays. The chat
+  // info sheet, directory kebab, and chat thread overflow menu all use
+  // position:fixed with inset:0 and z-index >= 99999; if the user backed
+  // out of a panel without explicitly tapping Cancel, the overlay stays
+  // in the DOM and silently swallows every click on the next panel
+  // (including making the inbox search bar feel "unclickable"). Wipe
+  // them on every panel open so that can't happen.
+  document.querySelectorAll('.sheet-overlay').forEach(function (s) {
+    if (s.parentNode) s.parentNode.removeChild(s);
+  });
+  document.querySelectorAll('.tmg-chat-menu').forEach(function (s) {
+    // The thread overflow menu's outer overlay is the parentElement.
+    const wrap = s.parentElement;
+    if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+  });
   // Quick-action panels (.panel-keep-header) are launched from the bottom-nav menu
   // and should NEVER persist when the user navigates elsewhere. If any keep-header
   // panel is open, close it before opening the new panel. Without this:
@@ -8282,6 +8297,16 @@ function closePanel(id) {
   if (id === 'panel-chat-inbox') {
     window._chatInboxQuery = '';
   }
+  // 2026-04-29 — clean up any bottom-sheet overlays the user opened from
+  // this panel (chat info, kebab, overflow menu). Same defensive sweep as
+  // openPanel so they can't outlive the panel and block clicks elsewhere.
+  document.querySelectorAll('.sheet-overlay').forEach(function (s) {
+    if (s.parentNode) s.parentNode.removeChild(s);
+  });
+  document.querySelectorAll('.tmg-chat-menu').forEach(function (s) {
+    const wrap = s.parentElement;
+    if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+  });
 }
 
 // Make panel helpers accessible from inline HTML onclick
