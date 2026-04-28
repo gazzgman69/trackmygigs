@@ -13114,6 +13114,24 @@ function renderMessageAttachment(att, isMe) {
       : '';
     const isTmg = s.is_tmg_user;
     const linkedId = s.linked_user_id ? escapeAttr(s.linked_user_id) : '';
+    // 2026-04-29 — pre-warm the discover/user cache so tapping the card is
+    // instant. Without this, every tap triggers a 500ms-5s round-trip on
+    // Replit cold start. We fire-and-forget; if it fails, the click
+    // handler still falls back to a fetch.
+    if (s.linked_user_id) {
+      window._discoverCardCache = window._discoverCardCache || {};
+      if (!window._discoverCardCache[s.linked_user_id]) {
+        fetch('/api/discover/user/' + encodeURIComponent(s.linked_user_id))
+          .then(r => r.ok ? r.json() : null)
+          .then(j => {
+            if (j && j.user) {
+              window._discoverCardCache = window._discoverCardCache || {};
+              window._discoverCardCache[s.linked_user_id] = j.user;
+            }
+          })
+          .catch(() => {});
+      }
+    }
     const cta = isTmg ? 'View profile &rsaquo;' : 'Save to contacts &rsaquo;';
     return `
       <div class="chat-contact-card" data-contact-name="${escapeAttr(name)}" data-linked-user="${linkedId}" onclick="openSharedContactCard('${linkedId}', this)" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer;">
@@ -13126,6 +13144,27 @@ function renderMessageAttachment(att, isMe) {
 
   if (att.kind !== 'gig') return '';
   const s = att.snapshot || {};
+  // 2026-04-29 — pre-warm the local gig fetch so tapping the card opens
+  // openGigDetail instantly without a fresh round-trip. Only useful if the
+  // current user owns the gig (sender side); for receivers the fetch
+  // returns 404 and openGigDetail falls back to "could not load".
+  if (att.gig_id) {
+    window._cachedGigs = window._cachedGigs || [];
+    if (!window._cachedGigs.find(g => g && g.id === att.gig_id)) {
+      fetch('/api/gigs/' + encodeURIComponent(att.gig_id))
+        .then(r => r.ok ? r.json() : null)
+        .then(g => {
+          if (g && g.id) {
+            window._cachedGigs = window._cachedGigs || [];
+            // De-dup before push so repeat renders don't bloat the cache.
+            if (!window._cachedGigs.find(x => x && x.id === g.id)) {
+              window._cachedGigs.push(g);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }
   const band = s.band_name || 'Untitled gig';
   const venue = s.venue_name || '';
   const postcode = s.venue_postcode || '';
@@ -13193,28 +13232,32 @@ window.openSharedContactCard = openSharedContactCard;
 
 async function openSharedGigCard(gigId) {
   if (!gigId) return;
-  // Try to open the local gig if the user owns it. _gigsCache is the
-  // hottest source; fall back to a fetch in case the cache is cold.
-  const cache = window._gigsCache || (typeof gigsCache !== 'undefined' ? gigsCache : null) || [];
-  let owns = (Array.isArray(cache) ? cache : []).some(g => g && g.id === gigId);
-  if (!owns) {
-    try {
-      const r = await fetch(`/api/gigs/${gigId}`);
-      if (r.ok) owns = true;
-    } catch (_) {}
+  // Try local cache first (window._cachedGigs is what openGigDetail itself
+  // reads). If we have it, paint instantly without a round-trip.
+  const cache = window._cachedGigs || window._gigsCache || [];
+  const owns = (Array.isArray(cache) ? cache : []).some(g => g && g.id === gigId);
+  // Close the chat thread before opening the gig detail panel — both are
+  // panel-overlays, and stacking them leaves the gig hidden behind chat
+  // on Safari (panel-overlay z-index ties resolve by DOM order). The
+  // sheet-overlay sweep in openPanel doesn't affect panel-overlays, so
+  // this close is safe.
+  try { closePanel('panel-chat-thread'); } catch (_) {}
+  if (owns && typeof openGigDetail === 'function') {
+    openGigDetail(gigId);
+    return;
   }
-  if (owns) {
-    // 2026-04-29 — don't pre-close the chat thread. openGigDetail opens its
-    // own panel which stacks correctly. Closing first sometimes left the
-    // app on a blank screen if openGigDetail's open animation lost a race
-    // with the close.
-    if (typeof openGigDetail === 'function') {
+  // Cold path: try to open the gig anyway. openGigDetail handles its own
+  // 404 by showing a "could not load" body. If the actor doesn't own this
+  // gig the API returns 404 and the panel surfaces that gracefully.
+  try {
+    const r = await fetch(`/api/gigs/${gigId}`);
+    if (r.ok && typeof openGigDetail === 'function') {
       openGigDetail(gigId);
     } else {
-      try { toast('Could not open gig.'); } catch (_) {}
+      try { toast('You can see what was sent — the full gig stays with the sender.'); } catch (_) {}
     }
-  } else {
-    try { toast('You can see what was sent — the full gig stays with the sender.'); } catch (_) {}
+  } catch (_) {
+    try { toast('Could not open gig.'); } catch (_) {}
   }
 }
 window.openSharedGigCard = openSharedGigCard;
