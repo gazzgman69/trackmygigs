@@ -257,6 +257,38 @@ router.post('/threads', async (req, res) => {
   }
 });
 
+// ── Rename a thread ─────────────────────────────────────────────────────────
+//
+// Any participant can rename. Pass { name: "..." } to set; pass null or empty
+// string to clear (UI falls back to derived name). Cap at 80 chars so the
+// header stays readable. Returns the updated thread row so the client can
+// re-render without a refetch.
+router.patch('/threads/:threadId', async (req, res) => {
+  try {
+    const { name } = req.body || {};
+    const threadCheck = await db.query(
+      'SELECT id FROM threads WHERE id = $1 AND $2 = ANY(participant_ids)',
+      [req.params.threadId, req.user.id]
+    );
+    if (threadCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Thread not found' });
+    }
+    let trimmed = null;
+    if (name !== undefined && name !== null) {
+      trimmed = String(name).trim().slice(0, 80);
+      if (!trimmed) trimmed = null;
+    }
+    const result = await db.query(
+      'UPDATE threads SET name = $1 WHERE id = $2 RETURNING *',
+      [trimmed, req.params.threadId]
+    );
+    res.json({ thread: result.rows[0] });
+  } catch (error) {
+    console.error('Rename thread error:', error);
+    res.status(500).json({ error: 'Failed to rename thread' });
+  }
+});
+
 // ── Delete one of your own messages ─────────────────────────────────────────
 //
 // Soft-delete pattern would be nicer (preserve "Message deleted" placeholder

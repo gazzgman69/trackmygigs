@@ -8033,6 +8033,141 @@ function openChatThreadMenu(threadId, gigId) {
 }
 window.openChatThreadMenu = openChatThreadMenu;
 
+// 2026-04-29 chat-info batch: tap-the-header → chat info sheet. Shows
+// the editable chat name + a list of members with photos. Each member row
+// opens a profile sheet (delegating to openUserProfileSheet) so the user
+// can jump from the chat into someone's directory profile in one tap.
+function openChatInfoSheet() {
+  const cache = window._chatThreadCache;
+  if (!cache || !cache.thread) return;
+  const thread = cache.thread;
+  const meId = (window.currentUser || (typeof currentUser !== 'undefined' ? currentUser : {})).id;
+  // Prefer the participants array shipped by the threads-list endpoint,
+  // fall back to the slimmer one from openGigChat. Both shapes have id /
+  // name / email / avatar_url.
+  const participants = (thread.participants && thread.participants.length)
+    ? thread.participants
+    : (cache.participants || []);
+  const memberRows = participants.map(p => {
+    const isMe = p.id === meId;
+    const initial = ((p.name || p.email || '?').charAt(0) || '?').toUpperCase();
+    const avatar = p.avatar_url
+      ? `<img src="${escapeAttr(p.avatar_url)}" style="width:36px;height:36px;border-radius:18px;object-fit:cover;flex-shrink:0;" />`
+      : `<div style="width:36px;height:36px;border-radius:18px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--accent);flex-shrink:0;">${initial}</div>`;
+    const click = isMe
+      ? ''
+      : `onclick="openUserProfileSheet('${escapeAttr(p.id)}')" style="cursor:pointer;"`;
+    return `<div ${click} style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border);">
+      ${avatar}
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(p.name || p.email || 'Unknown')}${isMe ? ' <span style="font-size:10px;font-weight:500;color:var(--text-3);">(you)</span>' : ''}</div>
+        ${p.email && p.name ? `<div style="font-size:11px;color:var(--text-3);">${escapeHtml(p.email)}</div>` : ''}
+      </div>
+      ${isMe ? '' : '<div style="color:var(--text-3);font-size:18px;">›</div>'}
+    </div>`;
+  }).join('');
+
+  const currentName = thread.name || '';
+  const placeholder = thread.band_name || (participants.length === 2 ? 'Conversation' : 'Group chat');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.id = 'chatInfoSheet';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  overlay.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:80vh;overflow-y:auto;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;"></div>
+      <div style="padding:14px 16px 8px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Chat name</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input id="chatInfoNameInput" type="text" maxlength="80" value="${escapeAttr(currentName)}" placeholder="${escapeAttr(placeholder)}" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;" />
+          <button onclick="saveChatInfoName('${escapeAttr(thread.id)}')" style="background:var(--accent);border:none;color:#000;border-radius:10px;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;">Save</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-3);margin-top:6px;">Leave blank to use the default name. Either party can rename.</div>
+      </div>
+      <div style="margin-top:8px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 16px 6px;">Members · ${participants.length}</div>
+        ${memberRows || '<div style="padding:14px 16px;color:var(--text-3);font-size:12px;">No members loaded.</div>'}
+      </div>
+      <button onclick="closeChatInfoSheet()" style="width:100%;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;">Close</button>
+    </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeChatInfoSheet(); });
+  document.body.appendChild(overlay);
+}
+window.openChatInfoSheet = openChatInfoSheet;
+
+function closeChatInfoSheet() {
+  const el = document.getElementById('chatInfoSheet');
+  if (el) document.body.removeChild(el);
+}
+window.closeChatInfoSheet = closeChatInfoSheet;
+
+async function saveChatInfoName(threadId) {
+  if (!threadId) return;
+  const input = document.getElementById('chatInfoNameInput');
+  if (!input) return;
+  const name = input.value.trim();
+  try {
+    const r = await fetch('/api/chat/threads/' + encodeURIComponent(threadId), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name || null })
+    });
+    if (!r.ok) throw new Error('rename_failed');
+    const j = await r.json();
+    // Sync the cache so the header re-renders with the new name and
+    // subsequent re-entries paint from cache with the right title.
+    if (window._chatThreadCache && window._chatThreadCache.thread) {
+      window._chatThreadCache.thread.name = j.thread.name;
+    }
+    if (threadId && window._chatThreadCacheById && window._chatThreadCacheById[threadId]) {
+      window._chatThreadCacheById[threadId].thread.name = j.thread.name;
+    }
+    if (typeof toast === 'function') toast(name ? 'Chat renamed' : 'Chat name reset');
+    closeChatInfoSheet();
+    // Re-render the current thread header in place.
+    if (window._chatThreadCache) {
+      renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages, window._chatThreadCache.participants);
+    }
+  } catch (err) {
+    console.error('saveChatInfoName error:', err);
+    if (typeof toast === 'function') toast('Could not rename');
+  }
+}
+window.saveChatInfoName = saveChatInfoName;
+
+// 2026-04-29 chat-info batch: open someone's directory-style profile sheet
+// from the chat members list. Fetches the card data on demand (the discover
+// kebab cache is only populated when the user has actually visited Find
+// Musicians), seeds the cache, then lifts the existing sheet.
+async function openUserProfileSheet(userId) {
+  if (!userId) return;
+  closeChatInfoSheet();
+  try {
+    const r = await fetch('/api/discover/user/' + encodeURIComponent(userId));
+    const j = await r.json();
+    if (j.self) {
+      if (typeof toast === 'function') toast('That\'s you!');
+      return;
+    }
+    if (j.user && j.user.undiscoverable) {
+      // User isn't discoverable; show a simpler sheet without the directory
+      // actions so we don't trick the actor into a dead-end Send dep flow.
+      if (typeof toast === 'function') toast(`${j.user.display_name} isn't in the directory.`);
+      return;
+    }
+    if (j.user) {
+      window._discoverCardCache = window._discoverCardCache || {};
+      window._discoverCardCache[userId] = j.user;
+      openDiscoverKebab(userId);
+    }
+  } catch (err) {
+    console.error('openUserProfileSheet error:', err);
+    if (typeof toast === 'function') toast('Could not load profile');
+  }
+}
+window.openUserProfileSheet = openUserProfileSheet;
+
 // Tiny in-app confirm modal so we never use window.confirm() (it deadlocks
 // the Chrome MCP renderer during automation, per memory). Resolves to true
 // on Yes, false on No or backdrop click.
@@ -12634,11 +12769,25 @@ function renderChatThread(thread, messages, participants) {
     // path one tap away without cluttering the header.
     const tid = thread.id || _currentThreadId;
     const overflowBtn = `<button class="panel-back" style="text-align:right;" aria-label="Conversation menu" onclick="openChatThreadMenu('${tid}', ${thread.gig_id ? `'${thread.gig_id}'` : 'null'})">&#x22EE;</button>`;
+    // 2026-04-29 chat-info batch: derived title.
+    //   1. thread.name (custom rename)  →  what the user set
+    //   2. thread.band_name             →  gig threads
+    //   3. other-party display name     →  1-to-1 dep threads
+    //   4. participant count            →  group DMs
+    //   5. fallback                     →  "Messages"
+    // Tap target lifts the chat info sheet (members + rename).
+    let derivedTitle = thread.name || thread.band_name || null;
+    if (!derivedTitle) {
+      const others = (thread.participants || participants || []).filter(p => p && p.id !== currentUser?.id);
+      if (others.length === 1) derivedTitle = others[0].name || others[0].email || 'Conversation';
+      else if (others.length > 1) derivedTitle = `${others.length + 1}-person chat`;
+    }
+    if (!derivedTitle) derivedTitle = 'Messages';
     header.innerHTML = `
       <button class="panel-back" onclick="closePanel('panel-chat-thread')">&#8249; Back</button>
-      <div style="text-align:center;flex:1;">
-        <div class="panel-title" style="font-size:15px;">${escapeHtml(thread.band_name || 'Messages')}</div>
-        <div style="font-size:10px;color:var(--text-3);">${participantCount} ${participantCount === 1 ? 'person' : 'people'}</div>
+      <div style="text-align:center;flex:1;cursor:pointer;" onclick="openChatInfoSheet()" role="button" aria-label="Chat info">
+        <div class="panel-title" style="font-size:15px;">${escapeHtml(derivedTitle)}</div>
+        <div style="font-size:10px;color:var(--text-3);">${participantCount} ${participantCount === 1 ? 'person' : 'people'} · Tap for info</div>
       </div>
       ${overflowBtn}
     `;

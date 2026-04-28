@@ -4304,6 +4304,65 @@ router.get('/network/suggested-deps', async (req, res) => {
   }
 });
 
+// 2026-04-29 chat-info batch: directory-style profile card by user id.
+// Used by the chat info members list to render each participant with photo,
+// instruments, and the worked-together count. Reuses toCardRow + the same
+// privacy filters (block both ways, never expose email/phone) so the
+// surface stays in lockstep with Find Musicians.
+router.get('/discover/user/:userId', async (req, res) => {
+  try {
+    const otherId = req.params.userId;
+    if (!otherId) return res.status(400).json({ error: 'invalid_user' });
+    if (otherId === req.user.id) {
+      // Self — return a stripped-down "you" card so the members list can
+      // still render the row but the kebab-style actions don't fire on
+      // yourself.
+      const me = await db.query(
+        `SELECT id, COALESCE(display_name, name, email) AS display_name, photo_url
+           FROM users WHERE id = $1`,
+        [req.user.id]
+      );
+      const row = me.rows[0] || {};
+      return res.json({ self: true, user: { id: row.id, display_name: row.display_name || 'You', photo_url: row.photo_url || null } });
+    }
+    const actor = await db.query(
+      'SELECT home_lat, home_lng FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const a = actor.rows[0] || {};
+    const result = await db.query(
+      DISCOVER_SELECT + ' AND u.id = $2 LIMIT 1',
+      [req.user.id, otherId]
+    );
+    if (result.rows.length === 0) {
+      // Either non-discoverable or blocked — return a minimal name-only
+      // shape so the chat row still renders something legible.
+      const fallback = await db.query(
+        `SELECT id, COALESCE(display_name, name, email) AS display_name, photo_url
+           FROM users WHERE id = $1`,
+        [otherId]
+      );
+      const row = fallback.rows[0];
+      if (!row) return res.status(404).json({ error: 'not_found' });
+      return res.json({
+        user: {
+          id: row.id,
+          display_name: row.display_name || 'Musician',
+          photo_url: row.photo_url || null,
+          gigs_together_count: 0,
+          worked_with_you: false,
+          undiscoverable: true
+        }
+      });
+    }
+    const card = toCardRow(result.rows[0], a.home_lat, a.home_lng);
+    res.json({ user: card });
+  } catch (err) {
+    console.error('[GET /discover/user/:userId]', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 // 2026-04-28 dep-network batch: top deps over the last 90 days. Drives
 // the Home insights card "Your top deps this quarter" — counts accepted
 // marketplace fills + accepted dep offers in either direction over the

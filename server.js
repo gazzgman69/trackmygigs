@@ -1279,6 +1279,12 @@ async function runMigrations() {
     // opt-in step. Power users who don't want unsolicited DMs flip it off in
     // Profile > Edit. Server checks both ends of the conversation.
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS allow_direct_messages BOOLEAN DEFAULT TRUE`);
+    // 2026-04-29 chat-info batch: per-thread custom name. Optional; when null
+    // the frontend falls back to band_name (gig threads), the other party's
+    // display name (1-to-1), or "Messages". Editable by any participant from
+    // the chat info sheet — keeps it simple for now, can lock down to thread
+    // creator later if abuse becomes an issue.
+    await db.query(`ALTER TABLE threads ADD COLUMN IF NOT EXISTS name VARCHAR(120)`);
     // Demo 2026-04-28 follow-up: gigs.source was VARCHAR(50) but cross-source
     // merges produce labels like "sheets:TMG-Demo-Gigs.csv+gcal:<id>" that
     // overflow. Bump to TEXT — it's a free-form audit string, not indexed.
