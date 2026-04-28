@@ -4294,7 +4294,12 @@ function toCardRow(row, actorLat, actorLng) {
     // 2026-04-28 chat batch: directory cards expose the open-DM flag so the
     // Find Musicians card can show Message vs Send dep contextually. Cards
     // never see other private fields (email, phone, etc.).
-    allow_direct_messages: row.allow_direct_messages !== false
+    allow_direct_messages: row.allow_direct_messages !== false,
+    // 2026-04-28 dep-network batch: shared work history with the actor.
+    // Drives the "Worked together · N gigs" pill and the "people you know"
+    // sort boost in Find Musicians.
+    gigs_together_count: parseInt(row.gigs_together_count || 0, 10),
+    worked_with_you: parseInt(row.gigs_together_count || 0, 10) > 0
   };
 }
 
@@ -4323,7 +4328,22 @@ const DISCOVER_SELECT = `
        WHERE (o.sender_id = u.id OR o.recipient_id = u.id)) AS offers_involved,
     (SELECT COUNT(*)::int FROM offers o
        WHERE (o.sender_id = u.id OR o.recipient_id = u.id)
-         AND o.status = 'accepted') AS offers_accepted
+         AND o.status = 'accepted') AS offers_accepted,
+    -- 2026-04-28 dep-network batch: shared work history with the actor.
+    -- Same pair-matching as the marketplace applicant list so the Find
+    -- Musicians card and the Pick row tell a consistent story.
+    (
+      (SELECT COUNT(*)::int FROM marketplace_applications ma2
+         JOIN marketplace_gigs mg2 ON mg2.id = ma2.marketplace_gig_id
+         WHERE ma2.status = 'accepted'
+           AND ((mg2.poster_user_id = $1 AND ma2.applicant_user_id = u.id)
+             OR (mg2.poster_user_id = u.id AND ma2.applicant_user_id = $1)))
+      +
+      (SELECT COUNT(*)::int FROM offers o2
+         WHERE o2.status = 'accepted'
+           AND ((o2.sender_id = $1 AND o2.recipient_id = u.id)
+             OR (o2.sender_id = u.id AND o2.recipient_id = $1)))
+    ) AS gigs_together_count
   FROM users u
   WHERE u.discoverable = TRUE
     AND u.id <> $1
@@ -5347,7 +5367,25 @@ router.get('/marketplace/:id/applicants', async (req, res) => {
           -- had applicants. Caught by the 2026-04-23 stress harness.
           SELECT COUNT(*) FROM gigs g
           WHERE g.user_id = u.id AND g.date < CURRENT_DATE
-        ) AS gigs_completed
+        ) AS gigs_completed,
+        -- 2026-04-28 dep-network batch: have the poster and this applicant
+        -- worked together before? Counts accepted marketplace fills + accepted
+        -- dep offers in either direction so a single applicant who has both
+        -- band-led and dep'd for the poster shows the full history. Used by
+        -- the Pick screen to surface a "Worked together · N gigs" pill.
+        (
+          (SELECT COUNT(*)::int FROM marketplace_applications ma2
+             JOIN marketplace_gigs mg2 ON mg2.id = ma2.marketplace_gig_id
+             WHERE ma2.status = 'accepted'
+               AND ma2.id <> ma.id
+               AND ((mg2.poster_user_id = $2 AND ma2.applicant_user_id = u.id)
+                 OR (mg2.poster_user_id = u.id AND ma2.applicant_user_id = $2)))
+          +
+          (SELECT COUNT(*)::int FROM offers o2
+             WHERE o2.status = 'accepted'
+               AND ((o2.sender_id = $2 AND o2.recipient_id = u.id)
+                 OR (o2.sender_id = u.id AND o2.recipient_id = $2)))
+        ) AS gigs_together_count
        FROM marketplace_applications ma
        JOIN users u ON u.id = ma.applicant_user_id
        WHERE ma.marketplace_gig_id = $1
@@ -5355,7 +5393,7 @@ router.get('/marketplace/:id/applicants', async (req, res) => {
        ORDER BY
          CASE ma.status WHEN 'accepted' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
          ma.created_at ASC`,
-      [id]
+      [id, userId]
     );
 
     // Decorate with distance from gig venue so the poster sees how far each
@@ -5366,10 +5404,13 @@ router.get('/marketplace/:id/applicants', async (req, res) => {
     const venue = gigRes.rows[0] || {};
     const decorated = apps.rows.map((a) => {
       const d = haversineMiles(venue.venue_lat, venue.venue_lng, a.home_lat, a.home_lng);
+      const togetherCount = parseInt(a.gigs_together_count || 0, 10);
       return {
         ...a,
         distance_miles: d == null ? null : Math.round(d * 10) / 10,
         is_new_to_tmg: (a.gigs_completed == null ? 0 : parseInt(a.gigs_completed, 10)) === 0,
+        worked_with_you: togetherCount > 0,
+        gigs_together_count: togetherCount,
       };
     });
     // Strip raw lat/lng from the response — the applicant's home location

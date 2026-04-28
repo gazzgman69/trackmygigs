@@ -754,12 +754,18 @@
     const dist = a.distance_miles != null ? ` · ${esc(fmtDistance(a.distance_miles))}` : '';
     const newBadge = a.is_new_to_tmg
       ? `<span style="margin-left:6px;padding:1px 6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">New</span>` : '';
+    // 2026-04-28 dep-network batch: Worked-together pill is the highest signal
+    // a poster has at Pick time. Show count when it's >1 (single gigs read as
+    // "Worked together" without a number to keep the chip tidy).
+    const togetherBadge = (a.gigs_together_count > 0)
+      ? `<span style="margin-left:6px;padding:2px 8px;background:rgba(63,184,95,.15);border:1px solid rgba(63,184,95,.5);border-radius:8px;font-size:9px;color:#3fb85f;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">${a.gigs_together_count > 1 ? '✓ ' + a.gigs_together_count + ' gigs together' : '✓ Worked together'}</span>`
+      : '';
     const applicantId = String(a.user_id || a.applicant_user_id || '');
     return `<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:8px;">
       <div style="display:flex;align-items:center;gap:10px;">
         ${avatar}
         <div style="flex:1;min-width:0;cursor:pointer;" onclick="_mktShowApplicant('${escAttr(applicantId)}')">
-          <div style="font-size:13px;color:var(--text);font-weight:600;text-decoration:underline;text-decoration-color:var(--text-3);text-underline-offset:2px;">${esc(a.name || 'TrackMyGigs user')}${newBadge}</div>
+          <div style="font-size:13px;color:var(--text);font-weight:600;text-decoration:underline;text-decoration-color:var(--text-3);text-underline-offset:2px;">${esc(a.name || 'TrackMyGigs user')}${togetherBadge}${newBadge}</div>
           ${instrs}
           <div style="font-size:10px;color:var(--text-3);">Applied ${esc(fmtRelative(a.applied_at || a.created_at))}${dist}</div>
         </div>

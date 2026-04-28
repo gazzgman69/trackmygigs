@@ -9709,6 +9709,17 @@ function renderTrustBadges(u) {
   const b = (u.badges && typeof u.badges === 'object') ? u.badges : u;
   const items = [];
 
+  // 2026-04-28 dep-network batch: lead with the worked-together pill when
+  // present — strongest trust signal we have, beats any other badge. Uses
+  // the same green palette as the marketplace applicant card so the chip
+  // reads consistently across screens.
+  if (u.gigs_together_count > 0) {
+    const label = u.gigs_together_count > 1
+      ? `✓ ${u.gigs_together_count} gigs together`
+      : '✓ Worked together';
+    items.push(`<span class="disc-badge" style="background:rgba(63,184,95,.15);border:1px solid rgba(63,184,95,.5);color:#3fb85f;font-weight:700;">${label}</span>`);
+  }
+
   if (b.email_verified) {
     items.push(`<span class="disc-badge verified" title="Email verified">✓ Verified</span>`);
   }
