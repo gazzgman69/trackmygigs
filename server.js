@@ -1285,6 +1285,26 @@ async function runMigrations() {
     // the chat info sheet — keeps it simple for now, can lock down to thread
     // creator later if abuse becomes an issue.
     await db.query(`ALTER TABLE threads ADD COLUMN IF NOT EXISTS name VARCHAR(120)`);
+    // 2026-04-29 contextual-send batch: messages.attachments was TEXT[] but
+    // we now store snapshotted gig/contact objects in there. Promote to
+    // JSONB. Existing rows are always NULL (no real users have used the
+    // column) so the USING clause just nulls everything, which is safe.
+    // Idempotent guard: only run if the column is still text[].
+    await db.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'messages'
+             AND column_name = 'attachments'
+             AND data_type = 'ARRAY'
+        ) THEN
+          ALTER TABLE messages
+            ALTER COLUMN attachments TYPE JSONB USING NULL;
+        END IF;
+      END
+      $$;
+    `);
     // Demo 2026-04-28 follow-up: gigs.source was VARCHAR(50) but cross-source
     // merges produce labels like "sheets:TMG-Demo-Gigs.csv+gcal:<id>" that
     // overflow. Bump to TEXT — it's a free-form audit string, not indexed.
