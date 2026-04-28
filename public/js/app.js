@@ -12546,6 +12546,13 @@ async function openGigChat(gigId) {
 }
 
 function renderChatThread(thread, messages, participants) {
+  // 2026-04-29 — keep a cache of the last-rendered thread so sendChatMessage
+  // can append optimistically without a refetch round-trip.
+  window._chatThreadCache = {
+    thread,
+    messages: Array.isArray(messages) ? messages.slice() : [],
+    participants: Array.isArray(participants) ? participants : null
+  };
   const body = document.getElementById('chatThreadBody');
   if (!body) return;
 
@@ -12592,20 +12599,20 @@ function renderChatThread(thread, messages, participants) {
     const allRead = (msg.read_by || []).length >= participantCount;
 
     if (isMe) {
-      // 2026-04-28 chat batch: tiny trash affordance on every own message.
-      // Tap deletes after a confirm \u2014 same pattern as iMessage hold-to-delete
-      // but discoverable on first tap. Doesn't render on other people's
-      // messages because the server enforces sender-only deletion anyway.
+      // 2026-04-29 \u2014 per-message delete affordance removed at user request.
+      // Leave-conversation in the header overflow is the only destructive
+      // surface. msg.pending \u2192 dimmed bubble + "Sending..." footer for the
+      // optimistic UI added the same session.
+      const pending = msg.pending === true;
       messagesHTML += `
-        <div style="display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;">
+        <div style="display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;${pending ? 'opacity:0.55;' : ''}" data-msg-id="${escapeAttr(msg.id || msg.tempId || '')}">
           <div style="width:30px;height:30px;border-radius:15px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">${userInitial}</div>
           <div style="max-width:85%;">
-            <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:14px 0 14px 14px;padding:10px 14px;position:relative;">
+            <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:14px 0 14px 14px;padding:10px 14px;">
               <div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>
             </div>
-            <div style="font-size:10px;color:var(--text-3);margin-top:2px;text-align:right;display:flex;justify-content:flex-end;align-items:center;gap:8px;">
-              <button onclick="deleteChatMessage('${msg.id}')" aria-label="Delete message" title="Delete" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:11px;padding:0;line-height:1;">\u{1F5D1}</button>
-              <span>${allRead ? '<span style="color:var(--success);">\u2713\u2713</span> ' : '\u2713 '}${time}</span>
+            <div style="font-size:10px;color:var(--text-3);margin-top:2px;text-align:right;">
+              ${pending ? '<span>Sending\u2026</span>' : (allRead ? '<span style="color:var(--success);">\u2713\u2713</span> ' : '\u2713 ') + time}
             </div>
           </div>
         </div>
@@ -12709,7 +12716,7 @@ function startChatThreadPolling(threadId, initialMessages) {
     } catch (err) {
       // Swallow; the next poll will try again.
     }
-  }, 6000);
+  }, 3000);
 }
 
 // S12-12: Enter alone sends, Shift+Enter inserts a newline. Also gated so we
@@ -12746,13 +12753,42 @@ async function sendChatMessage() {
   input.value = '';
   autoGrowChatInput(input);
 
-  // Disable button and show a subtle spinner glyph so the user sees progress.
+  // 2026-04-29 — Optimistic UI. Previously this function did a POST then
+  // a follow-up GET via openChatThread(), so the user waited two
+  // sequential round-trips before seeing their own message land. On
+  // Replit's wake-from-idle path that was 5–10s of staring at a blank
+  // composer. New flow:
+  //   1. Append a placeholder bubble to the DOM with msg.pending = true
+  //      so the user sees their text instantly.
+  //   2. POST in the background. The endpoint already returns the full
+  //      message row, so we just swap the placeholder for the real row
+  //      on success — no second GET needed.
+  //   3. On failure, drop the placeholder, restore the draft, toast.
+  const tempId = 'tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  const me = window.currentUser || (typeof currentUser !== 'undefined' ? currentUser : null);
+  const optimistic = {
+    id: tempId,
+    tempId,
+    sender_id: me && me.id,
+    sender_name: (me && (me.name || me.email)) || 'You',
+    content,
+    created_at: new Date().toISOString(),
+    read_by: [me && me.id].filter(Boolean),
+    pending: true,
+  };
+  if (window._chatThreadCache && Array.isArray(window._chatThreadCache.messages)) {
+    window._chatThreadCache.messages.push(optimistic);
+    renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages);
+  } else {
+    // Cache miss — fall back to in-place DOM append so the user still
+    // sees their message immediately even if we lost the cache somewhere.
+    _appendOptimisticBubble(optimistic);
+  }
+
   if (sendBtn) {
     sendBtn.disabled = true;
     sendBtn.style.opacity = '0.55';
     sendBtn.style.cursor = 'default';
-    sendBtn.dataset.originalHtml = sendBtn.innerHTML;
-    sendBtn.innerHTML = '<span style="font-size:12px;">&hellip;</span>';
   }
 
   try {
@@ -12762,37 +12798,72 @@ async function sendChatMessage() {
       body: JSON.stringify({ content }),
     });
     if (!res.ok) {
-      // Surface server-side errors (e.g. S12-10 length cap 413) to the user.
       let errMsg = 'Message failed to send.';
       try {
         const data = await res.json();
         if (data && data.error) errMsg = data.error;
-      } catch (_) {
-        // ignore parse errors, keep default message
-      }
+      } catch (_) {}
       throw new Error(errMsg);
     }
-    // Refresh thread to append the new message
-    openChatThread(_currentThreadId);
+    const data = await res.json();
+    const real = data && data.message;
+    // Swap placeholder for the real row in the cache, then re-render so
+    // the bubble drops its pending state and shows the real timestamp.
+    if (window._chatThreadCache && Array.isArray(window._chatThreadCache.messages)) {
+      const idx = window._chatThreadCache.messages.findIndex(m => m && m.tempId === tempId);
+      if (idx >= 0) {
+        if (real) {
+          window._chatThreadCache.messages[idx] = real;
+        } else {
+          // Server didn't return the row (older shape) — clear pending so
+          // the bubble at least loses its "Sending..." state.
+          window._chatThreadCache.messages[idx].pending = false;
+        }
+        renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages);
+      }
+    }
   } catch (err) {
     console.error('Send message error:', err);
-    // S12-09: tell the user something went wrong and restore their draft so
-    // they can edit + retry instead of losing their message.
+    // Drop the placeholder and restore the draft so the user can retry.
+    if (window._chatThreadCache && Array.isArray(window._chatThreadCache.messages)) {
+      window._chatThreadCache.messages = window._chatThreadCache.messages.filter(m => m && m.tempId !== tempId);
+      renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages);
+    }
     input.value = content;
     autoGrowChatInput(input);
     try { toast(err.message || 'Message failed to send.'); } catch (_) {}
   } finally {
     _chatSendInFlight = false;
-    if (sendBtn) {
-      sendBtn.disabled = false;
-      sendBtn.style.opacity = '';
-      sendBtn.style.cursor = 'pointer';
-      if (sendBtn.dataset.originalHtml) {
-        sendBtn.innerHTML = sendBtn.dataset.originalHtml;
-        delete sendBtn.dataset.originalHtml;
-      }
+    const newSendBtn = document.getElementById('chatSendBtn');
+    if (newSendBtn) {
+      newSendBtn.disabled = false;
+      newSendBtn.style.opacity = '';
+      newSendBtn.style.cursor = 'pointer';
     }
   }
+}
+
+// 2026-04-29 — fallback for the optimistic-UI path when the thread cache
+// is missing. Appends a single bubble to the message area without a full
+// re-render so the user still sees their text instantly.
+function _appendOptimisticBubble(msg) {
+  const area = document.getElementById('chatMessagesArea');
+  if (!area) return;
+  const me = window.currentUser || (typeof currentUser !== 'undefined' ? currentUser : null);
+  const userInitial = ((me && (me.name || me.email)) || 'G')[0].toUpperCase();
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;opacity:0.55;';
+  div.dataset.msgId = msg.tempId;
+  div.innerHTML = `
+    <div style="width:30px;height:30px;border-radius:15px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">${userInitial}</div>
+    <div style="max-width:85%;">
+      <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:14px 0 14px 14px;padding:10px 14px;">
+        <div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>
+      </div>
+      <div style="font-size:10px;color:var(--text-3);margin-top:2px;text-align:right;">Sending…</div>
+    </div>`;
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
 }
 
 // ── Invoice Panel ─────────────────────────────────────────────────────────────
