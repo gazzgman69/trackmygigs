@@ -13405,9 +13405,6 @@ function openSharedGigPreviewSheet(gigId) {
         ${row('Dress code', dress)}
         ${row('Notes', notesText)}
       </div>
-      <div style="padding:12px 20px;border-top:1px solid var(--border);flex-shrink:0;">
-        <button onclick="closeSharedGigPreviewSheet(); openFullGigFromShared('${escapeAttr(gigId)}')" style="width:100%;background:var(--accent);border:none;color:#000;padding:12px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;">Open in Gigs &rsaquo;</button>
-      </div>
       <button onclick="closeSharedGigPreviewSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Close</button>
     </div>`;
   document.body.appendChild(wrap);
