@@ -2433,7 +2433,7 @@ async function selectCalendar(calendarId) {
 
 async function disconnectGoogleCalendar() {
   const who = window._googleCalendarEmail ? ` (${window._googleCalendarEmail})` : '';
-  if (!confirm(`Disconnect your Google Calendar${who}? You can reconnect anytime.`)) return;
+  if (!(await window.confirmModal(`Disconnect your Google Calendar${who}? You can reconnect anytime.`))) return;
   try {
     const resp = await fetch('/api/calendar/disconnect', { method: 'POST' });
     if (!resp.ok) {
@@ -4174,7 +4174,7 @@ async function nudgeSentOffer(offerId) {
 // the Sent list in place so the row moves into the cancelled group without
 // a full screen re-render.
 async function cancelSentOffer(offerId) {
-  if (!confirm('Withdraw this dep request? The recipient will see it as cancelled.')) return;
+  if (!(await window.confirmModal('Withdraw this dep request? The recipient will see it as cancelled.'))) return;
   try {
     const res = await fetch(`/api/offers/${offerId}/withdraw`, { method: 'POST' });
     if (!res.ok) {
@@ -4640,7 +4640,7 @@ async function pullFromSheet() {
 window.pullFromSheet = pullFromSheet;
 
 async function disconnectSheet() {
-  if (!confirm('Disconnect from this Google Sheet? Your imported gigs stay in TrackMyGigs but new edits will no longer sync to the sheet.')) return;
+  if (!(await window.confirmModal('Disconnect from this Google Sheet? Your imported gigs stay in TrackMyGigs but new edits will no longer sync to the sheet.'))) return;
   try {
     const r = await fetch('/api/sheets/disconnect', { method: 'POST' });
     const data = await r.json();
@@ -5496,7 +5496,7 @@ async function submitGigWizard() {
       const e = `${d}T${endTime.length === 5 ? endTime + ':00' : endTime}`;
       const clash = typeof isTimeAutoBlocked === 'function' ? isTimeAutoBlocked(s, e) : null;
       if (clash) {
-        const ok = confirm(`Heads up: this overlaps with ${clash.label}. Book it anyway?`);
+        const ok = await window.confirmModal(`Heads up: this overlaps with ${clash.label}. Book it anyway?`);
         if (!ok) {
           // #83: release the re-entry guard and restore the button so the
           // user can retry after dismissing the auto-block prompt.
@@ -6863,7 +6863,7 @@ async function saveDocument(ev, docId) {
 
 async function deleteDocument(docId) {
   if (!docId) return;
-  if (!confirm('Delete this document? The file and all its reminders will be removed.')) return;
+  if (!(await window.confirmModal('Delete this document? The file and all its reminders will be removed.'))) return;
   try {
     const res = await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('delete failed');
@@ -7074,7 +7074,7 @@ async function toggleAvailabilityDate(dateStr, currentState) {
         return;
       }
       if (entry.size > 1) {
-        if (!confirm('This date is part of a recurring or range block. Unblock the whole pattern?')) return;
+        if (!(await window.confirmModal('This date is part of a recurring or range block. Unblock the whole pattern?'))) return;
       }
       const res = await fetch(`/api/blocked-dates/${entry.id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('unblock failed');
@@ -14142,7 +14142,7 @@ async function renderSavedClientsList() {
 window.renderSavedClientsList = renderSavedClientsList;
 
 async function deleteSavedClient(id) {
-  if (!confirm('Remove this saved client? Future invoices won\u2019t autofill their address.')) return;
+  if (!(await window.confirmModal('Remove this saved client? Future invoices won\u2019t autofill their address.'))) return;
   try {
     const res = await fetch(`/api/invoice-clients/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Delete failed');
@@ -14610,9 +14610,10 @@ async function submitInvoice() {
 async function saveInvoiceDraft() {
   const billTo = document.getElementById('invBillTo').value.trim();
   const amountVal = parseFloat(document.getElementById('invAmount').value);
+  // Save Draft should never silently close. If the user has typed nothing
+  // worth saving, surface a clear toast instead of looking broken.
   if (!billTo && !amountVal) {
-    // Let users close a blank form without hassle
-    closePanel('panel-invoice');
+    showToast('Add a client or amount to save a draft');
     return;
   }
 
@@ -14882,9 +14883,9 @@ async function submitDepOffer() {
       // a confirm so the user can nudge all of them in one tap. Waits 400ms
       // so the send toast lands first and doesn't feel stacked.
       if (nudgeable.length > 0) {
-        setTimeout(() => {
+        setTimeout(async () => {
           const who = nudgeable.length === 1 ? '1 person' : `${nudgeable.length} people`;
-          if (confirm(`Nudge ${who} who already had this offer?`)) {
+          if (await window.confirmModal(`Nudge ${who} who already had this offer?`)) {
             nudgeMultipleOffers(nudgeable.map(n => n.existing_offer_id));
           }
         }, 400);
