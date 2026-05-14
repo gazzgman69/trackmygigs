@@ -937,6 +937,29 @@ async function runMigrations() {
       END $$;
     `);
     await db.query(`ALTER TABLE gigs DROP COLUMN IF EXISTS day_of_contact`);
+
+    // gigs.updated_at + trigger. Used by the Sheets pull route to detect when
+    // a TMG-side edit is newer than the last push to Sheets, so the pull can
+    // refuse to overwrite TMG with stale sheet values and surface the conflict
+    // to the user instead of silently losing their edits. Idempotent: ADD
+    // COLUMN IF NOT EXISTS, CREATE OR REPLACE the function, DROP+CREATE the
+    // trigger so the migration is safe to re-run on every startup.
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`);
+    await db.query(`
+      CREATE OR REPLACE FUNCTION gigs_set_updated_at()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        NEW.updated_at := NOW();
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+    `);
+    await db.query(`DROP TRIGGER IF EXISTS gigs_updated_at_trg ON gigs`);
+    await db.query(`
+      CREATE TRIGGER gigs_updated_at_trg
+        BEFORE UPDATE ON gigs
+        FOR EACH ROW EXECUTE FUNCTION gigs_set_updated_at();
+    `);
     // Invoice & payment settings on users
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_details TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invoice_prefix VARCHAR(20) DEFAULT 'INV'`);
