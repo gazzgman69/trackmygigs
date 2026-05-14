@@ -223,7 +223,9 @@ router.post('/gigs', async (req, res) => {
       notes,
       gig_type,
       parking_info,
-      day_of_contact,
+      gig_leader_name,
+      gig_leader_phone,
+      gig_leader_email,
       mileage_miles,
       client_name,
       client_email,
@@ -261,8 +263,8 @@ router.post('/gigs', async (req, res) => {
     }
 
     const result = await db.query(
-      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, day_of_contact, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode, venue_lat, venue_lng)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, gig_leader_name, gig_leader_phone, gig_leader_email, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode, venue_lat, venue_lng)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
        RETURNING *`,
       [
         req.user.id,
@@ -280,7 +282,9 @@ router.post('/gigs', async (req, res) => {
         notes,
         gig_type || null,
         parking_info || null,
-        day_of_contact || null,
+        gig_leader_name || null,
+        gig_leader_phone || null,
+        gig_leader_email || null,
         mileage_miles || null,
         client_name || null,
         client_email || null,
@@ -329,7 +333,7 @@ router.get('/gigs/:id', async (req, res) => {
 
 router.patch('/gigs/:id', async (req, res) => {
   try {
-    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, day_of_contact, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode } = req.body;
+    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, gig_leader_name, gig_leader_phone, gig_leader_email, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode } = req.body;
     // Teaching: recompute fee from rate if rate changed and fee wasn't sent
     // explicitly. We only substitute when the caller didn't pass a fee, so an
     // explicit £0 fee still wins (cancellation credits etc.).
@@ -367,21 +371,23 @@ router.patch('/gigs/:id', async (req, res) => {
         details_complete = COALESCE($17, details_complete),
         set_times = COALESCE($18, set_times),
         parking_info = COALESCE($19, parking_info),
-        day_of_contact = COALESCE($20, day_of_contact),
-        mileage_miles = COALESCE($21, mileage_miles),
-        client_name = COALESCE($22, client_name),
-        client_email = COALESCE($23, client_email),
-        client_phone = COALESCE($24, client_phone),
-        rate_per_hour = COALESCE($25, rate_per_hour),
-        venue_postcode = COALESCE($26, venue_postcode),
-        venue_lat = COALESCE($27, venue_lat),
-        venue_lng = COALESCE($28, venue_lng),
+        gig_leader_name = COALESCE($20, gig_leader_name),
+        gig_leader_phone = COALESCE($21, gig_leader_phone),
+        gig_leader_email = COALESCE($22, gig_leader_email),
+        mileage_miles = COALESCE($23, mileage_miles),
+        client_name = COALESCE($24, client_name),
+        client_email = COALESCE($25, client_email),
+        client_phone = COALESCE($26, client_phone),
+        rate_per_hour = COALESCE($27, rate_per_hour),
+        venue_postcode = COALESCE($28, venue_postcode),
+        venue_lat = COALESCE($29, venue_lat),
+        venue_lng = COALESCE($30, venue_lng),
         -- 2026-04-23: any user-initiated PATCH flips tmg_edited so sync-back
         -- to Google starts pushing changes. Imported-but-never-touched gigs
         -- stay read-only on the Google side until this flag flips.
         tmg_edited = TRUE
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, day_of_contact || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, gig_leader_name || null, gig_leader_phone || null, gig_leader_email || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     const gig = result.rows[0];
@@ -1010,7 +1016,7 @@ router.get('/offers/:id/details', async (req, res) => {
          o.status, o.fee, o.deadline, o.created_at, o.responded_at,
          g.band_name, g.venue_name, g.venue_address,
          g.date as gig_date, g.start_time, g.end_time, g.load_in_time,
-         g.dress_code, g.day_of_contact, g.parking_info, g.set_times,
+         g.dress_code, g.gig_leader_name, g.gig_leader_phone, g.gig_leader_email, g.parking_info, g.set_times,
          g.notes as gig_notes,
          u.display_name as sender_display_name, u.name as sender_name,
          u.email as sender_email, u.phone as sender_phone
@@ -2301,6 +2307,12 @@ router.get('/stats', async (req, res) => {
       .toISOString()
       .split('T')[0];
 
+    // 7-day horizon for Home v2 busy-state detection. Today + next 6 calendar
+    // days. UTC slice is fine because date is stored as a DATE not a timestamp.
+    const next7End = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 6)
+      .toISOString()
+      .split('T')[0];
+
     const [
       nextGigResult,
       thisMonthResult,
@@ -2313,6 +2325,7 @@ router.get('/stats', async (req, res) => {
       monthlyBreakdownResult,
       recentMessagesResult,
       missingFeeResult,
+      gigsNext7DaysResult,
     ] = await Promise.all([
       // Next gig
       db.query(
@@ -2442,6 +2455,16 @@ router.get('/stats', async (req, res) => {
            AND (fee IS NULL OR fee = 0)`,
         [userId]
       ),
+      // Count of confirmed-or-enquiry gigs in the next 7 days (today + 6).
+      // Drives Home v2 busy-state detection: 2+ gigs in the window flips
+      // the hero into the week-strip layout.
+      db.query(
+        `SELECT COUNT(*)::int AS count FROM gigs
+         WHERE user_id = $1
+           AND date >= $2 AND date <= $3
+           AND status IN ('confirmed', 'enquiry')`,
+        [userId, today, next7End]
+      ),
     ]);
 
     const overdueRow = overdueCombinedResult.rows[0] || {};
@@ -2523,6 +2546,7 @@ router.get('/stats', async (req, res) => {
       recent_messages: recentMessages,
       active_dep_request: activeDepRequest,
       gigs_missing_fee: parseInt(missingFeeResult.rows[0]?.count || 0),
+      gigs_next_7_days: parseInt(gigsNext7DaysResult.rows[0]?.count || 0),
     });
   } catch (error) {
     console.error('Get stats error:', error);

@@ -912,6 +912,31 @@ async function runMigrations() {
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS set_times JSONB DEFAULT '[]'`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS parking_info TEXT`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS day_of_contact TEXT`);
+
+    // Gig leader contact — promote the free-text day_of_contact field to three
+    // structured columns so the Home v2 "Gig leader" button can tap-to-call
+    // and tap-to-email. Idempotent: new columns are added once, the backfill
+    // only fires for rows where gig_leader_name is still null, and the legacy
+    // day_of_contact column is dropped on the same pass once data is moved.
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS gig_leader_name TEXT`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS gig_leader_phone TEXT`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS gig_leader_email TEXT`);
+    await db.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'gigs' AND column_name = 'day_of_contact'
+        ) THEN
+          UPDATE gigs
+             SET gig_leader_name = day_of_contact
+           WHERE day_of_contact IS NOT NULL
+             AND TRIM(day_of_contact) <> ''
+             AND gig_leader_name IS NULL;
+        END IF;
+      END $$;
+    `);
+    await db.query(`ALTER TABLE gigs DROP COLUMN IF EXISTS day_of_contact`);
     // Invoice & payment settings on users
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_details TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invoice_prefix VARCHAR(20) DEFAULT 'INV'`);

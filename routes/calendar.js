@@ -1319,7 +1319,16 @@ function buildEventResource(gig) {
   if (gig.fee != null && gig.fee !== '') descLines.push(`💷 Fee: £${gig.fee}`);
   if (gig.load_in_time) descLines.push(`🚪 Load-in: ${String(gig.load_in_time).substring(0, 5)}`);
   if (gig.dress_code) descLines.push(`👔 Dress: ${gig.dress_code}`);
-  if (gig.day_of_contact) descLines.push(`📞 Contact: ${gig.day_of_contact}`);
+  // Gig leader: render the name, then phone, then email on separate parts
+  // joined by " · " for readability inside Google Calendar's description.
+  if (gig.gig_leader_name || gig.gig_leader_phone || gig.gig_leader_email) {
+    const leaderParts = [
+      gig.gig_leader_name,
+      gig.gig_leader_phone,
+      gig.gig_leader_email,
+    ].filter(Boolean);
+    if (leaderParts.length) descLines.push(`📞 Gig leader: ${leaderParts.join(' · ')}`);
+  }
   if (gig.parking_info) descLines.push(`🅿️ Parking: ${gig.parking_info}`);
   if (gig.mileage_miles != null && gig.mileage_miles !== '') descLines.push(`🚗 Distance: ${gig.mileage_miles} mi`);
 
