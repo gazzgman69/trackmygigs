@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Home v2 mockup — TrackMyGigs</title>
+  <link rel="stylesheet" href="../css/app.css">
+  <style>
+    /* ── mockup-only chrome ─────────────────────────────────────────────── */
+    body {
+      overflow: auto;
+      background: #050709;
+      padding: 24px 12px 60px;
+    }
+    .mockup-shell {
+      max-width: 460px;
+      margin: 0 auto;
+    }
+    .mockup-title {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      text-align: center;
+      letter-spacing: .5px;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      color: var(--text-3);
+    }
+    .mockup-sub {
+      color: var(--text-3);
+      font-size: 11px;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+    .state-toggle {
+      display: flex;
+      gap: 4px;
+      margin: 0 auto 20px;
+      max-width: 390px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 4px;
+    }
+    .state-toggle button {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-2);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 8px 6px;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: background 120ms;
+    }
+    .state-toggle button.active {
+      background: var(--accent);
+      color: #000;
+    }
+    .phone {
+      max-width: 390px;
+      margin: 0 auto;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 26px;
+      overflow: hidden;
+      box-shadow: 0 20px 50px rgba(0,0,0,.5);
+    }
+    .phone-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      height: 56px;
+    }
+    .phone-header .logo {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: -.3px;
+    }
+    .phone-header .icons {
+      display: flex;
+      gap: 14px;
+      font-size: 18px;
+      color: var(--text-2);
+    }
+    .scroll {
+      max-height: 720px;
+      overflow-y: auto;
+      padding: 12px 0 8px;
+    }
+    .phone-nav {
+      display: flex;
+      justify-content: space-around;
+      padding: 8px 0 14px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+    }
+    .phone-nav .item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--text-3);
+    }
+    .phone-nav .item.active { color: var(--accent); }
+    .phone-nav .item .ico { font-size: 18px; }
+
+    /* ── reusable home v2 components ────────────────────────────────────── */
+    .hero {
+      margin: 0 16px 10px;
+      border-radius: 14px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Hero — DAY-OF-GIG (the killer state) */
+    .hero.day-of {
+      background: linear-gradient(160deg, #1F2A18 0%, #16210F 60%, #0F1C16 100%);
+      border: 1px solid rgba(63,185,80,.45);
+      box-shadow: 0 0 0 1px rgba(63,185,80,.08), 0 6px 20px rgba(63,185,80,.12);
+      padding: 16px 16px 14px;
+    }
+    .hero.day-of .pulse {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(63,185,80,.18);
+      color: var(--success);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1.2px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      text-transform: uppercase;
+    }
+    .hero.day-of .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+      animation: dot-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: .5; transform: scale(1.4); }
+    }
+    .hero.day-of .countdown {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--success);
+      letter-spacing: .3px;
+      margin-left: auto;
+    }
+    .hero.day-of .venue {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--text);
+      margin: 10px 0 2px;
+      letter-spacing: -.4px;
+      line-height: 1.15;
+    }
+    .hero.day-of .where {
+      font-size: 12px;
+      color: var(--text-2);
+      margin-bottom: 12px;
+    }
+    .hero.day-of .times {
+      display: flex;
+      gap: 12px;
+      padding: 10px 0;
+      border-top: 1px solid rgba(63,185,80,.18);
+      border-bottom: 1px solid rgba(63,185,80,.18);
+      margin-bottom: 12px;
+    }
+    .hero.day-of .times .col {
+      flex: 1;
+    }
+    .hero.day-of .times .lbl {
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: .7px;
+      margin-bottom: 3px;
+    }
+    .hero.day-of .times .val {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .hero.day-of .actions {
+      display: flex;
+      gap: 6px;
+    }
+    .hero.day-of .actions button {
+      flex: 1;
+      background: rgba(63,185,80,.14);
+      border: 1px solid rgba(63,185,80,.32);
+      color: var(--text);
+      padding: 10px 6px;
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      cursor: pointer;
+    }
+    .hero.day-of .actions button .ico {
+      font-size: 16px;
+    }
+
+    /* Hero — UPCOMING (gig in 1-7 days) */
+    .hero.upcoming {
+      background: linear-gradient(160deg, #1C2A1A 0%, #182318 100%);
+      border: 1px solid rgba(63,185,80,.3);
+      padding: 14px 16px;
+    }
+    .hero.upcoming .topline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .hero.upcoming .label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--success);
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+    }
+    .hero.upcoming .pill {
+      margin-left: auto;
+      background: rgba(63,185,80,.18);
+      color: var(--success);
+      font-size: 11px;
+      font-weight: 800;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+    .hero.upcoming .band {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: -.3px;
+      margin-bottom: 3px;
+    }
+    .hero.upcoming .meta {
+      font-size: 12px;
+      color: var(--text-2);
+      line-height: 1.5;
+    }
+    .hero.upcoming .meta .fee {
+      color: var(--success);
+      font-weight: 700;
+    }
+
+    /* Hero — QUIET (no gig within 7 days) */
+    .hero.quiet {
+      background: var(--card);
+      border: 1px dashed var(--border);
+      padding: 18px 16px;
+      text-align: center;
+    }
+    .hero.quiet .face {
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+    .hero.quiet .title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .hero.quiet .sub {
+      font-size: 12px;
+      color: var(--text-2);
+      margin-bottom: 12px;
+    }
+    .hero.quiet .cta {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 9px 18px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+
+    /* Hero — BUSY (multiple gigs in next 7 days) */
+    .hero.busy {
+      background: linear-gradient(160deg, #1C2A1A 0%, #182318 100%);
+      border: 1px solid rgba(63,185,80,.3);
+      padding: 14px 16px;
+    }
+    .hero.busy .week-strip {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 10px;
+    }
+    .hero.busy .week-strip .day {
+      flex: 1;
+      min-width: 0;
+      text-align: center;
+      padding: 4px 0;
+      border-radius: 6px;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.06);
+    }
+    .hero.busy .week-strip .day.gig {
+      background: rgba(63,185,80,.16);
+      border-color: rgba(63,185,80,.4);
+    }
+    .hero.busy .week-strip .day.today {
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+    .hero.busy .week-strip .day .d {
+      font-size: 8px;
+      font-weight: 700;
+      color: var(--text-3);
+      letter-spacing: .3px;
+    }
+    .hero.busy .week-strip .day .n {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .hero.busy .week-strip .day.gig .n {
+      color: var(--success);
+    }
+    .hero.busy .next {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .hero.busy .next .bar {
+      width: 3px;
+      height: 36px;
+      border-radius: 2px;
+      background: var(--success);
+    }
+    .hero.busy .next .copy {
+      flex: 1;
+      min-width: 0;
+    }
+    .hero.busy .next .band {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .hero.busy .next .meta {
+      font-size: 11px;
+      color: var(--text-2);
+      margin-top: 1px;
+    }
+    .hero.busy .next .countpill {
+      background: rgba(63,185,80,.18);
+      color: var(--success);
+      font-size: 10px;
+      font-weight: 800;
+      padding: 4px 8px;
+      border-radius: 999px;
+    }
+
+    /* "Needs you" alert strip ─────────────────────────────────────────── */
+    .needs {
+      margin: 0 16px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .needs .lbl {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-3);
+      letter-spacing: .8px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+    .needs .chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      flex: 1;
+    }
+    .needs .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 9px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    .needs .chip.danger {
+      background: var(--danger-dim);
+      color: var(--danger);
+      border: 1px solid rgba(248,81,73,.3);
+    }
+    .needs .chip.warn {
+      background: var(--accent-dim);
+      color: var(--accent);
+      border: 1px solid rgba(240,165,0,.35);
+    }
+    .needs .chip.info {
+      background: var(--info-dim);
+      color: var(--info);
+      border: 1px solid rgba(88,166,255,.3);
+    }
+    .needs .chip.dep {
+      background: rgba(167,139,250,.16);
+      color: #C7B5FA;
+      border: 1px solid rgba(167,139,250,.35);
+    }
+    .needs .chip .ico {
+      font-size: 10px;
+    }
+    .needs .arrow {
+      color: var(--text-3);
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+    .needs.allclear {
+      justify-content: center;
+      background: transparent;
+      border: 1px dashed var(--border);
+      color: var(--text-3);
+      font-size: 11px;
+      font-style: italic;
+    }
+
+    /* Action grid ──────────────────────────────────────────────────────── */
+    .actions-grid {
+      margin: 0 16px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .actions-grid .tile {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 8px 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: transform 100ms, border-color 100ms;
+    }
+    .actions-grid .tile:hover {
+      transform: translateY(-1px);
+      border-color: rgba(240,165,0,.3);
+    }
+    .actions-grid .tile.primary {
+      background: linear-gradient(160deg, rgba(240,165,0,.18) 0%, rgba(240,165,0,.06) 100%);
+      border-color: rgba(240,165,0,.35);
+    }
+    .actions-grid .tile .ico {
+      font-size: 22px;
+      margin-bottom: 6px;
+      display: block;
+    }
+    .actions-grid .tile .lbl {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .actions-grid .tile .sub {
+      font-size: 9px;
+      color: var(--text-3);
+      margin-top: 1px;
+    }
+
+    /* Compact "you might also want" footer ─────────────────────────────── */
+    .footer-hint {
+      margin: 14px 16px 0;
+      padding: 10px 12px;
+      background: transparent;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-3);
+    }
+    .footer-hint a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    /* Notes panel underneath ───────────────────────────────────────────── */
+    .notes {
+      max-width: 460px;
+      margin: 32px auto 0;
+      padding: 18px 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      color: var(--text-2);
+      font-size: 12.5px;
+      line-height: 1.55;
+    }
+    .notes h3 {
+      color: var(--text);
+      font-size: 13px;
+      letter-spacing: .5px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .notes ul { padding-left: 18px; margin: 6px 0; }
+    .notes li { margin-bottom: 6px; }
+    .notes code {
+      background: var(--card);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <div class="mockup-shell">
+
+    <div class="mockup-title">Home v2 — Direction B</div>
+    <div class="mockup-sub">Tap a state to see how the same Home reshapes itself</div>
+
+    <div class="state-toggle" id="stateToggle">
+      <button data-state="day-of" class="active">Day of gig</button>
+      <button data-state="upcoming">In 3 days</button>
+      <button data-state="busy">Busy week</button>
+      <button data-state="quiet">Quiet day</button>
+    </div>
+
+    <div class="phone">
+
+      <!-- Header (matches the real app-header) -->
+      <div class="phone-header">
+        <div class="logo">TrackMyGigs</div>
+        <div class="icons">
+          <span>🔔</span>
+          <span>⚙️</span>
+        </div>
+      </div>
+
+      <!-- Scrollable Home content (state-driven) -->
+      <div class="scroll" id="homeScroll">
+        <!-- injected by JS -->
+      </div>
+
+      <!-- Bottom nav (matches the real app) -->
+      <div class="phone-nav">
+        <div class="item active"><div class="ico">🏠</div><div>Home</div></div>
+        <div class="item"><div class="ico">🎤</div><div>Gigs</div></div>
+        <div class="item"><div class="ico">📅</div><div>Calendar</div></div>
+        <div class="item"><div class="ico">📬</div><div>Offers</div></div>
+        <div class="item"><div class="ico">🔍</div><div>Find</div></div>
+      </div>
+
+    </div><!-- /.phone -->
+
+    <!-- Designer's notes for Gareth -->
+    <div class="notes">
+      <h3>What you're looking at</h3>
+      <p><strong>One hero card at the top, one alert line, one action grid.</strong> The whole screen has three regions instead of eleven. The hero is the only thing that competes for attention and it adapts to the situation:</p>
+      <ul>
+        <li><code>Day of gig</code> — biggest, brightest. Pulsing green badge, countdown to load-in, set times, three action chips (Navigate, Setlist, Call MD). This is the show-day mode that defines what TMG is on the day that matters.</li>
+        <li><code>In 3 days</code> — compact next-gig card, fee visible, dress code line, taps through to gig detail.</li>
+        <li><code>Busy week</code> — 7-day strip at the top of the hero plus the next gig prominent. Glanceable.</li>
+        <li><code>Quiet day</code> — dashed border encouragement card. Single CTA: log your next gig. No clutter, no guilt.</li>
+      </ul>
+      <p>The <strong>Needs you</strong> strip is the only place alerts live. Count chips, tap to drill. Hidden entirely on a quiet day. Compresses what was four separate banners (overdue, draft, offers, messages, dep request) into one row that doesn't shout.</p>
+      <p>The <strong>action grid</strong> turns Home into a launchpad. Six tiles, one tap to your most-used flows. The first tile (+ Gig) is accented because logging a gig should always be the fastest action in the app.</p>
+      <p>What's gone from this view: the 12-month forecast chart (lives in Finance now), the tax-year/this-month numeric pair (also Finance), the missing-fee wizard (rolled into the Needs you chips as <code>3 need fees</code> when present), the always-on 7-day strip (now only appears in the Busy hero where it earns its space).</p>
+      <h3>Open design questions</h3>
+      <ul>
+        <li>The Day-of-gig hero shows three action buttons (Navigate / Setlist / Call MD). Should those be the right three, or do you want Map / Setlist / Notes? (Voice memo could go here too.)</li>
+        <li>For Busy week, do you want the next-gig card AND the 7-day strip, or just the strip with a tap-to-detail?</li>
+        <li>Action grid tile #6 is currently "More" — should it be Repertoire, Network, Profile, or a kebab to a menu?</li>
+        <li>Quiet day right now says "Add your next gig." Want a more emotional copy, or stay functional?</li>
+      </ul>
+      <p>Once you've picked your tweaks, I'll build the production version in <code>app.js</code> against the real <code>renderHomeScreen</code> and <code>buildHomeHTML</code> functions and ship it.</p>
+    </div>
+
+  </div>
+
+  <script>
+    // ── State data (each scenario fills the same template differently) ────
+    const STATES = {
+      'day-of': {
+        hero: `
+          <div class="hero day-of">
+            <div style="display:flex;align-items:center;">
+              <div class="pulse"><div class="dot"></div>Tonight · Live now</div>
+              <div class="countdown">Load-in in 2h 14m</div>
+            </div>
+            <div class="venue">The Tythe Barn</div>
+            <div class="where">📍 Stratford-upon-Avon · 36 mi · ETA 51 min</div>
+
+            <div class="times">
+              <div class="col">
+                <div class="lbl">Load-in</div>
+                <div class="val">18:00</div>
+              </div>
+              <div class="col">
+                <div class="lbl">Set 1</div>
+                <div class="val">20:30 — 21:15</div>
+              </div>
+              <div class="col">
+                <div class="lbl">Set 2</div>
+                <div class="val">22:00 — 22:45</div>
+              </div>
+            </div>
+
+            <div class="actions">
+              <button><div class="ico">🧭</div>Navigate</button>
+              <button><div class="ico">🎵</div>Setlist</button>
+              <button><div class="ico">📞</div>Call MD</button>
+            </div>
+          </div>
+        `,
+        needs: `
+          <div class="needs">
+            <div class="lbl">Needs you</div>
+            <div class="chips">
+              <span class="chip danger"><span class="ico">⚠</span>1 overdue invoice</span>
+              <span class="chip info"><span class="ico">💬</span>2 messages</span>
+            </div>
+            <span class="arrow">›</span>
+          </div>
+        `,
+      },
+
+      'upcoming': {
+        hero: `
+          <div class="hero upcoming">
+            <div class="topline">
+              <span class="label">⚡ Your next gig</span>
+              <span class="pill">3 days</span>
+            </div>
+            <div class="band">Club Kudo · Anniversary party</div>
+            <div class="meta">
+              📍 The Tythe Barn, Stratford-upon-Avon<br>
+              🕖 Sat 18 May · 20:30 — 22:45 · <span class="fee">£450</span><br>
+              👔 Smart-casual · 🎒 Gig pack ready
+            </div>
+          </div>
+        `,
+        needs: `
+          <div class="needs">
+            <div class="lbl">Needs you</div>
+            <div class="chips">
+              <span class="chip danger"><span class="ico">⚠</span>1 overdue invoice</span>
+              <span class="chip warn"><span class="ico">📬</span>2 offers</span>
+              <span class="chip dep"><span class="ico">📤</span>1 dep awaiting cover</span>
+              <span class="chip info"><span class="ico">💬</span>3 messages</span>
+            </div>
+            <span class="arrow">›</span>
+          </div>
+        `,
+      },
+
+      'busy': {
+        hero: `
+          <div class="hero busy">
+            <div class="week-strip">
+              <div class="day today"><div class="d">TUE</div><div class="n">14</div></div>
+              <div class="day"><div class="d">WED</div><div class="n">15</div></div>
+              <div class="day gig"><div class="d">THU</div><div class="n">16</div></div>
+              <div class="day"><div class="d">FRI</div><div class="n">17</div></div>
+              <div class="day gig"><div class="d">SAT</div><div class="n">18</div></div>
+              <div class="day gig"><div class="d">SUN</div><div class="n">19</div></div>
+              <div class="day"><div class="d">MON</div><div class="n">20</div></div>
+            </div>
+            <div class="next">
+              <div class="bar"></div>
+              <div class="copy">
+                <div class="band">Acoustic duo · The Old Mill</div>
+                <div class="meta">Thu 16 May · 19:00 — 21:30 · £180</div>
+              </div>
+              <div class="countpill">3 this week</div>
+            </div>
+          </div>
+        `,
+        needs: `
+          <div class="needs">
+            <div class="lbl">Needs you</div>
+            <div class="chips">
+              <span class="chip warn"><span class="ico">📬</span>4 offers</span>
+              <span class="chip info"><span class="ico">💬</span>1 message</span>
+            </div>
+            <span class="arrow">›</span>
+          </div>
+        `,
+      },
+
+      'quiet': {
+        hero: `
+          <div class="hero quiet">
+            <div class="face">🎷</div>
+            <div class="title">Nothing on for 11 days</div>
+            <div class="sub">Diary's clear. Add the next one or check the marketplace.</div>
+            <button class="cta">+ Log a gig</button>
+          </div>
+        `,
+        needs: `
+          <div class="needs allclear">All clear. Enjoy the quiet.</div>
+        `,
+      },
+    };
+
+    // ── Shared action grid (always rendered, same six tiles) ──────────────
+    const ACTION_GRID = `
+      <div class="actions-grid">
+        <div class="tile primary">
+          <span class="ico">➕</span>
+          <div class="lbl">Add gig</div>
+          <div class="sub">Quick or wizard</div>
+        </div>
+        <div class="tile">
+          <span class="ico">📄</span>
+          <div class="lbl">New invoice</div>
+          <div class="sub">From gig or blank</div>
+        </div>
+        <div class="tile">
+          <span class="ico">🤝</span>
+          <div class="lbl">Find dep</div>
+          <div class="sub">Marketplace</div>
+        </div>
+        <div class="tile">
+          <span class="ico">💬</span>
+          <div class="lbl">Inbox</div>
+          <div class="sub">Chats &amp; offers</div>
+        </div>
+        <div class="tile">
+          <span class="ico">📅</span>
+          <div class="lbl">Calendar</div>
+          <div class="sub">Block / unblock</div>
+        </div>
+        <div class="tile">
+          <span class="ico">⋯</span>
+          <div class="lbl">More</div>
+          <div class="sub">Repertoire, EPK…</div>
+        </div>
+      </div>
+
+      <div class="footer-hint">
+        Numbers, charts and tax-year totals now live in <a href="#">Finance ›</a>
+      </div>
+    `;
+
+    function render(stateKey) {
+      const s = STATES[stateKey];
+      document.getElementById('homeScroll').innerHTML =
+        s.hero + s.needs + ACTION_GRID;
+    }
+
+    document.getElementById('stateToggle').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-state]');
+      if (!btn) return;
+      document.querySelectorAll('#stateToggle button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      render(btn.dataset.state);
+    });
+
+    // initial render
+    render('day-of');
+  </script>
+</body>
+</html>
