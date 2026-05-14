@@ -2,6 +2,7 @@ const express = require('express');
 const { google } = require('googleapis');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
+const { withGoogleRetry } = require('../lib/google-retry');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -384,7 +385,7 @@ router.get('/list-calendars', async (req, res) => {
     const calendar = google.calendar({ version: 'v3', auth });
     let resp;
     try {
-      resp = await calendar.calendarList.list({ maxResults: 100, showHidden: false });
+      resp = await withGoogleRetry(() => calendar.calendarList.list({ maxResults: 100, showHidden: false }));
     } catch (apiErr) {
       const msg = apiErr?.response?.data?.error?.message || apiErr?.message || '';
       if (/insufficient authentication scopes/i.test(msg)) {
@@ -618,7 +619,7 @@ router.get('/events', async (req, res) => {
     let pagesFetched = 0;
     const MAX_PAGES = 6; // 15000 events cap - plenty for any real user
     do {
-      const response = await calendar.events.list({
+      const response = await withGoogleRetry(() => calendar.events.list({
         calendarId,
         timeMin: timeMin.toISOString(),
         timeMax: timeMax.toISOString(),
@@ -626,7 +627,7 @@ router.get('/events', async (req, res) => {
         orderBy: 'startTime',
         maxResults: 2500,
         pageToken,
-      });
+      }));
       items.push(...(response.data.items || []));
       pageToken = response.data.nextPageToken;
       pagesFetched++;
@@ -839,14 +840,14 @@ router.get('/pins', async (req, res) => {
     const end = req.query.end ? new Date(req.query.end) : new Date(Date.now() + 35 * 24 * 60 * 60 * 1000);
 
     const calendar = google.calendar({ version: 'v3', auth });
-    const response = await calendar.events.list({
+    const response = await withGoogleRetry(() => calendar.events.list({
       calendarId,
       timeMin: start.toISOString(),
       timeMax: end.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
       maxResults: 250,
-    });
+    }));
 
     // Exclude events already linked to a gig. Covers BOTH directions:
     //   (1) Gigs pulled IN from Google Calendar (source = 'gcal:<id>')
@@ -1733,7 +1734,7 @@ async function pullFromGoogle(userId) {
     do {
       if (pageToken) listParams.pageToken = pageToken;
 
-      const response = await calendar.events.list(listParams);
+      const response = await withGoogleRetry(() => calendar.events.list(listParams));
       const events = response.data.items || [];
 
       for (const event of events) {
@@ -1855,16 +1856,39 @@ router.post('/sync-now', async (req, res) => {
     let pull = await pullFromGoogle(req.user.id);
     if (pull.retry) pull = await pullFromGoogle(req.user.id);
 
-    // Push phase
+    // Push phase. Collect failure details (gig id, label, date, reason) so
+    // the client can list exactly which gigs didn't sync rather than just
+    // showing an aggregate count. Cap the returned list at 20 to keep the
+    // payload sensible; the count is always accurate.
     const gigs = await db.query(
       "SELECT * FROM gigs WHERE user_id = $1 AND (status IS NULL OR status != 'cancelled')",
       [req.user.id]
     );
     let pushed = 0;
-    let pushFailed = 0;
+    const failures = [];
     for (const g of gigs.rows) {
-      const id = await pushGigToGoogle(req.user.id, g);
-      if (id) pushed++; else pushFailed++;
+      try {
+        const id = await pushGigToGoogle(req.user.id, g);
+        if (id) {
+          pushed++;
+        } else {
+          failures.push({
+            gig_id: g.id,
+            band_name: g.band_name || null,
+            venue_name: g.venue_name || null,
+            date: g.date || null,
+            reason: 'push_returned_null',
+          });
+        }
+      } catch (err) {
+        failures.push({
+          gig_id: g.id,
+          band_name: g.band_name || null,
+          venue_name: g.venue_name || null,
+          date: g.date || null,
+          reason: err && err.message ? String(err.message).slice(0, 200) : 'unknown_error',
+        });
+      }
     }
 
     // Stamp last-sync timestamp (pullFromGoogle only updates on a fresh syncToken)
@@ -1881,8 +1905,9 @@ router.post('/sync-now', async (req, res) => {
       },
       pushed: {
         ok: pushed,
-        failed: pushFailed,
+        failed: failures.length,
         total: gigs.rows.length,
+        failures: failures.slice(0, 20),
       },
     });
   } catch (err) {

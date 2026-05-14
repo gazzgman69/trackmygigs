@@ -27,6 +27,7 @@ const { google } = require('googleapis');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const { getGoogleAuthClient, extractSpreadsheetId } = require('../lib/google-auth');
+const { withGoogleRetry } = require('../lib/google-retry');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -79,10 +80,10 @@ router.post('/preview', async (req, res) => {
     }
 
     // Fetch metadata: title + tab list with row counts.
-    const meta = await sheetsClient.spreadsheets.get({
+    const meta = await withGoogleRetry(() => sheetsClient.spreadsheets.get({
       spreadsheetId,
       fields: 'properties.title,sheets.properties(title,gridProperties(rowCount))',
-    });
+    }));
     const title = meta.data.properties && meta.data.properties.title || 'Untitled spreadsheet';
     const tabs = (meta.data.sheets || []).map(s => ({
       name: s.properties.title,
@@ -100,12 +101,12 @@ router.post('/preview', async (req, res) => {
     // single quotes in the tab name.
     const safeTab = tabName.replace(/'/g, "''");
     const range = `'${safeTab}'!A1:Z11`;
-    const valuesResp = await sheetsClient.spreadsheets.values.get({
+    const valuesResp = await withGoogleRetry(() => sheetsClient.spreadsheets.values.get({
       spreadsheetId,
       range,
       valueRenderOption: 'FORMATTED_VALUE',
       dateTimeRenderOption: 'FORMATTED_STRING',
-    });
+    }));
     const rows = valuesResp.data.values || [];
     const headers = rows[0] || [];
     const sampleRows = rows.slice(1, 11);
@@ -150,12 +151,12 @@ router.post('/import', async (req, res) => {
     }
 
     const safeTab = tabName.replace(/'/g, "''");
-    const valuesResp = await sheetsClient.spreadsheets.values.get({
+    const valuesResp = await withGoogleRetry(() => sheetsClient.spreadsheets.values.get({
       spreadsheetId,
       range: `'${safeTab}'!A2:Z10000`, // skip header row, cap 10k data rows
       valueRenderOption: 'FORMATTED_VALUE',
       dateTimeRenderOption: 'FORMATTED_STRING',
-    });
+    }));
     const rows = valuesResp.data.values || [];
     if (rows.length === 0) {
       return res.json({ imported: 0, merged: 0, skipped: 0, errors: [], gigs: [], total: 0 });
@@ -439,18 +440,20 @@ router.post('/pull', async (req, res) => {
     const safeTab = linkRow.google_sheets_tab.replace(/'/g, "''");
 
     // Pull every row past the header.
-    const valuesResp = await sheetsClient.spreadsheets.values.get({
+    const valuesResp = await withGoogleRetry(() => sheetsClient.spreadsheets.values.get({
       spreadsheetId: linkRow.google_sheets_id,
       range: `'${safeTab}'!A2:Z10000`,
       valueRenderOption: 'FORMATTED_VALUE',
       dateTimeRenderOption: 'FORMATTED_STRING',
-    });
+    }));
     const rows = valuesResp.data.values || [];
 
     // Pull existing TMG gigs that are linked to a sheet row so we can
-    // diff. We map by sheets_row_id (string).
+    // diff. We map by sheets_row_id (string). updated_at is needed for
+    // conflict detection: if local was edited after we last pushed to
+    // Sheets, the sheet value is stale and we must not overwrite TMG.
     const existingResp = await db.query(
-      `SELECT id, sheets_row_id, sheets_synced_at, date, start_time, end_time,
+      `SELECT id, sheets_row_id, sheets_synced_at, updated_at, date, start_time, end_time,
               fee, band_name, venue_name, venue_address, client_name, notes
          FROM gigs
         WHERE user_id = $1 AND sheets_row_id IS NOT NULL`,
@@ -549,14 +552,55 @@ router.post('/pull', async (req, res) => {
       const local = byRowId.get(String(sheetRowNumber));
       if (local) {
         if (!rowsDiffer(local, sheetVals)) continue; // identical, skip
-        // Conflict check: was the gig edited in TMG AFTER our last push?
-        // sheets_synced_at is the moment we last wrote this row TO Sheets.
-        // gigs.updated_at would be ideal but that column doesn't exist;
-        // we approximate by comparing sheets_synced_at against the gig's
-        // own updated_at if it exists. For now we apply the sheet value
-        // unconditionally and surface the diff in conflicts[] so the user
-        // sees what TMG-side edits got overwritten. (See note in roadmap
-        // for the eventual updated_at column on gigs.)
+
+        // Conflict check: if the gig was edited in TMG after we last pushed
+        // it to Sheets, the sheet value is stale. Refuse to overwrite, list
+        // it as a conflict so the user can resolve it (e.g. via a Use Sheet
+        // button in the UI that POSTs a per-row force update). When sheets_
+        // synced_at is null (this row was imported but never pushed back),
+        // we treat the sheet as the source of truth and apply it as before.
+        const localUpdatedAt = local.updated_at ? new Date(local.updated_at) : null;
+        const lastSyncedAt = local.sheets_synced_at ? new Date(local.sheets_synced_at) : null;
+        const tmgIsNewer = localUpdatedAt && lastSyncedAt && localUpdatedAt > lastSyncedAt;
+
+        if (tmgIsNewer) {
+          // Surface both sides so the client can render a diff.
+          conflictDetails.push({
+            gig_id: local.id,
+            sheet_row: sheetRowNumber,
+            resolution: 'kept_tmg',
+            sheet: {
+              date: sheetVals.date || null,
+              start_time: sheetVals.start_time || null,
+              end_time: sheetVals.end_time || null,
+              fee: sheetVals.fee || null,
+              band_name: sheetVals.band_name || null,
+              venue_name: sheetVals.venue_name || null,
+              venue_address: sheetVals.venue_address || null,
+              client_name: sheetVals.client_name || null,
+              notes: sheetVals.notes || null,
+            },
+            tmg: {
+              date: local.date && local.date.toISOString ? local.date.toISOString().slice(0, 10) : (local.date ? String(local.date).slice(0, 10) : null),
+              start_time: local.start_time
+                ? (typeof local.start_time === 'string' ? local.start_time.slice(0, 5) : String(local.start_time))
+                : null,
+              end_time: local.end_time
+                ? (typeof local.end_time === 'string' ? local.end_time.slice(0, 5) : String(local.end_time))
+                : null,
+              fee: local.fee != null ? String(local.fee) : null,
+              band_name: local.band_name || null,
+              venue_name: local.venue_name || null,
+              venue_address: local.venue_address || null,
+              client_name: local.client_name || null,
+              notes: local.notes || null,
+            },
+          });
+          continue;
+        }
+
+        // Safe to apply the sheet's values: either the gig has never been
+        // pushed (sheets_synced_at null) or TMG hasn't been edited since.
         await db.query(
           `UPDATE gigs
               SET date = COALESCE($1::date, date),
@@ -586,12 +630,6 @@ router.post('/pull', async (req, res) => {
           ]
         );
         pulled++;
-        conflictDetails.push({
-          gig_id: local.id,
-          sheet_row: sheetRowNumber,
-          venue: sheetVals.venue_name || local.venue_name,
-          date: sheetVals.date || local.date,
-        });
       } else if (date) {
         // Sheet row that we haven't seen before — could be a row the user
         // added directly in Sheets after the initial import. Run it through
