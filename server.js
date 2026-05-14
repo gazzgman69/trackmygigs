@@ -50,7 +50,11 @@ if (stripeWebhook.webhookHandler && stripeWebhook.rawJsonParser) {
   app.post('/api/stripe/webhook', stripeWebhook.rawJsonParser, stripeWebhook.webhookHandler);
 }
 
-app.use(express.json());
+// Bumped from the 100KB default so the AI endpoints can accept receipt
+// images (~1MB base64) and voice memos (capped at 25MB in the endpoint).
+// All other JSON payloads are tiny gig/invoice records so the larger limit
+// has no downside.
+app.use(express.json({ limit: '30mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
@@ -960,6 +964,15 @@ async function runMigrations() {
         BEFORE UPDATE ON gigs
         FOR EACH ROW EXECUTE FUNCTION gigs_set_updated_at();
     `);
+
+    // "Available now" toggle. When ON, the user is signalling availability
+    // for last-minute deps and gets sort-boosted in the Find Musicians
+    // directory. available_now_until is the (optional) auto-expire timestamp
+    // so the toggle doesn't accidentally stay on forever; the directory
+    // treats `available_now AND (available_now_until IS NULL OR
+    // available_now_until > NOW())` as "actually available right now."
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS available_now BOOLEAN DEFAULT FALSE`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS available_now_until TIMESTAMP`);
     // Invoice & payment settings on users
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_details TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invoice_prefix VARCHAR(20) DEFAULT 'INV'`);

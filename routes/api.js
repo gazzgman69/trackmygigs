@@ -33,6 +33,13 @@ function toTextArray(v) {
 // they stay in lockstep. Ties on count fall through to distance, ties on
 // distance fall through to display name for stable ordering.
 function networkRankComparator(a, b) {
+  // "Available now" wins above everything else: a musician who's signalled
+  // they're free for last-minute work should be the first face a poster
+  // sees, even ahead of people you've already worked with. Ties fall
+  // through to the existing rank (shared history then distance).
+  const an = a && a.available_now ? 1 : 0;
+  const bn = b && b.available_now ? 1 : 0;
+  if (an !== bn) return bn - an;
   const ac = (a && a.gigs_together_count) || 0;
   const bc = (b && b.gigs_together_count) || 0;
   if (ac !== bc) return bc - ac;
@@ -1273,7 +1280,8 @@ router.patch('/user/profile', async (req, res) => {
             business_address, business_phone, vat_number,
             discoverable, bio, photo_url, genres,
             min_fee_pence, notify_free_gigs,
-            payment_link_url, allow_direct_messages } = req.body;
+            payment_link_url, allow_direct_messages,
+            available_now, available_now_duration_days } = req.body;
 
     // Universal pay-link (#292): http(s) URLs only, capped at 500 chars.
     // Empty string clears the field (user opts out of the pay-link button).
@@ -1387,6 +1395,23 @@ router.patch('/user/profile', async (req, res) => {
       allowDmValue = !!allow_direct_messages;
     }
 
+    // Available now toggle. When the client sets available_now to true, we
+    // also compute the auto-expire timestamp from the optional duration so
+    // the flag doesn't accidentally live forever. Default 7 days; clamped
+    // to 1-30 days. When the client sets it to false, we clear both fields.
+    let availableNowProvided = false;
+    let availableNowValue = false;
+    let availableNowUntilValue = null;
+    if (available_now !== undefined) {
+      availableNowProvided = true;
+      availableNowValue = !!available_now;
+      if (availableNowValue) {
+        const days = parseInt(available_now_duration_days, 10);
+        const clamped = isFinite(days) ? Math.max(1, Math.min(30, days)) : 7;
+        availableNowUntilValue = new Date(Date.now() + clamped * 24 * 60 * 60 * 1000);
+      }
+    }
+
     // Distance filter (roadmap Phase VI): whenever the user supplies a
     // home_postcode, resolve it to lat/lng via postcodes.io and store the
     // normalised postcode alongside. If the postcode is present but invalid,
@@ -1460,7 +1485,9 @@ router.patch('/user/profile', async (req, res) => {
        vat_number = COALESCE($39, vat_number),
        min_fee_pence = CASE WHEN $40::boolean THEN $41::integer ELSE min_fee_pence END,
        notify_free_gigs = CASE WHEN $42::boolean THEN $43::boolean ELSE notify_free_gigs END,
-       allow_direct_messages = CASE WHEN $44::boolean THEN $45::boolean ELSE allow_direct_messages END
+       allow_direct_messages = CASE WHEN $44::boolean THEN $45::boolean ELSE allow_direct_messages END,
+       available_now = CASE WHEN $46::boolean THEN $47::boolean ELSE available_now END,
+       available_now_until = CASE WHEN $46::boolean THEN $48::timestamp ELSE available_now_until END
        WHERE id = $8 RETURNING *`,
       [name, phone, instrumentsArr, normalisedPostcode, avatar_url, google_review_url, facebook_review_url, req.user.id,
        bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme, display_name,
@@ -1478,7 +1505,8 @@ router.patch('/user/profile', async (req, res) => {
        (vat_number !== undefined && vat_number !== null) ? String(vat_number).slice(0, 64) : null,
        minFeeProvided, minFeeValue,
        notifyFreeProvided, notifyFreeValue,
-       allowDmProvided, allowDmValue]
+       allowDmProvided, allowDmValue,
+       availableNowProvided, availableNowValue, availableNowUntilValue]
     );
 
     // Apply payment_link_url as a follow-up UPDATE so we don't have to thread
@@ -4650,7 +4678,12 @@ function toCardRow(row, actorLat, actorLng) {
     // Drives the "Worked together · N gigs" pill and the "people you know"
     // sort boost in Find Musicians.
     gigs_together_count: parseInt(row.gigs_together_count || 0, 10),
-    worked_with_you: parseInt(row.gigs_together_count || 0, 10) > 0
+    worked_with_you: parseInt(row.gigs_together_count || 0, 10) > 0,
+    // "Available now" computed flag: true only when the toggle is on AND
+    // the optional auto-expire hasn't passed. Surfaced as a chip on the
+    // card; also drives the comparator sort boost so available musicians
+    // float to the top of every directory list.
+    available_now: !!(row.available_now && (!row.available_now_until || new Date(row.available_now_until) > new Date()))
   };
 }
 
@@ -4673,6 +4706,12 @@ const DISCOVER_SELECT = `
     u.subscription_tier,
     u.created_at,
     u.allow_direct_messages,
+    -- Available now: the user has signalled they're free for last-minute
+    -- deps. We surface both fields so toCardRow can compute the active
+    -- flag (TRUE only when available_now is on AND the optional expiry
+    -- hasn't lapsed). Sort-boosted at the comparator level.
+    u.available_now,
+    u.available_now_until,
     (u.google_id IS NOT NULL) AS email_verified,
     (SELECT COUNT(*)::int FROM gigs g WHERE g.user_id = u.id) AS gigs_count,
     (SELECT COUNT(*)::int FROM offers o

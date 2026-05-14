@@ -447,6 +447,73 @@ Rules:
   }
 });
 
+// ── POST /api/ai/transcribe ─────────────────────────────────────────────────
+// Premium voice-memo path. Free users get browser-native Web Speech API
+// transcription on the client; premium users with OPENAI_API_KEY set on
+// the server can route through OpenAI Whisper for better accuracy in
+// noisy venue environments. Audio arrives base64-encoded in the JSON body
+// to avoid wiring in multer just for one endpoint. Capped at 25MB (~3 min
+// of webm/opus) which covers any realistic in-the-moment voice note.
+router.post('/transcribe', async (req, res) => {
+  try {
+    if (req.user.subscription_tier !== 'premium') {
+      return res.status(402).json({
+        error: 'premium_only',
+        message: 'Server transcription is a Premium feature. Free users get browser-native voice notes.',
+      });
+    }
+    if (!process.env.OPENAI_API_KEY) {
+      // Graceful degradation: feature exists but the key isn't configured.
+      // Client falls back to Web Speech API so the user still gets a working
+      // mic; the message is just for diagnostics in the network tab.
+      return res.status(503).json({
+        error: 'not_configured',
+        message: 'Whisper transcription needs OPENAI_API_KEY set on the server.',
+      });
+    }
+    const audioB64 = (req.body && req.body.audio_base64) || '';
+    const mimeType = (req.body && req.body.mime_type) || 'audio/webm';
+    if (!audioB64 || typeof audioB64 !== 'string') {
+      return res.status(400).json({ error: 'missing_audio', message: 'audio_base64 is required' });
+    }
+    // Cap the payload server-side. Browser-side cap should match.
+    if (audioB64.length > 25 * 1024 * 1024 / 0.75) {
+      return res.status(413).json({ error: 'too_large', message: 'Audio over 25MB. Keep it under 3 minutes.' });
+    }
+
+    // Decode base64 to a Buffer, wrap as a Blob in FormData and forward to
+    // Whisper. Node 18+ has fetch + FormData + Blob globally; no new dep.
+    const audioBuf = Buffer.from(audioB64, 'base64');
+    const ext = mimeType.includes('mp4') ? 'mp4'
+              : mimeType.includes('wav') ? 'wav'
+              : mimeType.includes('mp3') ? 'mp3'
+              : mimeType.includes('mpeg') ? 'mp3'
+              : 'webm';
+    const form = new FormData();
+    form.append('file', new Blob([audioBuf], { type: mimeType }), `memo.${ext}`);
+    form.append('model', 'whisper-1');
+    // Bias the model toward UK gigging vocabulary so it doesn't hear "set
+    // list" as "satellite" or "DI box" as "DI bots."
+    form.append('prompt', 'Gig notes for a working musician: venue, load-in, sound check, set list, DI box, PA, monitors, mileage, parking, dress code.');
+
+    const whisperResp = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      body: form,
+    });
+    if (!whisperResp.ok) {
+      const errText = await whisperResp.text().catch(() => '');
+      console.error('[ai/transcribe] whisper error', whisperResp.status, errText.slice(0, 300));
+      return res.status(502).json({ error: 'whisper_failed', message: 'Transcription provider failed. Try again in a moment.' });
+    }
+    const whisperJson = await whisperResp.json();
+    res.json({ text: whisperJson.text || '', engine: 'whisper-1' });
+  } catch (err) {
+    console.error('[ai/transcribe] error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Transcription request failed' });
+  }
+});
+
 // ── Status endpoint so the frontend can feature-detect ──────────────────────
 router.get('/status', (req, res) => {
   res.json({
@@ -459,7 +526,9 @@ router.get('/status', (req, res) => {
       'generate-bio',
       'sanity-check',
       'normalize-chordpro',
+      'transcribe',
     ],
+    transcribe_premium_available: !!process.env.OPENAI_API_KEY,
   });
 });
 

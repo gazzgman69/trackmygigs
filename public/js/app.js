@@ -901,7 +901,7 @@ function buildHomeHeroQuiet(daysUntil) {
       <div style="font-size:28px;margin-bottom:8px;">🎷</div>
       <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">${titleLine}</div>
       <div style="font-size:12px;color:var(--text-2);margin-bottom:12px;">Diary's clear. Add the next one or check the marketplace.</div>
-      <button onclick="openGigWizard()" style="background:var(--accent);color:#000;border:none;font-size:12px;font-weight:700;padding:9px 18px;border-radius:999px;cursor:pointer;">+ Log a gig</button>
+      <button onclick="openQuickLogSheet()" style="background:var(--accent);color:#000;border:none;font-size:12px;font-weight:700;padding:9px 18px;border-radius:999px;cursor:pointer;">+ Log a gig</button>
     </div>`;
 }
 
@@ -950,7 +950,7 @@ function buildHomeNeedsStrip(stats, state) {
 function buildHomeActionGrid() {
   return `
     <div style="margin:0 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
-      <div onclick="openGigWizard()" style="background:linear-gradient(160deg,rgba(240,165,0,.18) 0%,rgba(240,165,0,.06) 100%);border:1px solid rgba(240,165,0,.35);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
+      <div onclick="openQuickLogSheet()" style="background:linear-gradient(160deg,rgba(240,165,0,.18) 0%,rgba(240,165,0,.06) 100%);border:1px solid rgba(240,165,0,.35);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
         <span style="font-size:22px;margin-bottom:6px;display:block;">➕</span>
         <div style="font-size:11px;font-weight:700;color:var(--text);">Add gig</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Quick or wizard</div>
@@ -982,6 +982,229 @@ function buildHomeActionGrid() {
       </div>
     </div>`;
 }
+
+// ── Quick-log gig parser + sheet ─────────────────────────────────────────────
+// Single-text-field shortcut for logging a gig from Home in seconds. Parses
+// a phrase like "Sat 18 May, The Tythe Barn, £450" into { date, venue_name,
+// fee } and creates a confirmed gig via POST /api/gigs. Falls back to the
+// full wizard with prefilled fields when parsing is incomplete. Natural-
+// language date keywords supported: tonight, today, tomorrow, this weekend,
+// next weekend, next/this <weekday>, plus DD/MM[/YY] and "DD Mon[YYYY]".
+function parseQuickGig(text) {
+  const out = { date: null, venue_name: null, fee: null, raw: text };
+  if (!text || typeof text !== 'string') return out;
+  let rest = ' ' + text.trim() + ' ';
+
+  // 1. Amount: £450 / 450 / £450.00. Take the first such token. Strip pound
+  //    signs and trailing decimal pence.
+  const feeMatch = rest.match(/£\s*(\d+(?:\.\d+)?)\b|\b(\d{2,5}(?:\.\d{1,2})?)\b(?=\s*(?:pounds|p|gbp)?\b)/i);
+  if (feeMatch) {
+    out.fee = parseFloat(feeMatch[1] || feeMatch[2]);
+    rest = rest.replace(feeMatch[0], ' ');
+  }
+
+  // 2. Date parsing. Try natural-language phrases first (they're unambiguous),
+  //    then date-with-words ("Sat 18 May"), then DD/MM[/YY], then YYYY-MM-DD.
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const DAY_LONG = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const MONTH_NAMES = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  const MONTH_LONG = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+
+  function toIso(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  function nextWeekday(targetIdx, fromToday) {
+    const start = fromToday ? new Date(today) : new Date(today.getTime() + 86400000);
+    const diff = (targetIdx - start.getDay() + 7) % 7;
+    return new Date(start.getTime() + diff * 86400000);
+  }
+
+  // Natural-language phrases — match against the lowered, trimmed text.
+  const norm = ' ' + rest.toLowerCase().replace(/[,\.]/g, ' ').replace(/\s+/g, ' ') + ' ';
+  if (!out.date) {
+    const m = norm.match(/\b(tonight|today)\b/);
+    if (m) { out.date = toIso(today); rest = rest.replace(new RegExp(m[1], 'i'), ' '); }
+  }
+  if (!out.date) {
+    const m = norm.match(/\btomorrow\b/);
+    if (m) { out.date = toIso(new Date(today.getTime() + 86400000)); rest = rest.replace(/tomorrow/i, ' '); }
+  }
+  if (!out.date) {
+    const m = norm.match(/\bthis (weekend|sat(?:urday)?|sun(?:day)?)\b/);
+    if (m) {
+      const targetIdx = /sun/.test(m[1]) ? 0 : 6; // saturday or weekend → Sat
+      out.date = toIso(nextWeekday(targetIdx, true));
+      rest = rest.replace(new RegExp('this ' + m[1], 'i'), ' ');
+    }
+  }
+  if (!out.date) {
+    const m = norm.match(/\bnext\s+(weekend|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/);
+    if (m) {
+      const w = m[1];
+      let idx = 6; // default Sat for "next weekend"
+      if (/mon/.test(w)) idx = 1;
+      else if (/tue/.test(w)) idx = 2;
+      else if (/wed/.test(w)) idx = 3;
+      else if (/thu/.test(w)) idx = 4;
+      else if (/fri/.test(w)) idx = 5;
+      else if (/sat/.test(w)) idx = 6;
+      else if (/sun/.test(w)) idx = 0;
+      out.date = toIso(nextWeekday(idx, false));
+      rest = rest.replace(new RegExp('next\\s+' + w, 'i'), ' ');
+    }
+  }
+  if (!out.date) {
+    // "Sat 18 May" / "Saturday 18 May 2026" / "18 May" / "18 May 2026"
+    const re = /\b(?:(sun|mon|tue|wed|thu|fri|sat)(?:[a-z]+)?\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:\s+(\d{2,4}))?\b/i;
+    const m = rest.match(re);
+    if (m) {
+      const day = parseInt(m[2], 10);
+      const monthIdx = MONTH_NAMES.indexOf(m[3].toLowerCase().slice(0, 3));
+      let year = m[4] ? parseInt(m[4], 10) : today.getFullYear();
+      if (year < 100) year += 2000;
+      const d = new Date(year, monthIdx, day);
+      // If the date is in the past by more than 60 days and the year wasn't
+      // specified, push to next year (most users mean the upcoming date).
+      if (!m[4] && (today.getTime() - d.getTime()) > 60 * 86400000) {
+        d.setFullYear(year + 1);
+      }
+      if (!isNaN(d.getTime())) {
+        out.date = toIso(d);
+        rest = rest.replace(m[0], ' ');
+      }
+    }
+  }
+  if (!out.date) {
+    // DD/MM[/YY] or DD-MM[-YY]
+    const m = rest.match(/\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b/);
+    if (m) {
+      const day = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10);
+      let year = m[3] ? parseInt(m[3], 10) : today.getFullYear();
+      if (year < 100) year += 2000;
+      const d = new Date(year, month - 1, day);
+      if (!m[3] && (today.getTime() - d.getTime()) > 60 * 86400000) d.setFullYear(year + 1);
+      if (!isNaN(d.getTime())) {
+        out.date = toIso(d);
+        rest = rest.replace(m[0], ' ');
+      }
+    }
+  }
+  if (!out.date) {
+    // YYYY-MM-DD
+    const m = rest.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+    if (m) {
+      out.date = `${m[1]}-${String(parseInt(m[2], 10)).padStart(2, '0')}-${String(parseInt(m[3], 10)).padStart(2, '0')}`;
+      rest = rest.replace(m[0], ' ');
+    }
+  }
+
+  // 3. Venue: whatever non-noise text is left. Strip joining words and
+  //    multiple spaces. Leading commas/dashes are common after stripping
+  //    the date.
+  let venue = rest
+    .replace(/^[\s,\-•·]+|[\s,\-•·]+$/g, '')
+    .replace(/\s+at\s+/i, ' ') // "gig at The Foo" → "gig The Foo"
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  // Strip "for X" or "£X" residuals
+  venue = venue.replace(/\b(for|gig|booking|playing)\b/gi, '').replace(/\s{2,}/g, ' ').trim();
+  // Strip a stray leading "the " if the rest is also capitalised (avoid
+  // double-articling "The The Old Mill").
+  venue = venue.replace(/^,\s*/, '').replace(/,\s*$/, '');
+  if (venue && venue.length > 1) out.venue_name = venue.slice(0, 200);
+
+  return out;
+}
+window.parseQuickGig = parseQuickGig;
+
+function openQuickLogSheet() {
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">Quick-log a gig</div>
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:12px;">Type a date, venue and fee. We'll fill the details and you can edit any of it later.</div>
+      <input id="quickLogInput" type="text" placeholder="Sat 18 May, The Tythe Barn, £450" autocomplete="off" style="width:100%;padding:12px 14px;background:var(--card);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;box-sizing:border-box;margin-bottom:4px;" />
+      <div id="quickLogPreview" style="font-size:11px;color:var(--text-3);min-height:18px;padding:4px 2px;"></div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button id="quickLogSubmit" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:10px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;">Save gig</button>
+        <button id="quickLogWizard" style="flex:1;background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;">Open full wizard</button>
+      </div>
+      <button id="quickLogCancel" style="width:100%;margin-top:10px;background:transparent;border:none;color:var(--text-3);padding:8px;font-size:12px;font-weight:500;cursor:pointer;">Cancel</button>
+    </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  const input = overlay.querySelector('#quickLogInput');
+  const preview = overlay.querySelector('#quickLogPreview');
+  const submitBtn = overlay.querySelector('#quickLogSubmit');
+  const wizardBtn = overlay.querySelector('#quickLogWizard');
+  const cancelBtn = overlay.querySelector('#quickLogCancel');
+
+  function renderPreview() {
+    const parsed = parseQuickGig(input.value);
+    const bits = [];
+    if (parsed.date) bits.push(`📅 ${formatDateLong(parsed.date)}`);
+    if (parsed.venue_name) bits.push(`📍 ${parsed.venue_name}`);
+    if (parsed.fee != null) bits.push(`💷 £${parsed.fee}`);
+    preview.textContent = bits.length ? bits.join('  ·  ') : 'Type at least a date and a venue.';
+    preview.style.color = bits.length >= 2 ? 'var(--success,#3FB950)' : 'var(--text-3)';
+  }
+  input.addEventListener('input', renderPreview);
+  setTimeout(() => input.focus(), 50);
+  renderPreview();
+
+  async function doSubmit() {
+    const parsed = parseQuickGig(input.value);
+    if (!parsed.date || !parsed.venue_name) {
+      // Hand off to the wizard with the partial text in the band/notes field.
+      overlay.remove();
+      if (typeof openGigWizard === 'function') {
+        try { openGigWizard(); } catch (_) {}
+        if (typeof showToast === 'function') showToast("Couldn't parse a date and venue — finish in the wizard");
+      }
+      return;
+    }
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving…';
+    try {
+      const body = {
+        band_name: parsed.venue_name, // band_name carries the act/client; venue_name is the location
+        venue_name: parsed.venue_name,
+        date: parsed.date,
+        fee: parsed.fee,
+        source: 'quick-log',
+        status: 'confirmed',
+      };
+      const res = await fetch('/api/gigs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error('Save failed (HTTP ' + res.status + ')');
+      if (typeof invalidateGigsCache === 'function') invalidateGigsCache();
+      window._cachedStats = null;
+      overlay.remove();
+      if (typeof showToast === 'function') showToast('Gig saved');
+      if (typeof renderHomeScreen === 'function') renderHomeScreen();
+    } catch (err) {
+      if (typeof showToast === 'function') showToast('Save failed: ' + (err.message || 'unknown error'));
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Save gig';
+    }
+  }
+
+  submitBtn.addEventListener('click', doSubmit);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSubmit(); });
+  wizardBtn.addEventListener('click', () => { overlay.remove(); if (typeof openGigWizard === 'function') openGigWizard(); });
+  cancelBtn.addEventListener('click', () => overlay.remove());
+}
+window.openQuickLogSheet = openQuickLogSheet;
 
 // ── More sheet (action grid tile #6) ─────────────────────────────────────────
 // Bottom sheet with the less-frequently-used screens that used to clutter Home.
@@ -4371,6 +4594,7 @@ function buildProfileHTML(content, profile) {
           <div style="font-size:12px;color:var(--text-2);">📍 ${escapeHtml(profile.location || profile.home_postcode || 'Location not set')}</div>
           ${profile.home_postcode ? `<div style="font-size:10px;color:var(--text-3);margin-top:2px;">Home: ${escapeHtml(profile.home_postcode)} · Travel radius: ${profile.travel_radius_miles != null ? profile.travel_radius_miles : 50} mi</div>` : '<div style="font-size:10px;color:var(--warning);margin-top:2px;">Add home postcode for mileage tracking</div>'}
           ${profile.available_to_dep ? `<span style="display:inline-block;background:var(--success-dim);color:var(--success);padding:4px 10px;border-radius:12px;font-size:10px;font-weight:600;margin-top:6px;">Available to dep</span>` : ''}
+          ${(profile.available_now && (!profile.available_now_until || new Date(profile.available_now_until) > new Date())) ? `<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(63,185,80,.18);color:var(--success,#3FB950);padding:4px 10px;border-radius:12px;font-size:10px;font-weight:800;letter-spacing:.5px;margin-top:6px;margin-left:6px;text-transform:uppercase;"><span style="width:5px;height:5px;border-radius:50%;background:var(--success,#3FB950);box-shadow:0 0 6px var(--success,#3FB950);"></span>Available now</span>` : ''}
         </div>
       </div>
       <div style="padding:0 16px 12px;display:flex;gap:6px;">
@@ -4433,6 +4657,16 @@ function buildProfileHTML(content, profile) {
           <div style="flex:1;min-width:0;">
             <div style="font-size:13px;font-weight:600;color:var(--text);">Share your availability</div>
             <div style="font-size:11px;color:var(--text-2);">Send calendar link to band leaders</div>
+          </div>
+          <span style="color:var(--accent);font-size:16px;">›</span>
+        </div>
+      </div>
+      <div style="padding:0 16px;margin-bottom:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;cursor:pointer;" onclick="shareNextGig()">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">🎤</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);">Share next gig</div>
+            <div style="font-size:11px;color:var(--text-2);">Single-card link for email sigs and link-in-bio</div>
           </div>
           <span style="color:var(--accent);font-size:16px;">›</span>
         </div>
@@ -9277,8 +9511,14 @@ async function openEditGig(gigId) {
           </div>
         </div>
         <div class="form-group">
-          <div class="form-label">Notes</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <div class="form-label" style="margin-bottom:0;">Notes</div>
+            <button type="button" id="editNotesMicBtn" onclick="toggleGigNoteVoice('editNotes', this)" style="background:transparent;border:1px solid var(--border);color:var(--text-2);padding:5px 10px;border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;">
+              <span class="tmg-mic-icon">🎤</span><span class="tmg-mic-label">Voice note</span>
+            </button>
+          </div>
           <textarea class="form-input" id="editNotes" style="resize:vertical;min-height:80px;">${escapeHtml(getGigNotes(gig))}</textarea>
+          <div id="editNotesMicStatus" style="font-size:10px;color:var(--text-3);margin-top:4px;min-height:14px;"></div>
         </div>
         <div class="form-group">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -9454,6 +9694,32 @@ function buildDirectoryProfileEditor(profile) {
         </div>
       </div>
     </div>
+    ${(() => {
+      // "Available now": green-accent toggle so the live signal reads
+      // differently from the orange directory-status toggles above. When
+      // ON we compute the live-expiry label client-side from the server's
+      // available_now_until timestamp; the toggle treats the OFF state
+      // as the default if the user has never set it.
+      const availActive = !!(profile.available_now && (!profile.available_now_until || new Date(profile.available_now_until) > new Date()));
+      const expiryLabel = availActive && profile.available_now_until
+        ? 'Expires ' + new Date(profile.available_now_until).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+        : 'Auto-expires after 7 days';
+      return `
+    <div style="margin-bottom:14px;padding:12px;background:${availActive ? 'rgba(63,185,80,.10)' : 'var(--card)'};border:1px solid ${availActive ? 'rgba(63,185,80,.4)' : 'var(--border)'};border-radius:var(--rs);">
+      <div style="display:flex;align-items:flex-start;gap:12px;">
+        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
+          <input id="editAvailableNow" type="checkbox" ${availActive ? 'checked' : ''} style="opacity:0;width:0;height:0;" onchange="this.parentElement.querySelector('.tmg-toggle-dot').style.transform = this.checked ? 'translateX(20px)' : 'translateX(0)'; this.parentElement.querySelector('.tmg-toggle-bg').style.background = this.checked ? 'var(--success,#3FB950)' : 'var(--border)'; this.closest('div[style*=padding]').style.background = this.checked ? 'rgba(63,185,80,.10)' : 'var(--card)'; this.closest('div[style*=padding]').style.borderColor = this.checked ? 'rgba(63,185,80,.4)' : 'var(--border)';" />
+          <span class="tmg-toggle-bg" style="position:absolute;inset:0;background:${availActive ? 'var(--success,#3FB950)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
+          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${availActive ? 'translateX(20px)' : 'translateX(0)'};"></span>
+        </label>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Available for last-minute deps</div>
+          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">When on, you float to the top of Find Musicians searches and your card shows a green pulse. Use it before a quiet weekend when you'd take a dep.</div>
+          <div style="font-size:10px;color:${availActive ? 'var(--success,#3FB950)' : 'var(--text-3)'};margin-top:6px;font-weight:${availActive ? '700' : '500'};">${escapeHtml(expiryLabel)}</div>
+        </div>
+      </div>
+    </div>`;
+    })()}
     <div style="margin-bottom:14px;">
       <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
         <span>Short bio</span>
@@ -9697,6 +9963,11 @@ async function saveProfile() {
   // 2026-04-28 chat batch: open-DM toggle.
   const allowDmsEl = document.getElementById('editAllowDms');
   const allowDms = allowDmsEl ? !!allowDmsEl.checked : undefined;
+  // "Available now" toggle. Sends the boolean only; the server picks the
+  // 7-day default duration. If we later add a duration picker, send
+  // available_now_duration_days too.
+  const availableNowEl = document.getElementById('editAvailableNow');
+  const availableNow = availableNowEl ? !!availableNowEl.checked : undefined;
 
   try {
     const payload = {
@@ -9724,6 +9995,7 @@ async function saveProfile() {
     if (minFeePence !== undefined) payload.min_fee_pence = minFeePence;
     if (notifyFreeGigs !== undefined) payload.notify_free_gigs = notifyFreeGigs;
     if (allowDms !== undefined) payload.allow_direct_messages = allowDms;
+    if (availableNow !== undefined) payload.available_now = availableNow;
 
     const res = await fetch('/api/user/profile', {
       method: 'PATCH',
@@ -10035,6 +10307,18 @@ async function shareAvailability() {
   _shareOrCopy(url, `${name} availability`, `Book ${name}. Live availability here.`);
 }
 window.shareAvailability = shareAvailability;
+
+// Share the public "next gig" widget link. Lightweight card a recipient
+// can drop into an email signature, link-in-bio, or paste straight into
+// a chat. Shows ONE confirmed future gig, hides fee + private notes.
+async function shareNextGig() {
+  const slug = await _ensurePublicSlug();
+  if (!slug) { showToast('Could not generate share link'); return; }
+  const name = window._currentUser?.display_name || window._currentUser?.name || 'me';
+  const url = `${location.origin}/share/${slug}/next-gig`;
+  _shareOrCopy(url, `${name} - next gig`, `See where to catch ${name} next.`);
+}
+window.shareNextGig = shareNextGig;
 
 function toggleTheme() {
   document.body.classList.toggle('light-mode');
@@ -10407,6 +10691,12 @@ function renderDiscoverCard(u) {
   const geoBits = [outward, radius && `travels ${radius}`, dist].filter(Boolean).join(' · ');
 
   const premium = (u.premium || u.is_premium) ? `<span class="disc-premium-dot" title="Premium"></span>` : '';
+  // Available-now chip lives at the top of the card next to the name so
+  // the user sees the live signal without having to scan badges. Pulsing
+  // dot to read as "now, this moment" rather than "set this week."
+  const availableNowChip = u.available_now
+    ? `<span title="Free for last-minute deps" style="display:inline-flex;align-items:center;gap:4px;background:rgba(63,185,80,.18);color:var(--success,#3FB950);font-size:9px;font-weight:800;letter-spacing:.8px;padding:2px 7px;border-radius:999px;text-transform:uppercase;margin-left:6px;"><span style="width:5px;height:5px;border-radius:50%;background:var(--success,#3FB950);box-shadow:0 0 6px var(--success,#3FB950);"></span>Available now</span>`
+    : '';
   const badges = renderTrustBadges(u);
 
   const bio = (u.bio || '').trim();
@@ -10422,6 +10712,7 @@ function renderDiscoverCard(u) {
         <div class="disc-name-row">
           <div class="disc-name">${escapeHtml(name)}</div>
           ${premium}
+          ${availableNowChip}
         </div>
         ${meta ? `<div class="disc-meta">${escapeHtml(meta)}</div>` : ''}
         ${geoBits ? `<div class="disc-geo">${escapeHtml(geoBits)}</div>` : ''}
@@ -15282,6 +15573,225 @@ function applyAIScannedReceipt(data) {
   if (typeof showToast === 'function') showToast('Receipt scanned. Review and save.', 'success');
 }
 window.applyAIScannedReceipt = applyAIScannedReceipt;
+
+// ── Voice note transcription ─────────────────────────────────────────────────
+// One-tap voice memo for any text field. Free users get browser-native
+// Web Speech API transcription (fast, no vendor, no cost). Premium users
+// with OPENAI_API_KEY set on the server route through Whisper for better
+// accuracy in noisy venue environments — we record audio via MediaRecorder
+// and POST it to /api/ai/transcribe. Graceful degradation: if Whisper isn't
+// configured server-side, premium users fall back to Web Speech too.
+//
+// Usage: <button onclick="toggleGigNoteVoice('targetTextareaId', this)">
+//
+// State machine per call: idle → recording → finishing → idle. The button
+// label + status line update on every transition so the user always knows
+// what the mic is doing.
+
+window._activeVoiceNote = null;
+
+async function toggleGigNoteVoice(targetId, btn) {
+  const target = document.getElementById(targetId);
+  const status = document.getElementById(targetId + 'MicStatus');
+  if (!target) return;
+
+  // Already recording → stop
+  if (window._activeVoiceNote && window._activeVoiceNote.targetId === targetId) {
+    try { window._activeVoiceNote.stop(); } catch (_) {}
+    return;
+  }
+
+  // Choose path: premium with server Whisper available → Whisper; else Web Speech.
+  // We rely on the cheap /api/ai/status endpoint to feature-detect the server
+  // path. Cache the result for the session so the toggle isn't laggy.
+  const isPremium = (window._currentUser && window._currentUser.subscription_tier) === 'premium';
+  let useWhisper = false;
+  if (isPremium) {
+    if (window._whisperAvailable == null) {
+      try {
+        const r = await fetch('/api/ai/status');
+        if (r.ok) {
+          const j = await r.json();
+          window._whisperAvailable = !!j.transcribe_premium_available;
+        } else {
+          window._whisperAvailable = false;
+        }
+      } catch (_) { window._whisperAvailable = false; }
+    }
+    useWhisper = !!window._whisperAvailable;
+  }
+
+  if (useWhisper) {
+    await startWhisperRecording(targetId, target, btn, status);
+  } else {
+    startWebSpeechRecording(targetId, target, btn, status, isPremium);
+  }
+}
+window.toggleGigNoteVoice = toggleGigNoteVoice;
+
+function setMicButtonState(btn, state) {
+  if (!btn) return;
+  const icon = btn.querySelector('.tmg-mic-icon');
+  const label = btn.querySelector('.tmg-mic-label');
+  if (state === 'recording') {
+    if (icon) icon.textContent = '⏺';
+    if (label) label.textContent = 'Stop';
+    btn.style.background = 'rgba(248,81,73,.15)';
+    btn.style.borderColor = 'var(--danger,#F85149)';
+    btn.style.color = 'var(--danger,#F85149)';
+  } else if (state === 'busy') {
+    if (icon) icon.textContent = '⏳';
+    if (label) label.textContent = 'Transcribing…';
+    btn.style.background = 'var(--accent-dim)';
+    btn.style.borderColor = 'rgba(240,165,0,.5)';
+    btn.style.color = 'var(--accent)';
+  } else {
+    if (icon) icon.textContent = '🎤';
+    if (label) label.textContent = 'Voice note';
+    btn.style.background = 'transparent';
+    btn.style.borderColor = 'var(--border)';
+    btn.style.color = 'var(--text-2)';
+  }
+}
+
+function appendToNotes(target, newText) {
+  if (!newText || !target) return;
+  const trimmed = String(newText).trim();
+  if (!trimmed) return;
+  const existing = target.value.trim();
+  target.value = existing ? (existing + '\n\n' + trimmed) : trimmed;
+  // Trigger input event so any oninput listeners (char counts etc) fire.
+  target.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// Free-path: Web Speech API. Fast, no upload, on-device on most browsers.
+// Works in iOS Safari 14.5+, Chrome desktop + Android. Falls back to a toast
+// when unsupported (older Firefox, in-app webviews).
+function startWebSpeechRecording(targetId, target, btn, status, isPremium) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    if (typeof showToast === 'function') {
+      showToast('Voice notes need a browser with speech recognition. Try Safari or Chrome.');
+    }
+    return;
+  }
+  const rec = new SR();
+  rec.lang = 'en-GB';
+  rec.continuous = true;
+  rec.interimResults = false;
+
+  let finalText = '';
+  rec.onresult = (event) => {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        finalText += (finalText ? ' ' : '') + event.results[i][0].transcript;
+      }
+    }
+    if (status) status.textContent = finalText
+      ? `Captured: ${finalText.slice(0, 80)}${finalText.length > 80 ? '…' : ''}`
+      : 'Listening…';
+  };
+  rec.onerror = (event) => {
+    if (status) status.textContent = 'Error: ' + (event.error || 'unknown');
+    setMicButtonState(btn, 'idle');
+    window._activeVoiceNote = null;
+  };
+  rec.onend = () => {
+    appendToNotes(target, finalText);
+    setMicButtonState(btn, 'idle');
+    if (status) status.textContent = finalText
+      ? 'Added to notes.' + (isPremium && !window._whisperAvailable ? ' (Whisper not configured; using browser STT.)' : '')
+      : 'Nothing captured.';
+    window._activeVoiceNote = null;
+    setTimeout(() => { if (status && status.textContent.startsWith('Added')) status.textContent = ''; }, 4000);
+  };
+
+  try {
+    rec.start();
+  } catch (err) {
+    if (status) status.textContent = 'Could not start: ' + (err.message || 'unknown');
+    return;
+  }
+  setMicButtonState(btn, 'recording');
+  if (status) status.textContent = 'Listening… tap Stop when done.';
+  window._activeVoiceNote = { targetId, stop: () => { try { rec.stop(); } catch (_) {} } };
+}
+
+// Premium path: MediaRecorder → POST base64 → Whisper. Higher accuracy in
+// venue noise. Falls back to Web Speech transparently if the server returns
+// 503 (key not set).
+async function startWhisperRecording(targetId, target, btn, status) {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    if (status) status.textContent = 'Mic permission denied.';
+    return;
+  }
+  // Prefer webm/opus if supported; Safari only does mp4/aac so we let the
+  // browser pick when our preferred type isn't available.
+  let mimeType = 'audio/webm;codecs=opus';
+  if (!MediaRecorder.isTypeSupported(mimeType)) {
+    mimeType = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+  }
+  const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  const chunks = [];
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    setMicButtonState(btn, 'busy');
+    if (status) status.textContent = 'Sending to Whisper…';
+
+    const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+    if (blob.size > 24 * 1024 * 1024) {
+      if (status) status.textContent = 'Recording too long (>24MB). Keep voice notes under ~3 minutes.';
+      setMicButtonState(btn, 'idle');
+      window._activeVoiceNote = null;
+      return;
+    }
+
+    try {
+      // FileReader → base64 (strip the data: prefix)
+      const audio_base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = () => reject(new Error('read_failed'));
+        reader.readAsDataURL(blob);
+      });
+      const r = await fetch('/api/ai/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_base64, mime_type: blob.type }),
+      });
+      if (r.status === 503 || r.status === 402) {
+        // Server says Whisper isn't available — graceful fallback.
+        const j = await r.json().catch(() => ({}));
+        if (status) status.textContent = (j.message || 'Whisper unavailable') + ' Falling back to browser…';
+        window._whisperAvailable = false; // cache for the rest of the session
+        setMicButtonState(btn, 'idle');
+        window._activeVoiceNote = null;
+        // Kick off Web Speech immediately so the user doesn't have to tap again.
+        startWebSpeechRecording(targetId, target, btn, status, true);
+        return;
+      }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const text = (j && j.text) || '';
+      appendToNotes(target, text);
+      if (status) status.textContent = text ? 'Added to notes.' : 'Nothing captured.';
+      setTimeout(() => { if (status && status.textContent.startsWith('Added')) status.textContent = ''; }, 4000);
+    } catch (err) {
+      if (status) status.textContent = 'Transcription failed: ' + (err.message || 'unknown');
+    } finally {
+      setMicButtonState(btn, 'idle');
+      window._activeVoiceNote = null;
+    }
+  };
+  recorder.start();
+  setMicButtonState(btn, 'recording');
+  if (status) status.textContent = 'Recording… tap Stop when done.';
+  window._activeVoiceNote = { targetId, stop: () => { try { recorder.stop(); } catch (_) {} } };
+}
 
 // S13-10: Categories that map to HMRC SA103 deductible boxes. 'Other' and
 // anything uncategorised does not roll up into the claimable total.

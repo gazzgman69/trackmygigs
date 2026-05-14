@@ -303,6 +303,179 @@ router.get('/share/:slug', async (req, res) => {
   }
 });
 
+// ── Public "next gig" widget ────────────────────────────────────────────────
+// /share/:slug/next-gig — single-card page showing the artist's next confirmed
+// gig. Designed to be dropped into an email signature, link-in-bio, or sent
+// directly to a venue/booker who wants to know when they can catch the act.
+// Shows: artist name, photo, gig date + time, venue name, optional address.
+// Hides: fees, personal contact info, notes, anything else. Privacy default
+// is "next single confirmed future gig only" — never the full diary.
+//
+// Includes an "Add to calendar" download (.ics) so the recipient can pin
+// the date in their own calendar with one tap. Open Graph tags give nice
+// link previews when shared on WhatsApp / iMessage / socials.
+router.get('/share/:slug/next-gig', async (req, res) => {
+  try {
+    const user = await findUserBySlug(req.params.slug);
+    if (!user) {
+      res.status(404).set('Content-Type', 'text/html').send(pageHtml('Not found', `<div class="empty"><h1>Not found</h1><p class="sub">This link is no longer active.</p></div>`));
+      return;
+    }
+
+    const gigR = await db.query(
+      `SELECT id, date, start_time, end_time, venue_name, venue_address, band_name
+         FROM gigs
+        WHERE user_id = $1
+          AND status = 'confirmed'
+          AND date >= CURRENT_DATE
+        ORDER BY date ASC, start_time ASC NULLS LAST
+        LIMIT 1`,
+      [user.id]
+    );
+
+    const displayName = user.display_name || user.name || 'This musician';
+    const photoUrl = user.epk_photo_url || user.avatar_url || '';
+    const initial = (displayName || 'M').charAt(0).toUpperCase();
+    const avatarHtml = photoUrl
+      ? `<img class="avatar" src="${esc(photoUrl)}" alt="" style="object-fit:cover;border-radius:40px;width:80px;height:80px;" />`
+      : `<div class="avatar">${esc(initial)}</div>`;
+
+    let body;
+    if (gigR.rows.length === 0) {
+      body = `
+        ${avatarHtml}
+        <h1 style="text-align:center;">${esc(displayName)}</h1>
+        <p class="sub" style="text-align:center;">No public gigs on the diary right now.</p>
+        <div class="empty">
+          <p>${esc(displayName)} hasn&#x2019;t got a confirmed gig coming up. Check back soon.</p>
+        </div>`;
+      res.set('Content-Type', 'text/html').send(pageHtml(displayName + " - Next gig", body, {
+        description: 'No upcoming public gigs.',
+        url: absoluteUrl(req),
+        noindex: true,
+      }));
+      return;
+    }
+
+    const g = gigR.rows[0];
+    const gigDate = g.date instanceof Date ? g.date.toISOString().slice(0, 10) : String(g.date).slice(0, 10);
+    const dateObj = new Date(gigDate + 'T12:00:00');
+    const dateLabel = dateObj.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const timePart = g.start_time
+      ? String(g.start_time).slice(0, 5) + (g.end_time ? ' to ' + String(g.end_time).slice(0, 5) : '')
+      : '';
+    const venuePart = g.venue_name || g.band_name || 'Venue to be announced';
+    const addressPart = g.venue_address && g.venue_address !== g.venue_name ? g.venue_address : '';
+
+    // Google Maps universal link for the venue. Falls back to a search by
+    // venue name when no address is set.
+    const mapsQuery = encodeURIComponent(addressPart || venuePart);
+    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`;
+
+    body = `
+      ${avatarHtml}
+      <h1 style="text-align:center;">${esc(displayName)}</h1>
+      <p class="sub" style="text-align:center;">Next public gig</p>
+      <div class="card" style="text-align:center;padding:24px 16px;">
+        <div style="font-size:11px;font-weight:700;color:var(--accent);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px;">${esc(dateLabel.split(',')[0])}</div>
+        <div style="font-size:24px;font-weight:800;color:var(--text);margin-bottom:6px;letter-spacing:-.3px;">${esc(dateLabel.split(',').slice(1).join(',').trim())}</div>
+        ${timePart ? `<div style="font-size:14px;color:var(--text-2);margin-bottom:14px;">${esc(timePart)}</div>` : '<div style="margin-bottom:14px;"></div>'}
+        <div style="border-top:1px solid var(--border);padding-top:14px;">
+          <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px;">${esc(venuePart)}</div>
+          ${addressPart ? `<div style="font-size:13px;color:var(--text-2);margin-bottom:14px;">${esc(addressPart)}</div>` : '<div style="margin-bottom:14px;"></div>'}
+          <a class="btn" href="/share/${esc(req.params.slug)}/next-gig.ics" download="trackmygigs-${esc(req.params.slug)}.ics">Add to calendar</a>
+          <a class="btn btn-o" href="${esc(mapsUrl)}" target="_blank" rel="noopener">Open in Maps</a>
+        </div>
+      </div>
+      <p class="sub" style="text-align:center;font-size:12px;margin-top:16px;">Want to see the full diary? <a href="/share/${esc(req.params.slug)}" style="color:var(--accent);text-decoration:none;">View availability</a></p>`;
+
+    res.set('Content-Type', 'text/html').send(pageHtml(`${displayName} - ${venuePart} - ${dateLabel}`, body, {
+      description: `${displayName} live at ${venuePart} on ${dateLabel}${timePart ? ' at ' + timePart : ''}.`,
+      image: photoUrl || '',
+      url: absoluteUrl(req),
+      noindex: false, // Public-by-design; let it index for SEO
+    }));
+  } catch (err) {
+    console.error('Public next-gig error:', err);
+    res.status(500).set('Content-Type', 'text/html').send(pageHtml('Error', `<div class="empty"><h1>Something went wrong</h1><p class="sub">Please try again.</p></div>`));
+  }
+});
+
+// /share/:slug/next-gig.ics — RFC5545 calendar download for the next gig.
+// One VEVENT, no recurrence, no alarms. Same privacy rules as the HTML view.
+router.get('/share/:slug/next-gig.ics', async (req, res) => {
+  try {
+    const user = await findUserBySlug(req.params.slug);
+    if (!user) return res.status(404).send('Not found');
+
+    const gigR = await db.query(
+      `SELECT id, date, start_time, end_time, venue_name, venue_address, band_name
+         FROM gigs
+        WHERE user_id = $1
+          AND status = 'confirmed'
+          AND date >= CURRENT_DATE
+        ORDER BY date ASC, start_time ASC NULLS LAST
+        LIMIT 1`,
+      [user.id]
+    );
+    if (gigR.rows.length === 0) return res.status(404).send('No upcoming gigs');
+
+    const g = gigR.rows[0];
+    const displayName = user.display_name || user.name || 'Musician';
+    const gigDate = g.date instanceof Date ? g.date.toISOString().slice(0, 10) : String(g.date).slice(0, 10);
+
+    function icsDateTime(dateStr, timeStr) {
+      // Local floating time (no Z, no TZID) so the recipient's calendar
+      // interprets it in their local time. iCal-compatible.
+      const d = dateStr.replace(/-/g, '');
+      if (!timeStr) return d;
+      const t = String(timeStr).replace(/:/g, '').slice(0, 6).padEnd(6, '0');
+      return `${d}T${t}`;
+    }
+    function icsEscape(s) {
+      return String(s || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/\n/g, '\\n')
+        .replace(/,/g, '\\,')
+        .replace(/;/g, '\\;');
+    }
+
+    const dtStart = icsDateTime(gigDate, g.start_time);
+    const dtEnd = icsDateTime(gigDate, g.end_time || g.start_time || '');
+    const isAllDay = !g.start_time;
+    const summary = icsEscape(`${displayName} live${g.venue_name ? ' at ' + g.venue_name : ''}`);
+    const location = icsEscape(g.venue_address || g.venue_name || '');
+    const description = icsEscape(`Powered by TrackMyGigs - https://trackmygigs.app/share/${req.params.slug}/next-gig`);
+    const uid = `${g.id}@trackmygigs.app`;
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, 'Z');
+
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//TrackMyGigs//Next gig widget//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      `UID:${uid}`,
+      `DTSTAMP:${stamp}`,
+      isAllDay ? `DTSTART;VALUE=DATE:${dtStart}` : `DTSTART:${dtStart}`,
+      isAllDay ? `DTEND;VALUE=DATE:${dtEnd}` : `DTEND:${dtEnd}`,
+      `SUMMARY:${summary}`,
+      location ? `LOCATION:${location}` : null,
+      `DESCRIPTION:${description}`,
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].filter(Boolean).join('\r\n');
+
+    res.set('Content-Type', 'text/calendar; charset=utf-8');
+    res.set('Content-Disposition', `attachment; filename="trackmygigs-next-gig.ics"`);
+    res.send(lines);
+  } catch (err) {
+    console.error('Public next-gig.ics error:', err);
+    res.status(500).send('Error generating calendar file');
+  }
+});
+
 // ── Public EPK (Electronic Press Kit) ────────────────────────────────────────
 // /epk/:slug — artist bio, photo, video/audio links, recent gigs
 router.get('/epk/:slug', async (req, res) => {
