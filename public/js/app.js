@@ -648,6 +648,11 @@ async function renderHomeScreen() {
   const currentUserId = window._currentUser?.id || null;
   const cacheMatchesUser = window._cachedStatsUser && window._cachedStatsUser === currentUserId;
 
+  // Once per session, opportunistically pull from Google Calendar / Sheets
+  // if the user has them connected and the last pull is stale. Fire-and-
+  // forget so it doesn't block Home render.
+  if (typeof maybeBackgroundSync === 'function') maybeBackgroundSync();
+
   // Stale-while-revalidate: if ANY cached stats exist for this user, paint
   // them immediately so the home page never shows a skeleton after the very
   // first load. If the cache is older than STATS_CACHE_TTL we still refetch
@@ -1261,6 +1266,13 @@ async function triggerSyncNow() {
     if (pushed.ok) parts.push(`${pushed.ok} pushed to Google`);
     if (pushed.failed) parts.push(`${pushed.failed} failed`);
     toastify(parts.length ? `Sync complete: ${parts.join(', ')}` : 'Sync complete: already up to date');
+
+    // If any push failures came back with details, open a sheet listing
+    // exactly which gigs didn't sync and why. Diagnostic only (no actions);
+    // user can retry by hitting Sync Now again or by editing the gig.
+    if (Array.isArray(pushed.failures) && pushed.failures.length > 0) {
+      openCalendarSyncFailures(pushed.failures);
+    }
 
     // Update any visible last-synced indicator
     const el = document.getElementById('calendarLastSyncLabel');
@@ -4638,9 +4650,19 @@ async function pullFromSheet() {
     const parts = [];
     if (data.pulled) parts.push(`${data.pulled} updated`);
     if (data.imported) parts.push(`${data.imported} new gig${data.imported === 1 ? '' : 's'}`);
-    if (data.conflicts) parts.push(`${data.conflicts} resolved by Sheets`);
+    if (data.conflicts) {
+      parts.push(`${data.conflicts} conflict${data.conflicts === 1 ? '' : 's'} kept TMG values`);
+    }
     if (parts.length === 0) parts.push('No changes since last pull');
     if (typeof showToast === 'function') showToast(parts.join(', '));
+
+    // If there are conflicts, open the resolver sheet so the user can pick
+    // which side wins per row. Pull surfaces both sides; this UI lets the
+    // user accept the Sheet value (PATCH local gig with sheet values) or
+    // leave TMG as-is. Pure additive on top of the toast.
+    if (Array.isArray(data.conflict_details) && data.conflict_details.length > 0) {
+      openSheetsConflictResolver(data.conflict_details);
+    }
   } catch (err) {
     console.error('Pull from sheet failed:', err);
     if (typeof showToast === 'function') showToast('Pull failed: ' + (err.message || 'unknown error'));
@@ -4649,6 +4671,217 @@ async function pullFromSheet() {
   hydrateSheetsProfileRow();
 }
 window.pullFromSheet = pullFromSheet;
+
+// ── Sheets pull conflict resolver ────────────────────────────────────────────
+// Surfaces each row where the sheet and TMG diverge after a TMG-side edit.
+// The server refuses to overwrite TMG silently and ships both sides; this
+// modal lets the user pick "Use Sheet's value" per row (PATCH the gig with
+// the sheet's values) or leave TMG as-is. "Keep TMG" doesn't push back to
+// Sheets automatically; that's the existing write-back hook on PATCH so any
+// future TMG edit will sync.
+function openSheetsConflictResolver(conflicts) {
+  if (!Array.isArray(conflicts) || conflicts.length === 0) return;
+
+  const FIELD_LABELS = {
+    date: 'Date',
+    start_time: 'Start',
+    end_time: 'End',
+    fee: 'Fee',
+    band_name: 'Band',
+    venue_name: 'Venue',
+    venue_address: 'Address',
+    client_name: 'Client',
+    notes: 'Notes',
+  };
+
+  function diffRows(tmg, sheet) {
+    const rows = [];
+    Object.keys(FIELD_LABELS).forEach((k) => {
+      const a = tmg && tmg[k] != null ? String(tmg[k]) : '';
+      const b = sheet && sheet[k] != null ? String(sheet[k]) : '';
+      if (a !== b) rows.push({ key: k, label: FIELD_LABELS[k], tmg: a || '(blank)', sheet: b || '(blank)' });
+    });
+    return rows;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+
+  const cards = conflicts.map((c, idx) => {
+    const diffs = diffRows(c.tmg, c.sheet);
+    const title = (c.tmg && c.tmg.venue_name) || (c.sheet && c.sheet.venue_name) || ('Row ' + (c.sheet_row || idx + 1));
+    const dateLbl = (c.tmg && c.tmg.date) || (c.sheet && c.sheet.date) || '';
+    const diffsHtml = diffs.map((d) => `
+      <div style="display:grid;grid-template-columns:64px 1fr 1fr;gap:6px;font-size:11px;padding:6px 0;border-bottom:1px solid var(--border);">
+        <div style="color:var(--text-3);font-weight:600;">${escapeHtml(d.label)}</div>
+        <div style="color:var(--text);"><span style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;">TMG</span><br>${escapeHtml(d.tmg)}</div>
+        <div style="color:var(--text);"><span style="font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;">Sheet</span><br>${escapeHtml(d.sheet)}</div>
+      </div>
+    `).join('');
+    const sheetJson = encodeURIComponent(JSON.stringify(c.sheet || {}));
+    return `
+      <div data-conflict-card="${escapeAttr(c.gig_id)}" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:700;color:var(--text);">${escapeHtml(title)}</div>
+            ${dateLbl ? `<div style="font-size:11px;color:var(--text-3);">${escapeHtml(String(dateLbl))}</div>` : ''}
+          </div>
+        </div>
+        <div style="margin-bottom:10px;">${diffsHtml || '<div style="font-size:11px;color:var(--text-3);">No field-level diff</div>'}</div>
+        <div style="display:flex;gap:6px;">
+          <button data-act="use-sheet" data-gig="${escapeAttr(c.gig_id)}" data-sheet="${sheetJson}" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:10px;padding:8px;font-size:12px;font-weight:700;cursor:pointer;">Use Sheet&#x2019;s value</button>
+          <button data-act="keep-tmg" data-gig="${escapeAttr(c.gig_id)}" style="flex:1;background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;">Keep TMG</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 20px;width:100%;max-width:390px;max-height:80vh;overflow-y:auto;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">${conflicts.length} conflict${conflicts.length === 1 ? '' : 's'} kept TMG values</div>
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:14px;">Each of these gigs was edited in TMG after the last push to Sheets. Pick a side per row.</div>
+      ${cards}
+      <button data-act="close" style="width:100%;margin-top:8px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;">Close</button>
+    </div>`;
+
+  overlay.addEventListener('click', async (e) => {
+    const target = e.target.closest('button');
+    if (!target) {
+      if (e.target === overlay) overlay.remove();
+      return;
+    }
+    const act = target.dataset.act;
+    if (act === 'close') { overlay.remove(); return; }
+    if (act === 'keep-tmg') {
+      const card = target.closest('[data-conflict-card]');
+      if (card) card.remove();
+      return;
+    }
+    if (act === 'use-sheet') {
+      const gigId = target.dataset.gig;
+      let sheetVals = {};
+      try { sheetVals = JSON.parse(decodeURIComponent(target.dataset.sheet || '%7B%7D')); } catch (_) {}
+      // Strip null/empty so PATCH's COALESCE doesn't overwrite a real
+      // value with null. Convert fee to number when present.
+      const patch = {};
+      Object.keys(sheetVals).forEach((k) => {
+        const v = sheetVals[k];
+        if (v == null || v === '') return;
+        if (k === 'fee') patch[k] = parseFloat(String(v).replace(/[^0-9.\-]/g, '')) || null;
+        else patch[k] = v;
+      });
+      target.disabled = true;
+      target.textContent = 'Saving…';
+      try {
+        const r = await fetch('/api/gigs/' + encodeURIComponent(gigId), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        if (!r.ok) throw new Error('Failed (HTTP ' + r.status + ')');
+        if (typeof invalidateGigsCache === 'function') invalidateGigsCache();
+        const card = target.closest('[data-conflict-card]');
+        if (card) card.remove();
+        if (typeof showToast === 'function') showToast('Sheet value applied');
+      } catch (err) {
+        if (typeof showToast === 'function') showToast('Apply failed: ' + (err.message || 'unknown error'));
+        target.disabled = false;
+        target.textContent = "Use Sheet’s value";
+      }
+    }
+  });
+
+  document.body.appendChild(overlay);
+}
+window.openSheetsConflictResolver = openSheetsConflictResolver;
+
+// ── Calendar sync-now push-failure list ──────────────────────────────────────
+// Diagnostic sheet that lists exactly which gigs failed to push to Google
+// during a Sync Now run, plus the Google API error reason. No automatic
+// retry from here; the user can tap a row to open the gig and re-save, or
+// just re-run Sync Now after fixing the underlying issue.
+function openCalendarSyncFailures(failures) {
+  if (!Array.isArray(failures) || failures.length === 0) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+
+  const rowsHtml = failures.map((f) => {
+    const title = f.band_name || f.venue_name || 'Untitled gig';
+    const dateLbl = f.date ? formatDateShort(f.date) : '';
+    return `
+      <div onclick="document.querySelectorAll('.sheet-overlay').forEach(o => o.remove()); openGigDetail('${escapeAttr(f.gig_id)}');" style="padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(title)}</div>
+            ${dateLbl ? `<div style="font-size:11px;color:var(--text-3);">${escapeHtml(dateLbl)}${f.venue_name && f.band_name ? ' · ' + escapeHtml(f.venue_name) : ''}</div>` : ''}
+          </div>
+          <span style="color:var(--text-3);font-size:14px;">›</span>
+        </div>
+        <div style="font-size:10px;color:var(--danger);background:var(--danger-dim);padding:4px 8px;border-radius:6px;display:inline-block;">${escapeHtml(f.reason || 'unknown error')}</div>
+      </div>`;
+  }).join('');
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 20px;width:100%;max-width:390px;max-height:80vh;overflow-y:auto;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">${failures.length} gig${failures.length === 1 ? '' : 's'} failed to push to Google</div>
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:14px;">Tap a row to open the gig and check the data, or try Sync Now again later.</div>
+      ${rowsHtml}
+      <button onclick="document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());" style="width:100%;margin-top:8px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;">Close</button>
+    </div>`;
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+window.openCalendarSyncFailures = openCalendarSyncFailures;
+
+// ── Background Google sync ───────────────────────────────────────────────────
+// Once per session (gated by sessionStorage), if the user has Google Calendar
+// or Sheets connected and their last pull was more than a threshold ago,
+// trigger a pull in the background. Fire-and-forget; failures stay silent
+// because the user can always run a manual Sync Now from Profile if they
+// want feedback. Closes the gap between "edits made on Google's side"
+// and "edits visible in TMG" without needing webhook infrastructure.
+async function maybeBackgroundSync() {
+  if (window._tmgBackgroundSyncRan) return;
+  window._tmgBackgroundSyncRan = true;
+  try {
+    const SESSION_KEY = 'tmg_bg_sync_at';
+    const lastRunStr = sessionStorage.getItem(SESSION_KEY);
+    const lastRun = lastRunStr ? parseInt(lastRunStr, 10) : 0;
+    if (Date.now() - lastRun < 30 * 60 * 1000) return; // 30-min cooldown per session
+    sessionStorage.setItem(SESSION_KEY, String(Date.now()));
+
+    // Calendar: pull if connected and last sync > 1h
+    const calStatus = await fetch('/api/calendar/status').then(r => r.ok ? r.json() : null).catch(() => null);
+    if (calStatus && calStatus.connected && !calStatus.needs_reconnect) {
+      const last = calStatus.last_synced_at ? new Date(calStatus.last_synced_at).getTime() : 0;
+      const ageHours = (Date.now() - last) / 3600000;
+      if (ageHours > 1) {
+        fetch('/api/calendar/pull', { method: 'POST' }).then(r => {
+          if (r.ok && typeof invalidateGigsCache === 'function') invalidateGigsCache();
+        }).catch(() => {});
+      }
+    }
+
+    // Sheets: pull if connected and last sync > 4h. Higher threshold than
+    // Calendar because sheet edits are rarer in practice and the pull is
+    // heavier (full 10k-row scan).
+    const shStatus = await fetch('/api/sheets/status').then(r => r.ok ? r.json() : null).catch(() => null);
+    if (shStatus && shStatus.connected && shStatus.has_google_token) {
+      const last = shStatus.last_pulled_at ? new Date(shStatus.last_pulled_at).getTime() : 0;
+      const ageHours = (Date.now() - last) / 3600000;
+      if (ageHours > 4) {
+        fetch('/api/sheets/pull', { method: 'POST' }).then(r => {
+          if (r.ok && typeof invalidateGigsCache === 'function') invalidateGigsCache();
+        }).catch(() => {});
+      }
+    }
+  } catch (_) {}
+}
+window.maybeBackgroundSync = maybeBackgroundSync;
 
 async function disconnectSheet() {
   if (!(await window.confirmModal('Disconnect from this Google Sheet? Your imported gigs stay in TrackMyGigs but new edits will no longer sync to the sheet.'))) return;
