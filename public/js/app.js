@@ -696,301 +696,312 @@ function retryHomeScreen() {
   renderHomeScreen();
 }
 
+// ── Home v2 ──────────────────────────────────────────────────────────────────
+// Three regions only: hero (state-driven), needs-you alert strip (chips), and
+// action grid (six tiles). Finance numbers and the 12-month chart now live in
+// the Finance panel, accessible via the More tile + the Tax-year /
+// Month-insight chips when relevant.
 function buildHomeHTML(content, stats) {
-    // Update notification dot in the fixed header
-    const notifDot = document.getElementById('notificationDot');
-    if (notifDot) notifDot.style.display = stats.unread_notifications > 0 ? 'block' : 'none';
+  // Update notification dot in the fixed header (carried over from v1)
+  const notifDot = document.getElementById('notificationDot');
+  if (notifDot) notifDot.style.display = stats.unread_notifications > 0 ? 'block' : 'none';
 
-    // Build HTML (header is handled by the fixed app-header, no duplicate here)
-    let html = '';
+  const state = determineHomeState(stats);
 
-    // Offer alert banner
-    if (stats.offer_count > 0) {
-      html += `
-      <div onclick="showScreen('offers')" style="margin:6px 16px;background:linear-gradient(135deg,rgba(240,165,0,.15) 0%,rgba(240,165,0,.06) 100%);border:1px solid rgba(240,165,0,.4);border-radius:var(--r);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;">
-        <div style="font-size:22px;">📬</div>
-        <div style="flex:1;">
-          <div class="ho-count" style="font-size:14px;font-weight:600;color:var(--text);">${stats.offer_count} gig offer${stats.offer_count === 1 ? '' : 's'} waiting</div>
-          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
-            ${stats.network_offers > 0 ? `<span style="font-size:10px;font-weight:700;color:#000;background:var(--accent);padding:1px 6px;border-radius:3px;">${stats.network_offers} FROM YOUR NETWORK</span>` : ''}
-          </div>
-        </div>
-        <div style="color:var(--accent);font-size:20px;">›</div>
-      </div>`;
+  let html = '<div style="padding:8px 0 16px;">';
+  html += buildHomeHero(state, stats);
+  html += buildHomeNeedsStrip(stats, state);
+  html += buildHomeActionGrid();
+  html += '</div>';
+
+  content.innerHTML = html;
+
+  // Busy hero renders a 7-day strip with the same id the legacy hydrate
+  // helper expects, so we can reuse it without changes.
+  if (state.kind === 'busy') {
+    hydrateNext7DaysStrip();
+  }
+}
+
+// Returns the hero variant to render. Priority: day-of > busy > upcoming > quiet.
+function determineHomeState(stats) {
+  const next = stats.next_gig;
+  if (!next) return { kind: 'quiet', daysUntil: null };
+
+  const todayMid = new Date(); todayMid.setHours(0, 0, 0, 0);
+  const gigMid = new Date(next.date); gigMid.setHours(0, 0, 0, 0);
+  const daysUntil = Math.round((gigMid - todayMid) / 86400000);
+
+  if (daysUntil <= 0) return { kind: 'day-of', gig: next };
+  const next7Count = parseInt(stats.gigs_next_7_days || 0, 10);
+  if (next7Count >= 2 && daysUntil <= 7) return { kind: 'busy', gig: next, count: next7Count };
+  if (daysUntil <= 14) return { kind: 'upcoming', gig: next, daysUntil };
+  return { kind: 'quiet', daysUntil };
+}
+
+function buildHomeHero(state) {
+  if (state.kind === 'day-of')   return buildHomeHeroDayOf(state.gig);
+  if (state.kind === 'busy')     return buildHomeHeroBusy(state.gig, state.count);
+  if (state.kind === 'upcoming') return buildHomeHeroUpcoming(state.gig, state.daysUntil);
+  return buildHomeHeroQuiet(state.daysUntil);
+}
+
+// ── Hero: Day of gig ─────────────────────────────────────────────────────────
+function buildHomeHeroDayOf(gig) {
+  // Countdown to load-in (fallback to start_time if load-in not set)
+  const targetTime = gig.load_in_time || gig.start_time;
+  let countdownLabel = '';
+  if (targetTime) {
+    const parts = String(targetTime).split(':');
+    const target = new Date();
+    target.setHours(parseInt(parts[0], 10) || 0, parseInt(parts[1], 10) || 0, 0, 0);
+    const diffMs = target - new Date();
+    if (diffMs > 0) {
+      const totalMin = Math.round(diffMs / 60000);
+      const h = Math.floor(totalMin / 60);
+      const m = totalMin % 60;
+      const prefix = gig.load_in_time ? 'Load-in in ' : 'Set 1 in ';
+      countdownLabel = prefix + (h > 0 ? h + 'h ' : '') + m + 'm';
+    } else {
+      countdownLabel = gig.load_in_time ? 'Load-in time passed' : 'Gig in progress';
     }
+  }
 
-    // Next gig card
-    if (stats.next_gig) {
-      const gig = stats.next_gig;
-      const daysUntil = Math.ceil((new Date(gig.date) - new Date()) / (1000 * 60 * 60 * 24));
-      html += `
-      <div onclick="openGigDetail('${gig.id}')" style="margin:0 16px 8px;background:linear-gradient(135deg,#1C2A1A,#182318);border:1px solid rgba(63,185,80,.3);border-radius:var(--r);padding:12px 14px;position:relative;cursor:pointer;">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-          <span style="font-size:10px;font-weight:600;color:var(--success);letter-spacing:1px;text-transform:uppercase;">⚡ Your next gig</span>
-          <span style="margin-left:auto;font-size:12px;font-weight:800;color:var(--success);">${daysUntil} day${daysUntil === 1 ? '' : 's'}</span>
+  // Maps URL: prefer lat/lng for precision, fall back to encoded address/name.
+  // Google Maps universal link works on iOS, Android, and desktop.
+  let mapsUrl = '';
+  if (gig.venue_lat != null && gig.venue_lng != null) {
+    mapsUrl = 'https://www.google.com/maps/search/?api=1&query=' + gig.venue_lat + ',' + gig.venue_lng;
+  } else if (gig.venue_address) {
+    mapsUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(gig.venue_address);
+  } else if (gig.venue_name) {
+    mapsUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(gig.venue_name);
+  }
+
+  // Gig leader action: prefer phone (tel:), then email (mailto:), then detail.
+  let leaderOnclick = "openGigDetail('" + escapeAttr(gig.id) + "')";
+  if (gig.gig_leader_phone) {
+    const tel = String(gig.gig_leader_phone).replace(/\s+/g, '');
+    leaderOnclick = "window.location.href='tel:" + escapeAttr(tel) + "'";
+  } else if (gig.gig_leader_email) {
+    leaderOnclick = "window.location.href='mailto:" + escapeAttr(gig.gig_leader_email) + "'";
+  }
+
+  // First two set times if defined
+  let setTimes = [];
+  try {
+    const raw = gig.set_times;
+    const sets = Array.isArray(raw) ? raw : (raw ? JSON.parse(raw) : []);
+    setTimes = (sets || []).slice(0, 2).map((s, i) => ({
+      label: s.name || s.label || ('Set ' + (i + 1)),
+      val: (s.start && s.end) ? (formatTime(s.start) + ' — ' + formatTime(s.end)) : (s.time || s.start || ''),
+    }));
+  } catch (_) {}
+
+  const hasTimesRow = setTimes.length > 0 || gig.load_in_time;
+  const timesRowHtml = hasTimesRow
+    ? `<div style="display:flex;gap:12px;padding:10px 0;border-top:1px solid rgba(63,185,80,.18);border-bottom:1px solid rgba(63,185,80,.18);margin-bottom:12px;">
+        ${gig.load_in_time ? `<div style="flex:1;"><div style="font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.7px;margin-bottom:3px;">Load-in</div><div style="font-size:13px;font-weight:700;color:var(--text);">${formatTime(gig.load_in_time)}</div></div>` : ''}
+        ${setTimes.map(t => `<div style="flex:1;min-width:0;"><div style="font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.7px;margin-bottom:3px;">${escapeHtml(t.label)}</div><div style="font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.val || '')}</div></div>`).join('')}
+      </div>`
+    : '<div style="height:6px;"></div>';
+
+  const whereLine = [gig.venue_address, gig.venue_postcode].filter(Boolean).map(escapeHtml).join(' · ');
+
+  return `
+    <div onclick="openGigDetail('${escapeAttr(gig.id)}')" style="margin:0 16px 10px;background:linear-gradient(160deg,#1F2A18 0%,#16210F 60%,#0F1C16 100%);border:1px solid rgba(63,185,80,.45);border-radius:14px;padding:16px;cursor:pointer;">
+      <div style="display:flex;align-items:center;">
+        <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(63,185,80,.18);color:var(--success);font-size:10px;font-weight:800;letter-spacing:1.2px;padding:4px 9px;border-radius:999px;text-transform:uppercase;">
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--success);box-shadow:0 0 8px var(--success);"></span>
+          Tonight · Live
         </div>
-        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(gig.band_name)}</div>
-        <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">📍 ${escapeHtml(gig.venue_name)} · 🕖 ${formatDateLong(gig.date)} · ${formatTime(gig.start_time)}${gig.end_time ? ' to ' + formatTime(gig.end_time) : ''}</div>
-        ${gig.dress_code ? `<div style="font-size:12px;color:var(--text-2);">👔 ${escapeHtml(gig.dress_code)} · 🎒 Gig pack ready</div>` : ''}
-      </div>`;
-    }
-
-    // Active outgoing dep-request banner (purple)
-    if (stats.active_dep_request) {
-      const dep = stats.active_dep_request;
-      const dateLabel = formatDateLong(dep.date);
-      const hoursLeft = dep.hours_left;
-      const timeLabel = hoursLeft > 48
-        ? Math.ceil(hoursLeft / 24) + 'd left'
-        : hoursLeft + 'h left';
-      html += `
-      <div onclick="showScreen('offers')" style="margin:0 16px 8px;background:linear-gradient(135deg,rgba(136,87,255,.12),rgba(136,87,255,.04));border:1px solid rgba(136,87,255,.3);border-radius:var(--r);padding:10px 14px;cursor:pointer;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <span style="font-size:13px;">📤</span>
-          <span style="font-size:11px;font-weight:700;color:#A78BFA;text-transform:uppercase;letter-spacing:.5px;">Active dep request</span>
-          <span style="margin-left:auto;color:#A78BFA;font-size:16px;">›</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div style="width:3px;height:30px;border-radius:2px;background:#A78BFA;flex-shrink:0;"></div>
-          <div style="flex:1;min-width:0;">
-            <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(dep.band_name)}</div>
-            <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${dateLabel} · ${escapeHtml(dep.venue_name || '')} · <span style="color:var(--warning);font-weight:600;">awaiting cover</span></div>
-          </div>
-          <div style="text-align:right;flex-shrink:0;">
-            <div style="font-size:11px;font-weight:700;color:#A78BFA;">⏳ ${timeLabel}</div>
-          </div>
-        </div>
-      </div>`;
-    }
-
-    // Compact alert row
-    html += `<div style="display:flex;gap:6px;margin:0 16px 6px;">`;
-
-    if (stats.overdue_invoices > 0) {
-      html += `
-      <div onclick="goToInvoicesFiltered('overdue')" style="flex:1;background:var(--danger-dim);border:1px solid rgba(248,81,73,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
-        <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📄 Invoice</div>
-        <div style="font-size:11px;font-weight:600;color:var(--danger);">£${stats.overdue_total} overdue</div>
-        <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.overdue_invoices} invoice${stats.overdue_invoices === 1 ? '' : 's'}</div>
-      </div>`;
-    }
-
-    if (stats.draft_invoices > 0) {
-      html += `
-      <div onclick="goToInvoicesFiltered('draft')" style="flex:1;background:var(--info-dim);border:1px solid rgba(88,166,255,.2);border-radius:var(--rs);padding:8px 10px;cursor:pointer;">
-        <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">📄 Invoice</div>
-        <div style="font-size:11px;font-weight:600;color:var(--info);">£${stats.draft_total} draft</div>
-        <div style="font-size:10px;color:var(--text-2);margin-top:2px;">${stats.draft_invoices} ready</div>
-      </div>`;
-    }
-
-    html += `</div>`;
-
-    // Imported gigs missing a fee (task #291). Persistent entry point for the
-    // quick-fire wizard so a musician who skipped the first-import flow can
-    // fill fees in later. Only renders when count > 0. The whole card opens
-    // the wizard — no separate tap target for clarity.
-    if (stats.gigs_missing_fee > 0) {
-      const n = stats.gigs_missing_fee;
-      html += `
-      <div onclick="window.openFeeReviewWizard && window.openFeeReviewWizard()" style="margin:0 16px 6px;background:linear-gradient(135deg,rgba(240,165,0,.14),rgba(240,165,0,.04));border:1px solid rgba(240,165,0,.32);border-radius:var(--r);padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;">
-        <div style="font-size:18px;">&#x1F4B7;</div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:12px;font-weight:700;color:var(--text);">${n} imported gig${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} a fee</div>
-          <div style="font-size:10px;color:var(--text-2);margin-top:1px;">Quick-fire ${n === 1 ? 'it' : 'them'} in for accurate tax reporting.</div>
-        </div>
-        <div style="font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">Fill in &rsaquo;</div>
-      </div>`;
-    }
-
-    // Next 7 days strip: 7 tap-able pills, one per day. Each pill is coloured
-    // by state (blue = gig, red = blocked, white/empty = open). Whole strip
-    // opens the Availability panel; individual pills jump to the day's detail
-    // sheet so the user can block, unblock, or add a gig from there.
-    // Data is hydrated asynchronously via hydrateNext7DaysStrip() after render.
-    const todayDate = new Date();
-    const next7Cells = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate() + i);
-      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const dow = ['S', 'M', 'T', 'W', 'T', 'F', 'S'][d.getDay()];
-      next7Cells.push(`
-        <div data-next7-iso="${iso}" onclick="event.stopPropagation(); if (typeof openDayActionSheet === 'function') openDayActionSheet('${iso}'); else { openPanel('panel-block'); }"
-             style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px 0;border-radius:8px;background:var(--card);border:1px solid var(--border);cursor:pointer;">
-          <div style="font-size:9px;color:var(--text-3);font-weight:600;letter-spacing:.3px;">${dow}</div>
-          <div data-next7-num style="font-size:13px;font-weight:700;color:var(--text);">${d.getDate()}</div>
-        </div>`);
-    }
-    html += `
-      <div onclick="openPanel('panel-block')" style="margin:0 16px 6px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;cursor:pointer;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-          <div style="font-size:9px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;">📅 Next 7 days</div>
-          <div style="font-size:10px;color:var(--accent);font-weight:600;">Availability ›</div>
-        </div>
-        <div id="next7DaysStrip" style="display:flex;gap:4px;">${next7Cells.join('')}</div>
-      </div>`;
-
-    // Gig messages card
-    if (stats.unread_messages > 0) {
-      html += `
-      <div onclick="openPanel('panel-chat-inbox'); renderChatInbox();" style="margin:0 16px 6px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;cursor:pointer;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-size:14px;">💬</span>
-            <span style="font-size:12px;font-weight:700;color:var(--text);">Gig messages</span>
-          </div>
-          <div style="background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 5px;">${stats.unread_messages}</div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px;">
-          ${(stats.recent_messages || []).slice(0, 2).map((msg) => `
-          <div style="display:flex;align-items:center;gap:8px;">
-            <div style="width:24px;height:24px;border-radius:12px;background:var(--info-dim);border:1px solid var(--info);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--info);flex-shrink:0;">${(msg.sender || 'U')[0].toUpperCase()}</div>
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:11px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(msg.sender)}</div>
-              <div style="font-size:10px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(msg.preview || '')}</div>
-            </div>
-            <span style="font-size:9px;color:var(--accent);font-weight:600;flex-shrink:0;">${msg.time_ago || 'now'}</span>
-          </div>`).join('')}
-        </div>
-      </div>`;
-    }
-
-    // Quick stats
-    // #140: Both cards and the forecast below are teasers for the Finance
-    // panel per mockup-v3. Each tap opens #panel-finance via openFinanceAt
-    // and scrolls to its relevant section. This month → AI monthly insight
-    // (only month-specific section). Tax year → Tax year overview row
-    // (Income/Expenses/Taxable profit). Forecast → expanded Monthly
-    // breakdown chart.
-    // Quick-stat pills (mockup-v3): big white £ amount on top, period + gig
-    // count joined by a middle dot underneath. Drops the uppercase label
-    // banner that was eating the visual weight on the old design.
-    const _monthEarnings = Math.round(stats.month_earnings || 0).toLocaleString('en-GB');
-    const _yearEarnings = Math.round(stats.year_earnings || 0).toLocaleString('en-GB');
-    const _monthGigs = stats.month_gigs || 0;
-    const _yearGigs = stats.year_gigs || 0;
-    html += `
-    <div style="display:flex;gap:8px;margin:0 16px 8px;">
-      <div onclick="window.openFinanceAt && window.openFinanceAt('month-insight')" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;cursor:pointer;text-align:center;">
-        <div style="font-size:22px;font-weight:800;color:var(--text);line-height:1.1;">£${_monthEarnings}</div>
-        <div style="font-size:11px;color:var(--text-3);margin-top:4px;">This month &middot; ${_monthGigs} gig${_monthGigs === 1 ? '' : 's'}</div>
+        ${countdownLabel ? `<div style="margin-left:auto;font-size:12px;font-weight:700;color:var(--success);letter-spacing:.3px;">${escapeHtml(countdownLabel)}</div>` : ''}
       </div>
-      <div onclick="window.openFinanceAt && window.openFinanceAt('tax-year')" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;cursor:pointer;text-align:center;">
-        <div style="font-size:22px;font-weight:800;color:var(--text);line-height:1.1;">£${_yearEarnings}</div>
-        <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Tax year &middot; ${_yearGigs} gig${_yearGigs === 1 ? '' : 's'}</div>
+      <div style="font-size:22px;font-weight:800;color:var(--text);margin:10px 0 2px;letter-spacing:-.4px;line-height:1.15;">${escapeHtml(gig.venue_name || gig.band_name || 'Untitled gig')}</div>
+      ${whereLine ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:12px;">📍 ${whereLine}</div>` : '<div style="height:12px;"></div>'}
+      ${timesRowHtml}
+      <div style="display:flex;gap:6px;">
+        ${mapsUrl
+          ? `<a href="${escapeAttr(mapsUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation();" style="flex:1;background:rgba(63,185,80,.14);border:1px solid rgba(63,185,80,.32);color:var(--text);padding:10px 6px;font-size:11px;font-weight:700;border-radius:10px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;text-decoration:none;"><span style="font-size:16px;">🧭</span>Navigate</a>`
+          : `<button style="flex:1;background:rgba(63,185,80,.06);border:1px solid rgba(63,185,80,.18);color:var(--text-3);padding:10px 6px;font-size:11px;font-weight:700;border-radius:10px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:not-allowed;" disabled><span style="font-size:16px;">🧭</span>Navigate</button>`}
+        <button onclick="event.stopPropagation(); openGigDetail('${escapeAttr(gig.id)}');" style="flex:1;background:rgba(63,185,80,.14);border:1px solid rgba(63,185,80,.32);color:var(--text);padding:10px 6px;font-size:11px;font-weight:700;border-radius:10px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><span style="font-size:16px;">🎵</span>Setlist</button>
+        <button onclick="event.stopPropagation(); ${leaderOnclick};" style="flex:1;background:rgba(63,185,80,.14);border:1px solid rgba(63,185,80,.32);color:var(--text);padding:10px 6px;font-size:11px;font-weight:700;border-radius:10px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><span style="font-size:16px;">📞</span>Gig leader</button>
       </div>
     </div>`;
-
-    // 12-month forecast (mockup-v3 redesign 2026-04-26)
-    // Confirmed earnings only — no pending, no projection, no guesses.
-    // Tax-year window (April -> March) so the bar order matches the
-    // musician's actual financial year. Tax year header on the right,
-    // YTD total + best month in the footer. Past months are vivid green;
-    // future months that already have confirmed bookings render the same
-    // colour but at slightly reduced opacity to hint "still ahead" without
-    // introducing a separate visual category.
-    if (stats.monthly_breakdown && stats.monthly_breakdown.length) {
-      const nowRef = new Date();
-      // UK tax year: 6 April through 5 April. If we're between Jan 1 and
-      // April 5 we're still in the tax year that began the previous April.
-      const tyStartYear = nowRef.getMonth() < 3 || (nowRef.getMonth() === 3 && nowRef.getDate() < 6)
-        ? nowRef.getFullYear() - 1
-        : nowRef.getFullYear();
-      const tyEndYear = tyStartYear + 1;
-      const taxYearLabel = `${String(tyStartYear).slice(-2)}/${String(tyEndYear).slice(-2)}`;
-
-      // Reorder the API's calendar-month breakdown into tax-year sequence.
-      // Each tax year contains months April..March, so we walk a fixed
-      // 12-step list and pick the matching breakdown row. Months outside
-      // the API's window (i.e. far past or far future) fall through as £0
-      // empty bars rather than being silently dropped.
-      const monthIndex = new Map();
-      stats.monthly_breakdown.forEach((m) => {
-        const d = new Date(m.month_start);
-        const key = `${d.getFullYear()}-${d.getMonth()}`;
-        monthIndex.set(key, m);
-      });
-      const SHORT = ['J','F','M','A','M','J','J','A','S','O','N','D'];
-      const months = [];
-      for (let i = 0; i < 12; i++) {
-        const monthIdx = (3 + i) % 12;            // 3=April, ... 2=March
-        const year = monthIdx >= 3 ? tyStartYear : tyEndYear;
-        const key = `${year}-${monthIdx}`;
-        const row = monthIndex.get(key) || null;
-        const monthDate = new Date(year, monthIdx, 1);
-        const isFuture = monthDate.getTime() > new Date(nowRef.getFullYear(), nowRef.getMonth(), 1).getTime();
-        months.push({
-          letter: SHORT[monthIdx],
-          full: monthDate.toLocaleString('en-GB', { month: 'short', year: 'numeric' }),
-          confirmed: row ? parseFloat(row.confirmed_earnings || 0) : 0,
-          isFuture,
-        });
-      }
-
-      const maxConfirmed = Math.max(1, ...months.map((m) => m.confirmed));
-      const ytdTotal = months.reduce((s, m) => s + m.confirmed, 0);
-
-      // Best month so far: highest confirmed across the tax year. If two
-      // months tie we prefer the most recent (later in array order).
-      let best = null;
-      months.forEach((m) => {
-        if (m.confirmed > 0 && (!best || m.confirmed >= best.confirmed)) best = m;
-      });
-      const bestLine = best
-        ? `Best: ${best.full.split(' ')[0]} &pound;${Math.round(best.confirmed).toLocaleString('en-GB')}`
-        : '';
-      const summary = ytdTotal > 0
-        ? `&pound;${Math.round(ytdTotal).toLocaleString('en-GB')} confirmed YTD${bestLine ? ' &middot; ' + bestLine : ''}`
-        : 'No confirmed earnings yet this tax year';
-
-      html += `
-      <div onclick="window.openFinanceAt && window.openFinanceAt('monthly')" style="margin:0 16px 6px;cursor:pointer;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:9px 12px 8px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-          <div style="font-size:11px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:5px;">
-            <span style="font-size:11px;">📈</span>12-month forecast
-          </div>
-          <div style="font-size:9px;color:var(--text-3);">Tax year ${taxYearLabel}</div>
-        </div>
-        <div style="display:flex;align-items:flex-end;gap:4px;height:30px;margin-bottom:3px;">
-          ${months.map((m) => {
-            const heightPct = m.confirmed > 0 ? Math.max(10, (m.confirmed / maxConfirmed) * 100) : 5;
-            const opacity = m.confirmed > 0 ? (m.isFuture ? 0.85 : 1) : 0.18;
-            const bg = m.confirmed > 0 ? 'var(--success,#3FB950)' : 'var(--border)';
-            const titleSuffix = m.confirmed > 0
-              ? ': £' + Math.round(m.confirmed).toLocaleString('en-GB')
-              : ': no confirmed earnings';
-            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;" title="${m.full}${titleSuffix}">
-              <div style="width:100%;height:${heightPct}%;background:${bg};border-radius:4px;opacity:${opacity};"></div>
-            </div>`;
-          }).join('')}
-        </div>
-        <div style="display:flex;align-items:center;gap:4px;margin-bottom:5px;padding:0 1px;">
-          ${months.map((m) => `<div style="flex:1;text-align:center;font-size:8px;color:var(--text-3);font-weight:600;">${m.letter}</div>`).join('')}
-        </div>
-        <div style="display:flex;align-items:center;gap:5px;font-size:9px;color:var(--text-2);padding-top:5px;border-top:1px solid var(--border);">
-          <span style="width:7px;height:7px;background:var(--success,#3FB950);border-radius:2px;flex-shrink:0;"></span>
-          <span>${summary}</span>
-        </div>
-      </div>`;
-    }
-
-    // 2026-04-28 dep-network batch: placeholder for the "Top deps this
-    // quarter" insights card. Populated asynchronously by loadTopDepsCard()
-    // after the main Home render so we don't block above-the-fold paint;
-    // hidden by default and only shown if the actor has any 90-day work
-    // history with another TMG user.
-    html += `<div id="homeTopDepsCard" style="display:none;margin:16px;"></div>`;
-
-    html += '</div>';
-    content.innerHTML = html;
-
-    // Colour the Next 7 days strip using cached gigs + a light blocked-dates
-    // fetch. Strip still works if either source fails — cells just stay white.
-    hydrateNext7DaysStrip();
-    // Kick off the top-deps fetch in the background; renders into the
-    // placeholder above when ready.
-    loadTopDepsCard();
 }
+
+// ── Hero: Upcoming (single gig within 14 days) ───────────────────────────────
+function buildHomeHeroUpcoming(gig, daysUntil) {
+  const feeLine = (gig.fee != null && gig.fee !== '')
+    ? ` · <span style="color:var(--success);font-weight:700;">£${escapeHtml(String(gig.fee))}</span>`
+    : '';
+  const timesPart = gig.start_time
+    ? formatTime(gig.start_time) + (gig.end_time ? ' — ' + formatTime(gig.end_time) : '')
+    : '';
+  return `
+    <div onclick="openGigDetail('${escapeAttr(gig.id)}')" style="margin:0 16px 10px;background:linear-gradient(160deg,#1C2A1A 0%,#182318 100%);border:1px solid rgba(63,185,80,.3);border-radius:14px;padding:14px 16px;cursor:pointer;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <span style="font-size:10px;font-weight:700;color:var(--success);letter-spacing:1.2px;text-transform:uppercase;">⚡ Your next gig</span>
+        <span style="margin-left:auto;background:rgba(63,185,80,.18);color:var(--success);font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;">${daysUntil === 1 ? '1 day' : daysUntil + ' days'}</span>
+      </div>
+      <div style="font-size:17px;font-weight:800;color:var(--text);letter-spacing:-.3px;margin-bottom:3px;">${escapeHtml(gig.band_name || gig.venue_name || 'Untitled gig')}</div>
+      <div style="font-size:12px;color:var(--text-2);line-height:1.5;">
+        ${gig.venue_name ? `📍 ${escapeHtml(gig.venue_name)}<br>` : ''}
+        🕖 ${formatDateLong(gig.date)}${timesPart ? ' · ' + timesPart : ''}${feeLine}
+        ${gig.dress_code ? `<br>👔 ${escapeHtml(gig.dress_code)}` : ''}
+      </div>
+    </div>`;
+}
+
+// ── Hero: Busy week (2+ gigs in next 7 days) ─────────────────────────────────
+function buildHomeHeroBusy(gig, count) {
+  const today = new Date();
+  const cells = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dow = ['S','M','T','W','T','F','S'][d.getDay()];
+    const isToday = i === 0;
+    cells.push(`<div data-next7-iso="${iso}" onclick="event.stopPropagation(); if (typeof openDayActionSheet === 'function') openDayActionSheet('${iso}'); else { openPanel('panel-block'); }" style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px 0;border-radius:8px;background:var(--card);border:1px solid var(--border);${isToday ? 'box-shadow:inset 0 0 0 1px var(--accent);' : ''}cursor:pointer;"><div style="font-size:9px;color:var(--text-3);font-weight:600;letter-spacing:.3px;">${dow}</div><div data-next7-num style="font-size:13px;font-weight:700;color:var(--text);">${d.getDate()}</div></div>`);
+  }
+
+  const timesPart = gig.start_time
+    ? ' · ' + formatTime(gig.start_time) + (gig.end_time ? ' — ' + formatTime(gig.end_time) : '')
+    : '';
+  const feeLine = (gig.fee != null && gig.fee !== '')
+    ? ` · £${escapeHtml(String(gig.fee))}`
+    : '';
+
+  return `
+    <div onclick="openGigDetail('${escapeAttr(gig.id)}')" style="margin:0 16px 10px;background:linear-gradient(160deg,#1C2A1A 0%,#182318 100%);border:1px solid rgba(63,185,80,.3);border-radius:14px;padding:14px 16px;cursor:pointer;">
+      <div id="next7DaysStrip" style="display:flex;gap:4px;margin-bottom:10px;">${cells.join('')}</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:3px;height:36px;border-radius:2px;background:var(--success);flex-shrink:0;"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:700;color:var(--text);">${escapeHtml(gig.band_name || gig.venue_name || 'Next gig')}</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:1px;">${formatDateLong(gig.date)}${timesPart}${feeLine}</div>
+        </div>
+        <div style="background:rgba(63,185,80,.18);color:var(--success);font-size:10px;font-weight:800;padding:4px 8px;border-radius:999px;flex-shrink:0;">${count} this week</div>
+      </div>
+    </div>`;
+}
+
+// ── Hero: Quiet day (no gig within 14 days) ──────────────────────────────────
+function buildHomeHeroQuiet(daysUntil) {
+  const titleLine = (daysUntil != null && daysUntil > 0)
+    ? `Nothing on for ${daysUntil} day${daysUntil === 1 ? '' : 's'}`
+    : 'No gigs scheduled';
+  return `
+    <div style="margin:0 16px 10px;background:var(--card);border:1px dashed var(--border);border-radius:14px;padding:18px 16px;text-align:center;">
+      <div style="font-size:28px;margin-bottom:8px;">🎷</div>
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">${titleLine}</div>
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:12px;">Diary's clear. Add the next one or check the marketplace.</div>
+      <button onclick="openGigWizard()" style="background:var(--accent);color:#000;border:none;font-size:12px;font-weight:700;padding:9px 18px;border-radius:999px;cursor:pointer;">+ Log a gig</button>
+    </div>`;
+}
+
+// ── Needs you alert strip ────────────────────────────────────────────────────
+// Compressed chip row replacing the v1 banners (overdue, draft, offers, dep,
+// messages, missing-fee). Hidden when there's nothing to nag. On quiet days
+// with no alerts, render a soft "all clear" line so the gap doesn't feel empty.
+function buildHomeNeedsStrip(stats, state) {
+  const chips = [];
+  if (stats.overdue_invoices > 0) {
+    chips.push(`<span onclick="goToInvoicesFiltered('overdue')" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:var(--danger-dim);color:var(--danger);border:1px solid rgba(248,81,73,.3);"><span style="font-size:10px;">⚠</span>${stats.overdue_invoices} overdue</span>`);
+  }
+  if (stats.draft_invoices > 0) {
+    chips.push(`<span onclick="goToInvoicesFiltered('draft')" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:var(--info-dim);color:var(--info);border:1px solid rgba(88,166,255,.3);"><span style="font-size:10px;">📄</span>${stats.draft_invoices} draft${stats.draft_invoices === 1 ? '' : 's'}</span>`);
+  }
+  if (stats.offer_count > 0) {
+    chips.push(`<span onclick="showScreen('offers')" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.35);"><span style="font-size:10px;">📬</span>${stats.offer_count} offer${stats.offer_count === 1 ? '' : 's'}</span>`);
+  }
+  if (stats.active_dep_request) {
+    chips.push(`<span onclick="showScreen('offers')" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:rgba(167,139,250,.16);color:#C7B5FA;border:1px solid rgba(167,139,250,.35);"><span style="font-size:10px;">📤</span>1 dep awaiting cover</span>`);
+  }
+  if (stats.unread_messages > 0) {
+    chips.push(`<span onclick="openPanel('panel-chat-inbox'); renderChatInbox();" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:var(--info-dim);color:var(--info);border:1px solid rgba(88,166,255,.3);"><span style="font-size:10px;">💬</span>${stats.unread_messages} message${stats.unread_messages === 1 ? '' : 's'}</span>`);
+  }
+  if (stats.gigs_missing_fee > 0) {
+    chips.push(`<span onclick="window.openFeeReviewWizard && window.openFeeReviewWizard()" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.35);"><span style="font-size:10px;">💷</span>${stats.gigs_missing_fee} need fee${stats.gigs_missing_fee === 1 ? '' : 's'}</span>`);
+  }
+
+  if (chips.length === 0) {
+    if (state && state.kind === 'quiet') {
+      return `<div style="margin:0 16px 12px;padding:10px 12px;background:transparent;border:1px dashed var(--border);border-radius:10px;text-align:center;font-size:11px;color:var(--text-3);font-style:italic;">All clear. Enjoy the quiet.</div>`;
+    }
+    return '';
+  }
+
+  return `
+    <div style="margin:0 16px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:8px;">
+      <div style="font-size:10px;font-weight:700;color:var(--text-3);letter-spacing:.8px;text-transform:uppercase;flex-shrink:0;">Needs you</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;flex:1;">${chips.join('')}</div>
+    </div>`;
+}
+
+// ── Action grid ──────────────────────────────────────────────────────────────
+// Six tiles, always rendered. First tile (Add gig) is accent-coloured because
+// logging a gig should always be the fastest action in the app.
+function buildHomeActionGrid() {
+  return `
+    <div style="margin:0 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+      <div onclick="openGigWizard()" style="background:linear-gradient(160deg,rgba(240,165,0,.18) 0%,rgba(240,165,0,.06) 100%);border:1px solid rgba(240,165,0,.35);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
+        <span style="font-size:22px;margin-bottom:6px;display:block;">➕</span>
+        <div style="font-size:11px;font-weight:700;color:var(--text);">Add gig</div>
+        <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Quick or wizard</div>
+      </div>
+      <div onclick="openStandaloneInvoice()" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
+        <span style="font-size:22px;margin-bottom:6px;display:block;">📄</span>
+        <div style="font-size:11px;font-weight:700;color:var(--text);">New invoice</div>
+        <div style="font-size:9px;color:var(--text-3);margin-top:1px;">From gig or blank</div>
+      </div>
+      <div onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
+        <span style="font-size:22px;margin-bottom:6px;display:block;">🤝</span>
+        <div style="font-size:11px;font-weight:700;color:var(--text);">Find dep</div>
+        <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Marketplace</div>
+      </div>
+      <div onclick="openPanel('panel-chat-inbox'); renderChatInbox();" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
+        <span style="font-size:22px;margin-bottom:6px;display:block;">💬</span>
+        <div style="font-size:11px;font-weight:700;color:var(--text);">Inbox</div>
+        <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Chats &amp; offers</div>
+      </div>
+      <div onclick="showScreen('calendar')" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
+        <span style="font-size:22px;margin-bottom:6px;display:block;">📅</span>
+        <div style="font-size:11px;font-weight:700;color:var(--text);">Calendar</div>
+        <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Block / unblock</div>
+      </div>
+      <div onclick="openHomeMoreSheet()" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
+        <span style="font-size:22px;margin-bottom:6px;display:block;">⋯</span>
+        <div style="font-size:11px;font-weight:700;color:var(--text);">More</div>
+        <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Repertoire, EPK…</div>
+      </div>
+    </div>`;
+}
+
+// ── More sheet (action grid tile #6) ─────────────────────────────────────────
+// Bottom sheet with the less-frequently-used screens that used to clutter Home.
+function openHomeMoreSheet() {
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  const items = [
+    { ico: '🎵', label: 'Repertoire', onclick: "openPanel('panel-repertoire'); if (typeof openRepertoirePanel === 'function') openRepertoirePanel();" },
+    { ico: '🤝', label: 'My Network', onclick: "openPanel('panel-network'); if (typeof openNetworkPanel === 'function') openNetworkPanel();" },
+    { ico: '🎤', label: 'Professional EPK', onclick: "if (typeof viewEPK === 'function') viewEPK();" },
+    { ico: '📈', label: 'Finance', onclick: "if (window.openFinanceAt) window.openFinanceAt('tax-year');" },
+    { ico: '👤', label: 'Profile', onclick: "openPanel('profile-panel'); if (typeof renderProfileScreen === 'function') renderProfileScreen();" },
+  ];
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
+      <div style="font-size:12px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">More</div>
+      ${items.map(it => `<div onclick="document.querySelectorAll('.sheet-overlay').forEach(o => o.remove()); ${it.onclick}" style="display:flex;align-items:center;gap:12px;padding:12px 8px;border-bottom:1px solid var(--border);cursor:pointer;"><span style="font-size:18px;">${it.ico}</span><span style="flex:1;font-size:14px;color:var(--text);font-weight:500;">${it.label}</span><span style="color:var(--text-3);font-size:14px;">›</span></div>`).join('')}
+      <button onclick="document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());" style="width:100%;margin-top:14px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;">Close</button>
+    </div>`;
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+window.openHomeMoreSheet = openHomeMoreSheet;
 
 // 2026-04-28 dep-network batch: pull the 90-day top deps and render a
 // compact card above the bottom nav. Click on a row jumps to Find Musicians
@@ -8558,10 +8569,23 @@ async function openGigDetail(gigId) {
       ${gig.dress_code ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Dress code</span><span style="color:var(--text);font-weight:500;">${escapeHtml(gig.dress_code)}</span></div>` : ''}
       ${gig.parking_info ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Parking</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(gig.parking_info)}</span></div>` : ''}
       ${gig.load_in_time ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Load-in</span><span style="color:var(--text);font-weight:500;">${formatTime(gig.load_in_time)}</span></div>` : ''}
-      ${gig.day_of_contact ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Day-of contact</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(gig.day_of_contact)}</span></div>` : ''}
+      ${(gig.gig_leader_name || gig.gig_leader_phone || gig.gig_leader_email) ? (() => {
+        const phoneTel = (gig.gig_leader_phone || '').replace(/\s+/g, '');
+        const valueParts = [];
+        if (gig.gig_leader_name) valueParts.push(escapeHtml(gig.gig_leader_name));
+        if (gig.gig_leader_phone) {
+          valueParts.push(phoneTel
+            ? `<a href="tel:${escapeAttr(phoneTel)}" style="color:var(--accent);text-decoration:none;">${escapeHtml(gig.gig_leader_phone)}</a>`
+            : escapeHtml(gig.gig_leader_phone));
+        }
+        if (gig.gig_leader_email) {
+          valueParts.push(`<a href="mailto:${escapeAttr(gig.gig_leader_email)}" style="color:var(--accent);text-decoration:none;">${escapeHtml(gig.gig_leader_email)}</a>`);
+        }
+        return `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Gig leader</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${valueParts.join('<br>')}</span></div>`;
+      })() : ''}
       ${buildSetTimesDisplay(gig)}
       ${getGigNotes(gig) ? `<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;"><span style="color:var(--text-2);">Notes</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(getGigNotes(gig))}</span></div>` : ''}
-      ${!gig.dress_code && !gig.load_in_time && !getGigNotes(gig) && !getGigType(gig) && !gig.parking_info && !gig.day_of_contact ? '<div style="font-size:13px;color:var(--text-3);padding:10px 0;">No gig pack info yet. Edit the gig to add details.</div>' : ''}
+      ${!gig.dress_code && !gig.load_in_time && !getGigNotes(gig) && !getGigType(gig) && !gig.parking_info && !gig.gig_leader_name && !gig.gig_leader_phone && !gig.gig_leader_email ? '<div style="font-size:13px;color:var(--text-3);padding:10px 0;">No gig pack info yet. Edit the gig to add details.</div>' : ''}
     </div>
     <!-- Lineup (Premium) -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
@@ -9012,8 +9036,12 @@ async function openEditGig(gigId) {
           <input type="text" class="form-input" id="editParkingInfo" value="${escapeHtml(gig.parking_info || '')}" placeholder="e.g. Q-Park, rear entrance" />
         </div>
         <div class="form-group">
-          <div class="form-label">Day-of contact</div>
-          <input type="text" class="form-input" id="editDayOfContact" value="${escapeHtml(gig.day_of_contact || '')}" placeholder="e.g. Sarah 07700 900123" />
+          <div class="form-label">Gig leader</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <input type="text" class="form-input" id="editGigLeaderName" value="${escapeHtml(gig.gig_leader_name || '')}" placeholder="Name (e.g. Sarah)" />
+            <input type="tel" class="form-input" id="editGigLeaderPhone" value="${escapeHtml(gig.gig_leader_phone || '')}" placeholder="Phone (e.g. 07700 900123)" />
+            <input type="email" class="form-input" id="editGigLeaderEmail" value="${escapeHtml(gig.gig_leader_email || '')}" placeholder="Email (optional)" />
+          </div>
         </div>
         <div class="form-group">
           <div class="form-label">Notes</div>
@@ -9092,7 +9120,9 @@ async function saveEditGig(gigId) {
       gig_type: document.getElementById('editGigType').value || null,
       dress_code: document.getElementById('editDressCode').value || null,
       parking_info: document.getElementById('editParkingInfo').value || null,
-      day_of_contact: document.getElementById('editDayOfContact').value || null,
+      gig_leader_name: document.getElementById('editGigLeaderName').value || null,
+      gig_leader_phone: document.getElementById('editGigLeaderPhone').value || null,
+      gig_leader_email: document.getElementById('editGigLeaderEmail').value || null,
       notes: document.getElementById('editNotes').value || null,
       set_times: collectSetTimes(),
     };
@@ -12221,7 +12251,15 @@ async function showDepAccepted(offerId) {
           <div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Dress code</span><span style="color:var(--text);font-weight:500;">${escapeHtml(o.dress_code || 'Not set')}</span></div>
           <div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Fee</span><span style="color:var(--success);font-weight:700;">${fee}</span></div>
           <div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);">Band leader</span><span style="color:var(--text);font-weight:500;">${escapeHtml(senderName)}</span></div>
-          <div style="display:flex;justify-content:space-between;padding:10px 14px;font-size:13px;"><span style="color:var(--text-2);">Day-of contact</span><span style="color:var(--text);font-weight:500;">${escapeHtml(o.day_of_contact || (o.sender_phone ? senderName + ' \u00B7 ' + o.sender_phone : 'Not set'))}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 14px;font-size:13px;"><span style="color:var(--text-2);">Gig leader</span><span style="color:var(--text);font-weight:500;text-align:right;">${(() => {
+            const parts = [];
+            if (o.gig_leader_name) parts.push(escapeHtml(o.gig_leader_name));
+            if (o.gig_leader_phone) parts.push(escapeHtml(o.gig_leader_phone));
+            if (o.gig_leader_email) parts.push(escapeHtml(o.gig_leader_email));
+            if (parts.length) return parts.join(' \u00B7 ');
+            if (o.sender_phone) return escapeHtml(senderName + ' \u00B7 ' + o.sender_phone);
+            return 'Not set';
+          })()}</span></div>
         </div>
       </div>
 
