@@ -584,14 +584,16 @@
       <p>The <strong>Needs you</strong> strip is the only place alerts live. Count chips, tap to drill. Hidden entirely on a quiet day. Compresses what was four separate banners (overdue, draft, offers, messages, dep request) into one row that doesn't shout.</p>
       <p>The <strong>action grid</strong> turns Home into a launchpad. Six tiles, one tap to your most-used flows. The first tile (+ Gig) is accented because logging a gig should always be the fastest action in the app.</p>
       <p>What's gone from this view: the 12-month forecast chart (lives in Finance now), the tax-year/this-month numeric pair (also Finance), the missing-fee wizard (rolled into the Needs you chips as <code>3 need fees</code> when present), the always-on 7-day strip (now only appears in the Busy hero where it earns its space).</p>
-      <h3>Open design questions</h3>
+      <h3>Decisions locked in</h3>
       <ul>
-        <li>The Day-of-gig hero shows three action buttons (Navigate / Setlist / Call MD). Should those be the right three, or do you want Map / Setlist / Notes? (Voice memo could go here too.)</li>
-        <li>For Busy week, do you want the next-gig card AND the 7-day strip, or just the strip with a tap-to-detail?</li>
-        <li>Action grid tile #6 is currently "More" — should it be Repertoire, Network, Profile, or a kebab to a menu?</li>
-        <li>Quiet day right now says "Add your next gig." Want a more emotional copy, or stay functional?</li>
+        <li><strong>Day-of trio:</strong> Navigate / Setlist / <strong>Notes</strong>. Notes opens the gig's existing <code>notes</code> field. "Call MD" parked — once <code>day_of_contact</code> is promoted to a structured field with phone/email, the Call MD button returns.</li>
+        <li><strong>Busy week:</strong> 7-day strip on top + compact next-gig card below.</li>
+        <li><strong>Action grid tile #6:</strong> "More" kebab → opens a sheet with Repertoire, Network, EPK, Profile, Settings.</li>
+        <li><strong>Quiet day copy:</strong> Functional and matter-of-fact.</li>
       </ul>
-      <p>Once you've picked your tweaks, I'll build the production version in <code>app.js</code> against the real <code>renderHomeScreen</code> and <code>buildHomeHTML</code> functions and ship it.</p>
+      <h3>Future feature flagged</h3>
+      <p>Structured MD / band-leader contact on gigs. Today <code>day_of_contact</code> is a free-text string used inconsistently. Promoting it to <code>{ name, phone, email, role }</code> unlocks the Call MD action, an SMS-band-confirmation reminder the morning of the gig, and one-tap thank-you afterwards. Worth roadmapping.</p>
+      <p>Once you've reviewed the updated mockup, I'll build the production version in <code>app.js</code> against the real <code>renderHomeScreen</code> and <code>buildHomeHTML</code> functions and ship it.</p>
     </div>
 
   </div>
@@ -627,7 +629,7 @@
             <div class="actions">
               <button><div class="ico">🧭</div>Navigate</button>
               <button><div class="ico">🎵</div>Setlist</button>
-              <button><div class="ico">📞</div>Call MD</button>
+              <button><div class="ico">📝</div>Notes</button>
             </div>
           </div>
         `,
