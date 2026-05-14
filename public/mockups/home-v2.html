@@ -586,14 +586,20 @@
       <p>What's gone from this view: the 12-month forecast chart (lives in Finance now), the tax-year/this-month numeric pair (also Finance), the missing-fee wizard (rolled into the Needs you chips as <code>3 need fees</code> when present), the always-on 7-day strip (now only appears in the Busy hero where it earns its space).</p>
       <h3>Decisions locked in</h3>
       <ul>
-        <li><strong>Day-of trio:</strong> Navigate / Setlist / <strong>Notes</strong>. Notes opens the gig's existing <code>notes</code> field. "Call MD" parked — once <code>day_of_contact</code> is promoted to a structured field with phone/email, the Call MD button returns.</li>
+        <li><strong>Day-of trio:</strong> Navigate / Setlist / <strong>Gig leader</strong>. Phone icon implies contact, label is the role. Avoids the MD jargon while leaving room for any band-leader / fixer / booker concept.</li>
         <li><strong>Busy week:</strong> 7-day strip on top + compact next-gig card below.</li>
         <li><strong>Action grid tile #6:</strong> "More" kebab → opens a sheet with Repertoire, Network, EPK, Profile, Settings.</li>
         <li><strong>Quiet day copy:</strong> Functional and matter-of-fact.</li>
       </ul>
-      <h3>Future feature flagged</h3>
-      <p>Structured MD / band-leader contact on gigs. Today <code>day_of_contact</code> is a free-text string used inconsistently. Promoting it to <code>{ name, phone, email, role }</code> unlocks the Call MD action, an SMS-band-confirmation reminder the morning of the gig, and one-tap thank-you afterwards. Worth roadmapping.</p>
-      <p>Once you've reviewed the updated mockup, I'll build the production version in <code>app.js</code> against the real <code>renderHomeScreen</code> and <code>buildHomeHTML</code> functions and ship it.</p>
+      <h3>Schema work this unlocks</h3>
+      <p>The Gig leader button needs real data to call/email. Today <code>gigs.day_of_contact</code> is a free-text column used inconsistently. Promoting it to a small structured shape <code>{ name, phone, email, role }</code> unlocks:</p>
+      <ul>
+        <li>One-tap call/text from the day-of hero.</li>
+        <li>Morning-of band confirmation SMS reminder ("Confirming I'm on for tonight's gig, 8pm").</li>
+        <li>Post-gig thank-you template with the right name pre-filled.</li>
+      </ul>
+      <p>Small server change, big UX payoff. Worth roadmapping alongside the Home v2 rollout.</p>
+      <p>Once you've reviewed this version, I'll build the production version in <code>app.js</code> against the real <code>renderHomeScreen</code> and <code>buildHomeHTML</code> functions and ship it.</p>
     </div>
 
   </div>
@@ -629,7 +635,7 @@
             <div class="actions">
               <button><div class="ico">🧭</div>Navigate</button>
               <button><div class="ico">🎵</div>Setlist</button>
-              <button><div class="ico">📝</div>Notes</button>
+              <button><div class="ico">📞</div>Gig leader</button>
             </div>
           </div>
         `,
