@@ -287,6 +287,75 @@ Draft three chase versions.`;
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// FEATURE — Thank-you draft for a venue / gig leader after a played gig
+// POST /api/ai/draft-thank-you  { gig_id }
+// Returns: { subject, body }
+// Pulls the gig + venue + gig-leader fields and drafts a warm, short
+// follow-up the musician can send the day after. Builds long-term
+// relationships with bookers + venues.
+// ═════════════════════════════════════════════════════════════════════════════
+router.post('/draft-thank-you', async (req, res) => {
+  if (!aiGuard(res)) return;
+  try {
+    const gigId = String(req.body?.gig_id || '').trim();
+    if (!gigId) return res.status(400).json({ error: 'Pass a gig_id.' });
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gigId)) {
+      return res.status(400).json({ error: 'gig_id must be a UUID.' });
+    }
+
+    const r = await db.query(
+      `SELECT id, band_name, venue_name, venue_address, date, start_time, end_time,
+              fee, gig_leader_name, gig_leader_email, gig_leader_phone, notes, dress_code
+         FROM gigs WHERE id = $1 AND user_id = $2`,
+      [gigId, req.user.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Gig not found.' });
+
+    const gig = r.rows[0];
+    const senderName = req.user.display_name || req.user.name || 'The band';
+    const dateStr = gig.date
+      ? new Date(gig.date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+      : '(date)';
+    const leaderFirstName = gig.gig_leader_name
+      ? String(gig.gig_leader_name).split(/\s+/)[0]
+      : '';
+
+    const system = `You draft a single short thank-you message a gigging musician sends to a venue or gig leader after the show.
+
+Return ONLY a JSON object:
+
+{
+  "subject": string,   // under 60 chars
+  "body":    string    // 50-120 words, plain text, no markdown
+}
+
+Rules:
+- Warm, professional, no corporate-speak. No em dashes. No exclamation marks beyond one in the body if it fits naturally.
+- Address the recipient by first name when one is provided, otherwise open with "Hi there".
+- Reference the gig date and venue specifically so it doesn't read as a generic template.
+- Briefly acknowledge something positive about the gig (the crowd / the room / smooth load-in / the sound) but keep it credible, not flattering.
+- Close with a soft invitation to keep in touch / book again. Don't pitch hard.
+- Sign off "Cheers,\n${senderName}".`;
+
+    const userPrompt = `Recipient: ${gig.gig_leader_name || '(unknown name)'}${leaderFirstName ? ' (first name: ' + leaderFirstName + ')' : ''}
+Venue: ${gig.venue_name || '(unknown)'}
+Date: ${dateStr}
+Band / act: ${gig.band_name || '(unknown)'}
+Recipient role: gig leader / booker / venue contact
+Sender's name: ${senderName}
+Gig notes (sender's own): ${gig.notes || '(none)'}
+
+Draft the thank-you.`;
+
+    const data = await callHaiku({ system, user: userPrompt, json: true, maxTokens: 600 });
+    sendAIResult(res, data);
+  } catch (err) {
+    console.error(`[ai/draft-thank-you] error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'AI request failed' });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 // FEATURE 6 — EPK / Bio Writer
 // POST /api/ai/generate-bio  { facts, style? }
 // Returns: { short50, medium150, long300 }

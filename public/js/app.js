@@ -8374,6 +8374,7 @@ async function renderFinancePanel() {
           <button class="pill-g" onclick="exportExpensesCSV()">Export expenses (CSV)</button>
           <button class="pill-o" onclick="exportGigsPDF()">Export gigs (PDF)</button>
           <button class="pill-o" onclick="exportFinancePDF()">Export finance summary (PDF)</button>
+          <button class="pill-o" onclick="downloadMtdExport()">HMRC MTD report (CSV)</button>
         </div>
       </div>`;
 
@@ -9156,6 +9157,20 @@ async function openGigDetail(gigId) {
       ${buildSetTimesDisplay(gig)}
       ${getGigNotes(gig) ? `<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;"><span style="color:var(--text-2);">Notes</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(getGigNotes(gig))}</span></div>` : ''}
       ${!gig.dress_code && !gig.load_in_time && !getGigNotes(gig) && !getGigType(gig) && !gig.parking_info && !gig.gig_leader_name && !gig.gig_leader_phone && !gig.gig_leader_email ? '<div style="font-size:13px;color:var(--text-3);padding:10px 0;">No gig pack info yet. Edit the gig to add details.</div>' : ''}
+      ${(() => {
+        // "Send thank you" only appears for PAST confirmed gigs that have
+        // a leader contact (name or email). Builds long-term relationships
+        // with bookers + venues. Tap opens a modal with an AI-drafted
+        // message the user can edit before sending.
+        const isPast = gig.date && new Date(gig.date) < new Date(new Date().toDateString());
+        const isConfirmed = gig.status === 'confirmed';
+        const hasContact = !!(gig.gig_leader_name || gig.gig_leader_email);
+        if (!isPast || !isConfirmed || !hasContact) return '';
+        return `<div style="padding:14px 0 4px;">
+          <button onclick="event.stopPropagation(); openThankYouDraft('${escapeAttr(gig.id)}');" style="width:100%;background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);color:var(--accent);padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">✨ Send a thank-you</button>
+          <div style="font-size:10px;color:var(--text-3);margin-top:4px;text-align:center;">Drafted for you. Edit before sending.</div>
+        </div>`;
+      })()}
     </div>
     <!-- Lineup (Premium) -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
@@ -9798,6 +9813,29 @@ function buildDirectoryProfileEditor(profile) {
       </div>
     </div>
     ${(() => {
+      // Push reminders toggle. Browser-permission gated: tapping ON
+      // triggers Notification.requestPermission(), subscribes via
+      // PushManager, and POSTs the subscription to /api/push/subscribe.
+      // Tapping OFF unsubscribes and clears the server-side record.
+      // Reads the saved `push_reminders_enabled` flag to initialise.
+      const pushOn = profile.push_reminders_enabled === true;
+      return `
+    <div style="margin-bottom:14px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">
+      <div style="display:flex;align-items:flex-start;gap:12px;">
+        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
+          <input id="editPushReminders" type="checkbox" ${pushOn ? 'checked' : ''} onchange="togglePushReminders(this)" style="opacity:0;width:0;height:0;" />
+          <span class="tmg-toggle-bg" style="position:absolute;inset:0;background:${pushOn ? 'var(--accent)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
+          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${pushOn ? 'translateX(20px)' : 'translateX(0)'};"></span>
+        </label>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Gig day reminders</div>
+          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">Get a push notification on the morning of a confirmed gig with the venue and load-in time. Requires browser permission. Disable any time.</div>
+          ${pushOn ? '<button onclick="sendTestPushNotification()" style="margin-top:8px;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.4);border-radius:8px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;">Send test notification</button>' : ''}
+        </div>
+      </div>
+    </div>`;
+    })()}
+    ${(() => {
       // "Available now": green-accent toggle so the live signal reads
       // differently from the orange directory-status toggles above. When
       // ON we compute the live-expiry label client-side from the server's
@@ -9969,7 +10007,7 @@ function editProfile() {
       <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Pay link <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-3);">(optional)</span></label>
         <input id="editPaymentLinkUrl" type="url" inputmode="url" value="${escapeHtml(profile.payment_link_url || '')}" placeholder="https://buy.stripe.com/... or https://paypal.me/yourhandle" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
-        <div style="font-size:10px;color:var(--text-3);margin-top:3px;line-height:1.5;">Stripe Payment Link, PayPal.me, SumUp, Wise, anything that works for you. Adds a Pay Online button to every invoice and tells you when a client clicks it.</div>
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;line-height:1.5;">Stripe Payment Link, PayPal.me, SumUp, Wise, anything that works for you. Adds a Pay Online button to every invoice and tells you when a client clicks it. <span style="color:var(--accent);">💳 Tip: a Stripe Payment Link automatically enables Apple Pay and Google Pay on the checkout page</span>.</div>
       </div>
       <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Number Format</label>
@@ -15731,6 +15769,231 @@ async function toggleGigNoteVoice(targetId, btn) {
   }
 }
 window.toggleGigNoteVoice = toggleGigNoteVoice;
+
+// ── AI-drafted thank-you to gig leader / venue ───────────────────────────────
+// Tap "Send a thank-you" on a past confirmed gig → POST /api/ai/draft-thank-you
+// → returns { subject, body }. Open a bottom sheet with editable fields so
+// the user can tweak the tone before sending. Two send paths:
+//   "Open in email"  — builds a mailto: link with subject + body pre-filled.
+//                       Works as long as the device has a default mail app.
+//   "Copy to clipboard" — graceful fallback for sharing via any channel.
+async function openThankYouDraft(gigId) {
+  if (!gigId) return;
+  // Open a "drafting..." sheet immediately so the user knows we're working.
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  overlay.innerHTML = `
+    <div id="thxSheet" style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;max-height:90vh;overflow-y:auto;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>
+      <div style="font-size:12px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;">Thank-you draft</div>
+      <div id="thxLoading" style="padding:40px 0;text-align:center;color:var(--text-2);font-size:13px;">✨ Drafting...</div>
+      <div id="thxBody" style="display:none;"></div>
+    </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  let draft = null;
+  try {
+    const r = await fetch('/api/ai/draft-thank-you', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gig_id: gigId }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    draft = await r.json();
+  } catch (err) {
+    const loading = document.getElementById('thxLoading');
+    if (loading) loading.innerHTML = `<div style="color:var(--danger);">Couldn&#x2019;t draft a message: ${escapeHtml(err.message || 'unknown error')}</div><div style="margin-top:8px;font-size:11px;color:var(--text-3);">Try again in a moment.</div>`;
+    return;
+  }
+  if (!draft || !draft.subject || !draft.body) {
+    const loading = document.getElementById('thxLoading');
+    if (loading) loading.textContent = 'No draft returned. Try again.';
+    return;
+  }
+
+  // Pull the gig's leader email out of the cached gigs (set by openGigDetail).
+  const cachedGigs = window._cachedGigs || [];
+  const gig = cachedGigs.find((g) => g.id === gigId) || {};
+  const leaderEmail = gig.gig_leader_email || '';
+
+  const subject = String(draft.subject).slice(0, 200);
+  const body = String(draft.body).slice(0, 4000);
+
+  const bodyEl = document.getElementById('thxBody');
+  document.getElementById('thxLoading').style.display = 'none';
+  bodyEl.style.display = 'block';
+  bodyEl.innerHTML = `
+    <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">To</div>
+    <input id="thxTo" type="email" value="${escapeAttr(leaderEmail)}" placeholder="leader@example.com" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;box-sizing:border-box;margin-bottom:10px;" />
+    <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Subject</div>
+    <input id="thxSubject" type="text" value="${escapeAttr(subject)}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;box-sizing:border-box;margin-bottom:10px;" />
+    <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Message</div>
+    <textarea id="thxBodyText" rows="9" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;box-sizing:border-box;resize:vertical;min-height:160px;font-family:inherit;">${escapeHtml(body)}</textarea>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button id="thxSend" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:10px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;">📧 Open in email</button>
+      <button id="thxCopy" style="flex:1;background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;">Copy</button>
+    </div>
+    <button id="thxCancel" style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--text-3);padding:8px;font-size:12px;font-weight:500;cursor:pointer;">Cancel</button>`;
+
+  document.getElementById('thxSend').addEventListener('click', () => {
+    const to = document.getElementById('thxTo').value.trim();
+    const sub = document.getElementById('thxSubject').value.trim();
+    const msg = document.getElementById('thxBodyText').value;
+    const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(sub)}&body=${encodeURIComponent(msg)}`;
+    window.location.href = mailto;
+    overlay.remove();
+  });
+  document.getElementById('thxCopy').addEventListener('click', async () => {
+    const sub = document.getElementById('thxSubject').value.trim();
+    const msg = document.getElementById('thxBodyText').value;
+    const text = `Subject: ${sub}\n\n${msg}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      if (typeof showToast === 'function') showToast('Copied to clipboard');
+    } catch (_) {
+      if (typeof showToast === 'function') showToast('Could not copy — select and copy manually');
+    }
+  });
+  document.getElementById('thxCancel').addEventListener('click', () => overlay.remove());
+}
+window.openThankYouDraft = openThankYouDraft;
+
+// HMRC Making Tax Digital export. Browser-side trigger: hits the server
+// endpoint with the current tax year, receives a CSV stream, and prompts
+// download. The endpoint handles tax-year resolution (defaults to current)
+// and SA103 box mapping for each expense category.
+async function downloadMtdExport() {
+  try {
+    const url = '/api/finance/mtd-export';
+    // Use a hidden anchor so the browser uses the server-supplied
+    // Content-Disposition filename. Works on iOS Safari too.
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 200);
+    if (typeof showToast === 'function') showToast('Generating MTD report...');
+  } catch (err) {
+    if (typeof showToast === 'function') showToast('Could not download MTD report');
+  }
+}
+window.downloadMtdExport = downloadMtdExport;
+
+// ── Push notification subscription (smart gig reminders) ──────────────────────
+// Two-step flip: the visible toggle pessimistically reverts on failure
+// so the user sees a clear OFF state if browser permission is denied or
+// the server is missing VAPID config. The underlying server flag only
+// flips after a successful subscribe / unsubscribe round-trip.
+async function togglePushReminders(checkbox) {
+  const desired = !!checkbox.checked;
+  const setVisual = (on) => {
+    checkbox.checked = on;
+    const dot = checkbox.parentElement.querySelector('.tmg-toggle-dot');
+    const bg = checkbox.parentElement.querySelector('.tmg-toggle-bg');
+    if (dot) dot.style.transform = on ? 'translateX(20px)' : 'translateX(0)';
+    if (bg) bg.style.background = on ? 'var(--accent)' : 'var(--border)';
+  };
+  try {
+    if (desired) {
+      await subscribeToPush();
+    } else {
+      await unsubscribeFromPush();
+    }
+  } catch (err) {
+    // Roll back the toggle UI on any error so it doesn't lie.
+    setVisual(!desired);
+    if (typeof showToast === 'function') {
+      showToast(err && err.message ? err.message : 'Could not change notification preference');
+    }
+  }
+}
+window.togglePushReminders = togglePushReminders;
+
+async function subscribeToPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    throw new Error('Notifications are not supported on this browser.');
+  }
+  // 1. Fetch the server's VAPID public key. If the server isn't
+  //    configured, surface a clear message and abort.
+  const keyRes = await fetch('/api/push/vapid-public');
+  if (!keyRes.ok) {
+    if (keyRes.status === 503) throw new Error('Notifications not configured on the server yet.');
+    throw new Error('Could not load notification config (HTTP ' + keyRes.status + ').');
+  }
+  const { public_key } = await keyRes.json();
+  if (!public_key) throw new Error('Server returned no VAPID public key.');
+
+  // 2. Ask the browser for permission.
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('Notification permission denied.');
+
+  // 3. Subscribe via the Service Worker registration.
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(public_key),
+  });
+
+  // 4. POST the subscription to the server.
+  const r = await fetch('/api/push/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscription: sub.toJSON() }),
+  });
+  if (!r.ok) throw new Error('Server rejected the subscription (HTTP ' + r.status + ').');
+  if (typeof showToast === 'function') showToast('Gig reminders enabled');
+}
+
+async function unsubscribeFromPush() {
+  // Pull the existing subscription and tell the server first, then
+  // unregister locally so the browser doesn't keep delivering pushes
+  // for an endpoint the server already forgot about.
+  let endpoint = null;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      endpoint = sub.endpoint;
+      await sub.unsubscribe();
+    }
+  } catch (_) { /* tolerate */ }
+
+  await fetch('/api/push/unsubscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(endpoint ? { endpoint } : {}),
+  });
+  if (typeof showToast === 'function') showToast('Gig reminders disabled');
+}
+
+async function sendTestPushNotification() {
+  try {
+    const r = await fetch('/api/push/test', { method: 'POST' });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.message || j.error || 'HTTP ' + r.status);
+    }
+    if (typeof showToast === 'function') showToast('Test notification sent. Check your device.');
+  } catch (err) {
+    if (typeof showToast === 'function') showToast('Test failed: ' + (err.message || 'unknown'));
+  }
+}
+window.sendTestPushNotification = sendTestPushNotification;
+
+// Web Push needs the VAPID public key as a Uint8Array, not the base64
+// string the server returns. Standard helper from the spec examples.
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const arr = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) arr[i] = rawData.charCodeAt(i);
+  return arr;
+}
 
 function setMicButtonState(btn, state) {
   if (!btn) return;

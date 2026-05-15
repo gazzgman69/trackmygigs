@@ -324,6 +324,52 @@ router.post('/gigs', async (req, res) => {
   }
 });
 
+// GET /api/gigs/:id/wallet-pass.pkpass — Apple Wallet pass for a single
+// gig. Returns the .pkpass binary so iOS can show "Add to Wallet" via
+// the Safari interstitial. Requires three env vars to be configured:
+//   APPLE_PASS_TYPE_ID    — e.g. pass.com.trackmygigs.gig
+//   APPLE_TEAM_ID         — your Apple Developer Team ID
+//   APPLE_PASS_CERT_PEM   — Pass Type ID Certificate (PEM format)
+//   APPLE_PASS_KEY_PEM    — Private key for the cert (PEM, unencrypted
+//                           or with APPLE_PASS_KEY_PASSPHRASE alongside)
+//   APPLE_WWDR_PEM        — Apple's WWDR intermediate cert
+// Without those, the route returns 503 with a clear setup-needed
+// message rather than emitting an unsigned (and therefore broken)
+// pass. The button is rendered conditionally so iOS users see it
+// only when the server is fully provisioned.
+router.get('/gigs/:id/wallet-pass.pkpass', async (req, res) => {
+  if (!process.env.APPLE_PASS_TYPE_ID || !process.env.APPLE_PASS_CERT_PEM
+      || !process.env.APPLE_PASS_KEY_PEM || !process.env.APPLE_TEAM_ID) {
+    return res.status(503).json({
+      error: 'wallet_not_configured',
+      message: 'Apple Wallet pass generation needs APPLE_PASS_TYPE_ID, APPLE_TEAM_ID, APPLE_PASS_CERT_PEM and APPLE_PASS_KEY_PEM set as Secrets. Enrol in the Apple Developer Program, create a Pass Type ID + certificate, and add the PEMs to Replit Secrets.',
+    });
+  }
+  // Real implementation lives in lib/wallet-pass.js when the cert is in
+  // place. The signing flow is: build pass.json + manifest.json (SHA-1
+  // hashes of every bundled file), CMS-sign the manifest with the Pass
+  // Type ID cert chained against WWDR, then zip the bundle into a .pkpass.
+  // Deferred until you've completed Apple Developer enrolment.
+  try {
+    const r = await db.query(
+      `SELECT id, band_name, venue_name, venue_address, date, start_time, end_time,
+              load_in_time, gig_leader_name, gig_leader_phone, dress_code
+         FROM gigs WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'gig_not_found' });
+    // Placeholder until lib/wallet-pass.js is implemented. Returning
+    // 501 keeps the route honest rather than emitting a broken pkpass.
+    return res.status(501).json({
+      error: 'not_implemented',
+      message: 'Pass signing not yet wired. Set up Apple Developer cert, then drop lib/wallet-pass.js into place and re-publish.',
+    });
+  } catch (err) {
+    console.error('Wallet pass error:', err);
+    res.status(500).json({ error: 'wallet_pass_failed' });
+  }
+});
+
 router.get('/gigs/:id', async (req, res) => {
   try {
     const result = await db.query(
@@ -2716,6 +2762,161 @@ router.get('/earnings', async (req, res) => {
 });
 
 // ── Monthly detail for the Finance panel insight card ───────────────────────
+// HMRC Making Tax Digital export. Returns a CSV that a sole-trader
+// musician (or their accountant) can drop into their Self Assessment
+// software. Two sections in a single file:
+//   1. Income — one row per confirmed gig in the tax year, columns
+//      date / source / description / gross / vat / net / hmrc_box.
+//      All slot into SA103S box 9 (turnover) or SA103F box 15.
+//   2. Expenses — one row per receipt in the tax year, columns
+//      date / vendor / category / hmrc_box / gross / vat / net.
+//      Each receipt is mapped to the matching SA103 expense box
+//      (travel, equipment, etc.).
+// Plus a summary footer with totals + taxable profit.
+//
+// Tax year selection: ?tax_year=2025-26 picks April 6 2025 to April 5
+// 2026. Defaults to the current tax year. Output is RFC 4180 CSV with
+// a Content-Disposition that downloads as
+// tmg-mtd-<slug>-<taxyear>.csv.
+//
+// SA103 box mapping (musicians-relevant subset). Anything in 'Other'
+// rolls up into box 30 ("Other allowable business expenses") because
+// HMRC's catch-all is genuinely catch-all for self-employed income.
+const SA103_BOXES = {
+  'Travel & vehicle': '20', // Car, van and travel expenses
+  'Equipment & instruments': '24', // Repairs and renewals of property and equipment
+  'Equipment repairs': '24',
+  'Accommodation': '20',
+  'Subsistence': '20',
+  'Mobile phone & internet': '25', // Phone, fax, stationery and other office costs
+  'Insurance': '27', // Interest on bank and other loans / Bank, credit card and other financial charges — closest fit on SA103S
+  'Subscriptions': '30', // Other allowable business expenses
+  'Marketing & promotion': '23', // Advertising and business entertainment
+  'Accountancy & legal': '28', // Accountancy, legal and other professional fees
+  'Stationery & postage': '25',
+  'Session fees paid out': '17', // Wages, salaries and other staff costs (for self-billed deps)
+  'Rehearsal & studio hire': '22', // Premises running costs
+  'Training & development': '30',
+  'Other': '30',
+};
+function hmrcBoxFor(category) {
+  return SA103_BOXES[category] || '30';
+}
+
+router.get('/finance/mtd-export', async (req, res) => {
+  try {
+    // Tax year: ?tax_year=2025-26 → April 6 2025 to April 5 2026.
+    // Default to current.
+    let taxYearStart;
+    let taxYearEnd;
+    let taxYearLabel;
+    const tyParam = String(req.query.tax_year || '').trim();
+    const m = tyParam.match(/^(\d{4})[-/](\d{2,4})$/);
+    if (m) {
+      const startYear = parseInt(m[1], 10);
+      const endYearShort = parseInt(m[2], 10);
+      const endYear = endYearShort < 100 ? startYear + 1 : endYearShort;
+      taxYearStart = `${startYear}-04-06`;
+      taxYearEnd = `${endYear}-04-05`;
+      taxYearLabel = `${startYear}/${String(endYear).slice(-2)}`;
+    } else {
+      const now = new Date();
+      const month = now.getMonth() + 1;
+      const day = now.getDate();
+      const startYear = (month > 4 || (month === 4 && day >= 6))
+        ? now.getFullYear()
+        : now.getFullYear() - 1;
+      taxYearStart = `${startYear}-04-06`;
+      taxYearEnd = `${startYear + 1}-04-05`;
+      taxYearLabel = `${startYear}/${String(startYear + 1).slice(-2)}`;
+    }
+
+    const [income, expenses, user] = await Promise.all([
+      db.query(
+        `SELECT date, band_name, venue_name, fee
+           FROM gigs
+          WHERE user_id = $1
+            AND status = 'confirmed'
+            AND date >= $2 AND date <= $3
+            AND fee IS NOT NULL
+          ORDER BY date ASC`,
+        [req.user.id, taxYearStart, taxYearEnd]
+      ),
+      db.query(
+        `SELECT date, vendor, amount, category
+           FROM receipts
+          WHERE user_id = $1 AND date >= $2 AND date <= $3
+          ORDER BY date ASC`,
+        [req.user.id, taxYearStart, taxYearEnd]
+      ).catch(() => ({ rows: [] })),
+      db.query(`SELECT display_name, name FROM users WHERE id = $1`, [req.user.id]),
+    ]);
+
+    const senderName = user.rows[0]
+      ? (user.rows[0].display_name || user.rows[0].name || 'TrackMyGigs user')
+      : 'TrackMyGigs user';
+    const slug = String(senderName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'tmg';
+
+    // CSV writer with RFC 4180 quoting — wrap any value containing
+    // comma / quote / newline in double quotes and double the inner quotes.
+    function csvField(v) {
+      if (v == null) return '';
+      const s = String(v);
+      if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    }
+    function csvLine(arr) { return arr.map(csvField).join(',') + '\r\n'; }
+
+    let out = '';
+    out += csvLine([`TrackMyGigs MTD export — ${senderName} — Tax year ${taxYearLabel}`]);
+    out += csvLine([`Generated: ${new Date().toISOString()}`]);
+    out += csvLine([]);
+
+    let totalIncome = 0;
+    let totalExpenses = 0;
+
+    out += csvLine(['INCOME (SA103 box 9 / 15 — Turnover)']);
+    out += csvLine(['Date', 'Source / Band', 'Venue', 'Gross', 'VAT', 'Net', 'HMRC box']);
+    for (const g of income.rows) {
+      const gross = Number(g.fee) || 0;
+      const vat = 0; // sole traders below VAT threshold typically don't charge it
+      const net = gross - vat;
+      totalIncome += gross;
+      const dateStr = (g.date instanceof Date) ? g.date.toISOString().slice(0, 10) : String(g.date).slice(0, 10);
+      out += csvLine([dateStr, g.band_name || '', g.venue_name || '', gross.toFixed(2), vat.toFixed(2), net.toFixed(2), '9']);
+    }
+    out += csvLine([]);
+    out += csvLine(['EXPENSES (SA103 boxes 16-30)']);
+    out += csvLine(['Date', 'Vendor', 'Category', 'HMRC box', 'Gross', 'VAT', 'Net']);
+    for (const e of expenses.rows) {
+      const gross = Number(e.amount) || 0;
+      const vat = 0;
+      const net = gross - vat;
+      totalExpenses += gross;
+      const dateStr = (e.date instanceof Date) ? e.date.toISOString().slice(0, 10) : String(e.date).slice(0, 10);
+      out += csvLine([dateStr, e.vendor || '', e.category || 'Other', hmrcBoxFor(e.category), gross.toFixed(2), vat.toFixed(2), net.toFixed(2)]);
+    }
+    out += csvLine([]);
+    out += csvLine(['SUMMARY']);
+    out += csvLine(['Total income', totalIncome.toFixed(2)]);
+    out += csvLine(['Total expenses', totalExpenses.toFixed(2)]);
+    out += csvLine(['Taxable profit (income minus expenses)', (totalIncome - totalExpenses).toFixed(2)]);
+    out += csvLine([]);
+    out += csvLine(['Notes:']);
+    out += csvLine(['- This file is generated from your TrackMyGigs records. Cross-check against bank statements before filing.']);
+    out += csvLine(['- VAT columns are 0 by default. If you are VAT-registered, edit before import.']);
+    out += csvLine(['- HMRC box numbers are SA103S box references. Use SA103F equivalents if filing the full self-employment pages.']);
+
+    const filename = `tmg-mtd-${slug}-${taxYearLabel.replace('/', '-')}.csv`;
+    res.set('Content-Type', 'text/csv; charset=utf-8');
+    res.set('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(out);
+  } catch (err) {
+    console.error('MTD export error:', err);
+    res.status(500).json({ error: 'Failed to generate MTD export' });
+  }
+});
+
 // Returns the raw gigs / invoices / expenses for the chosen month, plus a
 // next-month gig count and the user's total outstanding invoice load. The
 // client uses this to render the deterministic 12-variation Monthly Insight

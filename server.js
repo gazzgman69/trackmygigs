@@ -13,6 +13,7 @@ const sheetsRoutes = require('./routes/sheets');
 const chatRoutes = require('./routes/chat');
 const publicRoutes = require('./routes/public');
 const aiRoutes = require('./routes/ai');
+const pushRoutes = require('./routes/push');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -800,6 +801,7 @@ const stripeRoutes = require('./routes/stripe');
 app.use('/api/stripe', stripeRoutes);
 
 app.use('/api/ai', aiRoutes);
+app.use('/api/push', pushRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/sheets', sheetsRoutes);
@@ -1254,6 +1256,13 @@ async function runMigrations() {
     // available_now_until > NOW())` as "actually available right now."
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS available_now BOOLEAN DEFAULT FALSE`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS available_now_until TIMESTAMP`);
+
+    // Web Push subscriptions for smart gig reminders. Stored as a JSONB
+    // array of subscription objects ({endpoint, keys: {p256dh, auth}})
+    // so one user can register multiple devices (laptop + phone, etc).
+    // Server iterates this array to fan out a notification.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS push_subscriptions JSONB DEFAULT '[]'::jsonb`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS push_reminders_enabled BOOLEAN DEFAULT FALSE`);
     // Invoice & payment settings on users
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bank_details TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invoice_prefix VARCHAR(20) DEFAULT 'INV'`);

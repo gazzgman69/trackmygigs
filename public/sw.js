@@ -125,3 +125,43 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(request))
   );
 });
+
+// ── Push notifications (smart gig reminders) ─────────────────────────────────
+// The server sends a JSON payload like { title, body, url, tag } via Web Push;
+// we surface it as a system notification. Tap-through opens the URL (defaults
+// to / so the user lands on Home with the day-of hero already rendered).
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (_) {
+    data = { title: 'TrackMyGigs', body: event.data ? event.data.text() : '' };
+  }
+  const title = data.title || 'TrackMyGigs';
+  const options = {
+    body: data.body || '',
+    icon: '/icons/icon-192.svg',
+    badge: '/icons/icon-192.svg',
+    tag: data.tag || 'tmg',
+    data: { url: data.url || '/' },
+    requireInteraction: false,
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      // Prefer focusing an existing TMG tab over opening a new one.
+      for (const client of list) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) {
+          client.navigate(url);
+          return client.focus();
+        }
+      }
+      return self.clients.openWindow(url);
+    })
+  );
+});
