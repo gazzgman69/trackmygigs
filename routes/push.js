@@ -18,16 +18,20 @@
 // the feature simply stays inactive instead of crashing the server.
 
 const express = require('express');
-const webPush = require('web-push');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 
 const router = express.Router();
 
-// Try to configure web-push at boot. If VAPID isn't set, log once and
-// leave _configured=false so every send falls through gracefully.
+// Defensive load: if the web-push npm package isn't installed (e.g. a
+// Replit deploy ran an older lockfile snapshot before the dep was
+// added) or setVapidDetails throws on malformed keys, swallow it and
+// leave _configured=false. The push endpoints then all 503 gracefully
+// rather than letting a require error crash the whole server boot.
+let webPush = null;
 let _configured = false;
 try {
+  webPush = require('web-push');
   const pub = process.env.VAPID_PUBLIC_KEY;
   const priv = process.env.VAPID_PRIVATE_KEY;
   const subject = process.env.VAPID_SUBJECT || 'mailto:contact@trackmygigs.app';
@@ -39,7 +43,9 @@ try {
     console.log('[push] VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY not set; web-push disabled');
   }
 } catch (err) {
-  console.error('[push] setVapidDetails failed:', err.message);
+  webPush = null;
+  _configured = false;
+  console.error('[push] web-push setup failed (push routes will 503):', err && err.message);
 }
 
 // GET /api/push/vapid-public — public key the browser uses when
@@ -191,6 +197,7 @@ async function sendToSubscriptions(userId, subs, payload) {
   let sent = 0;
   let failed = 0;
   const stale = [];
+  if (!webPush) return { sent: 0, failed: subs.length, pruned: 0 };
   for (const sub of subs) {
     try {
       await webPush.sendNotification(sub, payload);
