@@ -539,15 +539,15 @@ function setupNavigation() {
   navItems.forEach((item) => {
     item.addEventListener('click', () => {
       const screen = item.getAttribute('data-screen');
+      // Receipt isn't a screen, it's an overlay panel. Open it directly
+      // rather than rerouting through showScreen which would close any
+      // open panels first.
+      if (screen === 'receipt') {
+        openPanel('panel-receipt');
+        if (typeof initReceiptPanel === 'function') initReceiptPanel();
+        return;
+      }
       showScreen(screen);
-    });
-  });
-
-  const quickActions = document.querySelectorAll('.nav-quick-btn');
-  quickActions.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const action = btn.getAttribute('data-action');
-      handleQuickAction(action);
     });
   });
 }
@@ -6347,24 +6347,6 @@ function selectFullFormStatus(value) {
 function setupGigsScreen() {}
 function setupInvoicesScreen() {}
 function setupOffersScreen() {}
-
-// ── Quick actions ────────────────────────────────────────────────────────────
-
-function handleQuickAction(action) {
-  if (action === 'add-gig') {
-    openGigWizard();
-  } else if (action === 'invoice') {
-    // Open the full Invoices list screen (overdue/draft/sent/paid + "+ New").
-    // The in-screen + New button opens panel-invoice for create; this pill is
-    // the single entry point that gives access to both list and create paths.
-    showScreen('invoices');
-  } else if (action === 'block-date') {
-    openPanel('panel-block');
-  } else if (action === 'receipt') {
-    openPanel('panel-receipt');
-    initReceiptPanel();
-  }
-}
 
 // ── Panel open / close ────────────────────────────────────────────────────────
 
@@ -16155,7 +16137,7 @@ function escapeAttr(str) {
   let dragItem = null;
 
   function allNavItems() {
-    return document.querySelectorAll('.nav-main .nav-item, .nav-quick-actions .nav-quick-btn');
+    return document.querySelectorAll('.nav-main .nav-item');
   }
 
   // Attach long-press listeners

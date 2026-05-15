@@ -261,53 +261,6 @@ body {
   z-index: 2;
 }
 
-.nav-quick-actions {
-  display: flex;
-  flex: 1;
-  border-top: 1px solid var(--border);
-  /* Centre the buttons as a tight pair with content width rather than
-     stretching each to fill 1/N of the row. Looks balanced for any
-     button count from 1 upwards instead of feeling janky when fewer
-     than four are present. */
-  justify-content: center;
-  gap: 36px;
-}
-
-.nav-quick-btn {
-  flex: 0 0 auto;
-  min-width: 96px;
-  padding-left: 16px;
-  padding-right: 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  padding-top: 8px;
-  padding-bottom: 8px;
-  min-height: 40px;
-  cursor: pointer;
-  border: none;
-  background: none;
-  color: var(--text-2);
-  transition: color 0.15s;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
-}
-
-.nav-quick-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-.nav-quick-btn:hover {
-  color: var(--text);
-}
-
-.nav-quick-btn.active {
-  color: var(--accent);
-}
-
 /* ═══ OVERLAY PANELS ═══ */
 .panel-overlay {
   position: fixed;
