@@ -511,6 +511,263 @@ async function handleCleanupSecTest(req, res) {
 app.get('/api/admin/cleanup-sec-test', handleCleanupSecTest);
 app.post('/api/admin/cleanup-sec-test', handleCleanupSecTest);
 
+// ── Simulator support endpoints ──────────────────────────────────────────────
+// Three endpoints powering the 1,000-user simulation in /sim. All gated by
+// RELOAD_SECRET (?key=...) — server-side only, never exposed to the client.
+//
+//   POST /api/admin/sim-create-user — create a sim user + return a session
+//                                     token. No email round-trip needed.
+//   GET  /api/admin/sim-stats       — DB invariants the simulator polls
+//                                     during and after a run.
+//   POST /api/admin/wipe-sim-data   — cascading delete of every row tagged
+//                                     sim+*@trackmygigs.app. Idempotent.
+
+const SIM_EMAIL_PREFIX = 'sim+';
+const SIM_EMAIL_DOMAIN = '@trackmygigs.app';
+const SIM_EMAIL_PATTERN = SIM_EMAIL_PREFIX + '%' + SIM_EMAIL_DOMAIN;
+
+function simAuthOk(req, res) {
+  const want = process.env.RELOAD_SECRET || 'LEROADSECRET!';
+  if ((req.query && req.query.key) === want) return true;
+  res.status(403).json({ error: 'forbidden' });
+  return false;
+}
+
+// POST /api/admin/sim-create-user?key=...
+// Body (all optional except email): {
+//   email, name, display_name, home_postcode, instruments, genres,
+//   home_lat, home_lng, travel_radius_miles, discoverable, allow_direct_messages,
+//   available_now, persona
+// }
+// Creates the user and returns { user_id, session_token } so the simulator's
+// HTTP client can put the token in its own cookie jar. The email MUST start
+// with `sim+` so the wipe endpoint can reliably clean up afterwards.
+app.post('/api/admin/sim-create-user', async (req, res) => {
+  if (!simAuthOk(req, res)) return;
+  try {
+    const body = req.body || {};
+    const email = String(body.email || '').trim().toLowerCase();
+    if (!email.startsWith(SIM_EMAIL_PREFIX) || !email.endsWith(SIM_EMAIL_DOMAIN)) {
+      return res.status(400).json({ error: 'invalid_email', message: 'email must be sim+<id>@trackmygigs.app' });
+    }
+    const name = body.name || 'Sim User';
+    const display_name = body.display_name || name;
+    const instruments = Array.isArray(body.instruments) ? body.instruments : null;
+    const genres = Array.isArray(body.genres) ? body.genres : null;
+
+    // Insert user. Most fields default fine; we set the ones the simulator
+    // cares about for geographic + directory coverage.
+    const userRes = await db.query(
+      `INSERT INTO users (
+         email, name, display_name, instruments, genres,
+         home_postcode, home_lat, home_lng, travel_radius_miles,
+         discoverable, allow_direct_messages,
+         available_now, available_now_until
+       )
+       VALUES ($1, $2, $3, $4::text[], $5::text[],
+               $6, $7, $8, $9,
+               $10, $11,
+               $12, $13)
+       RETURNING id`,
+      [
+        email,
+        name,
+        display_name,
+        instruments,
+        genres,
+        body.home_postcode || null,
+        body.home_lat != null ? Number(body.home_lat) : null,
+        body.home_lng != null ? Number(body.home_lng) : null,
+        body.travel_radius_miles != null ? parseInt(body.travel_radius_miles, 10) : 50,
+        body.discoverable !== false,
+        body.allow_direct_messages !== false,
+        !!body.available_now,
+        body.available_now && body.available_now_until ? new Date(body.available_now_until) : null,
+      ]
+    );
+    const userId = userRes.rows[0].id;
+
+    // Mint a session token. 30-day expiry to match the real auth flow.
+    const crypto = require('crypto');
+    const sessionToken = crypto.randomBytes(48).toString('hex');
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await db.query(
+      'INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3)',
+      [userId, sessionToken, expiresAt]
+    );
+
+    res.json({ ok: true, user_id: userId, session_token: sessionToken, email });
+  } catch (err) {
+    console.error('[admin/sim-create-user]', err);
+    res.status(500).json({ error: 'create_failed', message: err.message });
+  }
+});
+
+// GET /api/admin/sim-stats?key=...
+// Returns DB invariants the simulator uses for the final pass/fail report:
+// row counts per table (split by sim vs non-sim where it matters), status
+// distributions, and a few sanity counters (gigs without venue_lat/lng,
+// users without home_lat/lng, etc.). Cheap query bundle (~10 round-trips,
+// all indexed scans).
+app.get('/api/admin/sim-stats', async (req, res) => {
+  if (!simAuthOk(req, res)) return;
+  try {
+    const pat = SIM_EMAIL_PATTERN;
+    const [
+      users, sessions, gigs, invoices, expenses,
+      offers, marketplace, marketplaceApps,
+      threads, messages, contacts,
+      gigsSanity, usersSanity,
+    ] = await Promise.all([
+      db.query(`SELECT
+        (SELECT COUNT(*)::int FROM users) AS total,
+        (SELECT COUNT(*)::int FROM users WHERE email LIKE $1) AS sim,
+        (SELECT COUNT(*)::int FROM users WHERE home_lat IS NOT NULL) AS with_geo,
+        (SELECT COUNT(*)::int FROM users WHERE available_now = TRUE) AS available_now,
+        (SELECT COUNT(*)::int FROM users WHERE discoverable = TRUE) AS discoverable`, [pat]),
+      db.query(`SELECT COUNT(*)::int AS total FROM sessions WHERE expires_at > NOW()`),
+      db.query(`SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'confirmed')::int AS confirmed,
+        COUNT(*) FILTER (WHERE status = 'enquiry')::int AS enquiry,
+        COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled,
+        COUNT(*) FILTER (WHERE source = 'quick-log')::int AS quick_log,
+        COUNT(*) FILTER (WHERE gig_leader_name IS NOT NULL)::int AS with_leader,
+        COUNT(*) FILTER (WHERE venue_lat IS NOT NULL)::int AS with_geo
+        FROM gigs`),
+      db.query(`SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'draft')::int AS draft,
+        COUNT(*) FILTER (WHERE status = 'sent')::int AS sent,
+        COUNT(*) FILTER (WHERE status = 'paid')::int AS paid
+        FROM invoices`),
+      db.query(`SELECT COUNT(*)::int AS total FROM expenses`),
+      db.query(`SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+        COUNT(*) FILTER (WHERE status = 'accepted')::int AS accepted,
+        COUNT(*) FILTER (WHERE status = 'declined')::int AS declined,
+        COUNT(*) FILTER (WHERE status = 'withdrawn')::int AS withdrawn
+        FROM offers`),
+      db.query(`SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+        COUNT(*) FILTER (WHERE status = 'filled')::int AS filled,
+        COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled
+        FROM marketplace_gigs`),
+      db.query(`SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+        COUNT(*) FILTER (WHERE status = 'accepted')::int AS accepted,
+        COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected
+        FROM marketplace_applications`),
+      db.query(`SELECT COUNT(*)::int AS total FROM threads`),
+      db.query(`SELECT COUNT(*)::int AS total FROM messages`),
+      db.query(`SELECT COUNT(*)::int AS total FROM contacts`),
+      // Sanity: gigs that should have geo but don't
+      db.query(`SELECT COUNT(*)::int AS missing_geo
+        FROM gigs WHERE venue_postcode IS NOT NULL AND venue_lat IS NULL`),
+      // Sanity: sim users that should have geo but don't
+      db.query(`SELECT COUNT(*)::int AS missing_geo
+        FROM users WHERE email LIKE $1 AND home_postcode IS NOT NULL AND home_lat IS NULL`, [pat]),
+    ]);
+
+    res.json({
+      ok: true,
+      generated_at: new Date().toISOString(),
+      users: users.rows[0],
+      active_sessions: sessions.rows[0].total,
+      gigs: gigs.rows[0],
+      invoices: invoices.rows[0],
+      expenses: expenses.rows[0].total,
+      offers: offers.rows[0],
+      marketplace_gigs: marketplace.rows[0],
+      marketplace_applications: marketplaceApps.rows[0],
+      threads: threads.rows[0].total,
+      messages: messages.rows[0].total,
+      contacts: contacts.rows[0].total,
+      sanity: {
+        gigs_with_postcode_but_no_geo: gigsSanity.rows[0].missing_geo,
+        sim_users_with_postcode_but_no_geo: usersSanity.rows[0].missing_geo,
+      },
+    });
+  } catch (err) {
+    console.error('[admin/sim-stats]', err);
+    res.status(500).json({ error: 'stats_failed', message: err.message });
+  }
+});
+
+// POST /api/admin/wipe-sim-data?key=...
+// Cascading delete of everything tagged sim+*@trackmygigs.app. Idempotent.
+// Real users (and the 5 demo profiles carried over from dev) are untouched.
+// Order matters because some FKs don't cascade — explicit DELETEs per table
+// in dependency order keep Postgres happy.
+app.post('/api/admin/wipe-sim-data', async (req, res) => {
+  if (!simAuthOk(req, res)) return;
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const pat = SIM_EMAIL_PATTERN;
+    const counts = {};
+    async function del(name, sql, params) {
+      const r = await client.query(sql + ' RETURNING 1', params || [pat]);
+      counts[name] = r.rowCount;
+    }
+
+    await del('discovery_lookups',
+      `DELETE FROM discovery_lookups WHERE actor_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('user_reports',
+      `DELETE FROM user_reports WHERE reporter_id IN (SELECT id FROM users WHERE email LIKE $1)
+                                   OR target_id IN (SELECT id FROM users WHERE email LIKE $1)
+                                   OR resolver_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('user_blocks',
+      `DELETE FROM user_blocks WHERE blocker_id IN (SELECT id FROM users WHERE email LIKE $1)
+                                  OR blocked_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('marketplace_applications',
+      `DELETE FROM marketplace_applications WHERE applicant_user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('marketplace_gigs',
+      `DELETE FROM marketplace_gigs WHERE poster_user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('offers',
+      `DELETE FROM offers WHERE sender_id IN (SELECT id FROM users WHERE email LIKE $1)
+                              OR recipient_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('contacts',
+      `DELETE FROM contacts WHERE owner_id IN (SELECT id FROM users WHERE email LIKE $1)
+                                OR linked_user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('invoice_clients',
+      `DELETE FROM invoice_clients WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('invoices',
+      `DELETE FROM invoices WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('expenses',
+      `DELETE FROM expenses WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    // Messages: delete those sent BY a sim user. Threads where all participants
+    // are sim users get nuked next; threads that span sim + non-sim are left
+    // alone so we don't wipe real conversations.
+    await del('messages',
+      `DELETE FROM messages WHERE sender_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('threads_all_sim',
+      `DELETE FROM threads WHERE participant_ids <@ (SELECT COALESCE(array_agg(id), '{}'::uuid[]) FROM users WHERE email LIKE $1)`);
+    await del('gigs',
+      `DELETE FROM gigs WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('blocked_dates',
+      `DELETE FROM blocked_dates WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('sessions',
+      `DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('magic_links',
+      `DELETE FROM magic_links WHERE email LIKE $1`);
+    await del('users',
+      `DELETE FROM users WHERE email LIKE $1`);
+
+    await client.query('COMMIT');
+    res.json({ ok: true, counts });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    console.error('[admin/wipe-sim-data]', err);
+    res.status(500).json({ error: 'wipe_failed', message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // Stripe routes. The webhook inside stripeRoutes uses express.raw() itself
 // so mounting here (after express.json) is fine: Express matches the first
 // body-parser that accepts the content-type and the raw parser short-circuits
