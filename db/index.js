@@ -15,10 +15,20 @@ const { Pool } = require('pg');
 // sslmode=require deprecation warning at boot.
 const pgHost = process.env.PGHOST || '';
 const pgUrl = process.env.DATABASE_URL || '';
-const wantSsl = /neon\.tech/i.test(pgHost)
-             || /neon\.tech/i.test(pgUrl)
-             || process.env.NODE_ENV === 'production'
-             || process.env.DB_USE_SSL === '1';
+
+// Replit's dev workspace exposes its internal Postgres as PGHOST='helium'
+// (no SSL support). If we see that hostname, force SSL OFF regardless of
+// any other signal — otherwise a globally-shared DB_USE_SSL=1 secret
+// (Replit shares Secrets between workspace and deployment by default)
+// would break dev.
+const isInternalReplitDev = /^helium$/i.test(pgHost);
+
+const wantSsl = !isInternalReplitDev && (
+  /neon\.tech/i.test(pgHost) ||
+  /neon\.tech/i.test(pgUrl) ||
+  process.env.NODE_ENV === 'production' ||
+  process.env.DB_USE_SSL === '1'
+);
 
 let pool;
 if (process.env.PGHOST) {
