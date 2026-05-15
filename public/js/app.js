@@ -909,25 +909,32 @@ function buildHomeHeroQuiet(daysUntil) {
 // Compressed chip row replacing the v1 banners (overdue, draft, offers, dep,
 // messages, missing-fee). Hidden when there's nothing to nag. On quiet days
 // with no alerts, render a soft "all clear" line so the gap doesn't feel empty.
+//
+// Tap behaviour: the WHOLE row is one tap target. Hitting it opens the
+// Needs you bottom sheet where each item is a full-width row with a
+// comfortable 50px tap area. Individual chips inside the row are visual
+// only (no per-chip click) so a thumb on phone never has to thread
+// between adjacent chips. The chip strip earns its keep as a glance
+// surface; the sheet is the precision surface.
 function buildHomeNeedsStrip(stats, state) {
   const chips = [];
   if (stats.overdue_invoices > 0) {
-    chips.push(`<span onclick="goToInvoicesFiltered('overdue')" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:var(--danger-dim);color:var(--danger);border:1px solid rgba(248,81,73,.3);"><span style="font-size:10px;">⚠</span>${stats.overdue_invoices} overdue</span>`);
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--danger-dim);color:var(--danger);border:1px solid rgba(248,81,73,.3);"><span style="font-size:10px;">⚠</span>${stats.overdue_invoices} overdue</span>`);
   }
   if (stats.draft_invoices > 0) {
-    chips.push(`<span onclick="goToInvoicesFiltered('draft')" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:var(--info-dim);color:var(--info);border:1px solid rgba(88,166,255,.3);"><span style="font-size:10px;">📄</span>${stats.draft_invoices} draft${stats.draft_invoices === 1 ? '' : 's'}</span>`);
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--info-dim);color:var(--info);border:1px solid rgba(88,166,255,.3);"><span style="font-size:10px;">📄</span>${stats.draft_invoices} draft${stats.draft_invoices === 1 ? '' : 's'}</span>`);
   }
   if (stats.offer_count > 0) {
-    chips.push(`<span onclick="showScreen('offers')" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.35);"><span style="font-size:10px;">📬</span>${stats.offer_count} offer${stats.offer_count === 1 ? '' : 's'}</span>`);
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.35);"><span style="font-size:10px;">📬</span>${stats.offer_count} offer${stats.offer_count === 1 ? '' : 's'}</span>`);
   }
   if (stats.active_dep_request) {
-    chips.push(`<span onclick="showScreen('offers')" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:rgba(167,139,250,.16);color:#C7B5FA;border:1px solid rgba(167,139,250,.35);"><span style="font-size:10px;">📤</span>1 dep awaiting cover</span>`);
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:rgba(167,139,250,.16);color:#C7B5FA;border:1px solid rgba(167,139,250,.35);"><span style="font-size:10px;">📤</span>1 dep awaiting cover</span>`);
   }
   if (stats.unread_messages > 0) {
-    chips.push(`<span onclick="openPanel('panel-chat-inbox'); renderChatInbox();" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:var(--info-dim);color:var(--info);border:1px solid rgba(88,166,255,.3);"><span style="font-size:10px;">💬</span>${stats.unread_messages} message${stats.unread_messages === 1 ? '' : 's'}</span>`);
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--info-dim);color:var(--info);border:1px solid rgba(88,166,255,.3);"><span style="font-size:10px;">💬</span>${stats.unread_messages} message${stats.unread_messages === 1 ? '' : 's'}</span>`);
   }
   if (stats.gigs_missing_fee > 0) {
-    chips.push(`<span onclick="window.openFeeReviewWizard && window.openFeeReviewWizard()" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;cursor:pointer;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.35);"><span style="font-size:10px;">💷</span>${stats.gigs_missing_fee} need fee${stats.gigs_missing_fee === 1 ? '' : 's'}</span>`);
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.35);"><span style="font-size:10px;">💷</span>${stats.gigs_missing_fee} need fee${stats.gigs_missing_fee === 1 ? '' : 's'}</span>`);
   }
 
   if (chips.length === 0) {
@@ -938,11 +945,125 @@ function buildHomeNeedsStrip(stats, state) {
   }
 
   return `
-    <div style="margin:0 16px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:8px;">
+    <div onclick="openNeedsYouSheet()" style="margin:0 16px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;">
       <div style="font-size:10px;font-weight:700;color:var(--text-3);letter-spacing:.8px;text-transform:uppercase;flex-shrink:0;">Needs you</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;flex:1;">${chips.join('')}</div>
+      <span style="color:var(--text-3);font-size:16px;flex-shrink:0;">›</span>
     </div>`;
 }
+
+// Open the "Needs you" bottom sheet. Reads window._cachedStats (same source
+// the chip strip rendered from) and lists each active alert as a full-width
+// row with a comfortable tap target. Tapping a row closes the sheet and
+// jumps to the destination the chip would have. Defensive: if the cache
+// isn't populated yet, falls back to closing silently rather than rendering
+// an empty sheet.
+function openNeedsYouSheet() {
+  const stats = window._cachedStats;
+  if (!stats) return;
+  const items = [];
+  const fmt = (n) => Math.round(Number(n) || 0).toLocaleString('en-GB');
+
+  if (stats.overdue_invoices > 0) {
+    items.push({
+      ico: '⚠',
+      color: 'var(--danger)',
+      bg: 'var(--danger-dim)',
+      label: `${stats.overdue_invoices} overdue invoice${stats.overdue_invoices === 1 ? '' : 's'}`,
+      meta: stats.overdue_total ? `£${fmt(stats.overdue_total)}` : '',
+      onclick: "goToInvoicesFiltered('overdue')",
+    });
+  }
+  if (stats.draft_invoices > 0) {
+    items.push({
+      ico: '📄',
+      color: 'var(--info)',
+      bg: 'var(--info-dim)',
+      label: `${stats.draft_invoices} draft invoice${stats.draft_invoices === 1 ? '' : 's'}`,
+      meta: stats.draft_total ? `£${fmt(stats.draft_total)}` : '',
+      onclick: "goToInvoicesFiltered('draft')",
+    });
+  }
+  if (stats.offer_count > 0) {
+    items.push({
+      ico: '📬',
+      color: 'var(--accent)',
+      bg: 'var(--accent-dim)',
+      label: `${stats.offer_count} gig offer${stats.offer_count === 1 ? '' : 's'}`,
+      meta: stats.network_offers > 0 ? `${stats.network_offers} from your network` : '',
+      onclick: "showScreen('offers')",
+    });
+  }
+  if (stats.active_dep_request) {
+    const dep = stats.active_dep_request || {};
+    const hours = dep.hours_left;
+    const meta = hours == null ? ''
+      : hours > 48 ? `${Math.ceil(hours / 24)}d left`
+      : `${hours}h left`;
+    items.push({
+      ico: '📤',
+      color: '#C7B5FA',
+      bg: 'rgba(167,139,250,.16)',
+      label: `1 dep awaiting cover`,
+      sub: dep.band_name ? `${escapeHtml(dep.band_name)}${dep.venue_name ? ' · ' + escapeHtml(dep.venue_name) : ''}` : '',
+      meta,
+      onclick: "showScreen('offers')",
+    });
+  }
+  if (stats.unread_messages > 0) {
+    items.push({
+      ico: '💬',
+      color: 'var(--info)',
+      bg: 'var(--info-dim)',
+      label: `${stats.unread_messages} unread message${stats.unread_messages === 1 ? '' : 's'}`,
+      meta: '',
+      onclick: "openPanel('panel-chat-inbox'); if (typeof renderChatInbox === 'function') renderChatInbox();",
+    });
+  }
+  if (stats.gigs_missing_fee > 0) {
+    items.push({
+      ico: '💷',
+      color: 'var(--accent)',
+      bg: 'var(--accent-dim)',
+      label: `${stats.gigs_missing_fee} gig${stats.gigs_missing_fee === 1 ? '' : 's'} missing a fee`,
+      meta: 'For tax reporting',
+      onclick: "if (window.openFeeReviewWizard) window.openFeeReviewWizard();",
+    });
+  }
+
+  if (items.length === 0) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+
+  const rowsHtml = items.map((it) => {
+    const subLine = it.sub ? `<div style="font-size:11px;color:var(--text-3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.sub}</div>` : '';
+    const metaLine = it.meta ? `<div style="font-size:11px;color:${it.color};font-weight:700;flex-shrink:0;margin-right:8px;">${escapeHtml(it.meta)}</div>` : '';
+    return `
+      <div onclick="document.querySelectorAll('.sheet-overlay').forEach(o => o.remove()); ${it.onclick}" style="display:flex;align-items:center;gap:12px;padding:14px 12px;background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:8px;cursor:pointer;min-height:50px;">
+        <div style="width:36px;height:36px;border-radius:10px;background:${it.bg};display:flex;align-items:center;justify-content:center;font-size:18px;color:${it.color};flex-shrink:0;">${it.ico}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(it.label)}</div>
+          ${subLine}
+        </div>
+        ${metaLine}
+        <span style="color:var(--text-3);font-size:16px;flex-shrink:0;">›</span>
+      </div>`;
+  }).join('');
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;max-height:80vh;overflow-y:auto;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>
+      <div style="font-size:12px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;">Needs you</div>
+      ${rowsHtml}
+      <button onclick="document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());" style="width:100%;margin-top:6px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;">Close</button>
+    </div>`;
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+window.openNeedsYouSheet = openNeedsYouSheet;
 
 // ── Action grid ──────────────────────────────────────────────────────────────
 // Six tiles, always rendered. First tile (Add gig) is accent-coloured because
