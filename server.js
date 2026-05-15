@@ -533,6 +533,28 @@ function simAuthOk(req, res) {
   return false;
 }
 
+// GET /api/admin/sim-env?key=...
+// Diagnostic-only: returns a redacted view of the env vars + DB hostname
+// the deployment is seeing, so we can confirm Secrets are propagating and
+// the SSL branch is being chosen correctly. Reveals presence/length only,
+// never the secret value itself.
+app.get('/api/admin/sim-env', (req, res) => {
+  if (!simAuthOk(req, res)) return;
+  function describe(v) {
+    if (v == null) return null;
+    const s = String(v);
+    return { present: true, length: s.length, first10: s.slice(0, 10), last4: s.slice(-4) };
+  }
+  res.json({
+    ok: true,
+    node_env: process.env.NODE_ENV || null,
+    db_use_ssl: process.env.DB_USE_SSL || null,
+    pghost_pattern: process.env.PGHOST ? describe(process.env.PGHOST) : null,
+    database_url_pattern: process.env.DATABASE_URL ? describe(process.env.DATABASE_URL) : null,
+    detected_neon: /neon\.tech/i.test(process.env.PGHOST || '') || /neon\.tech/i.test(process.env.DATABASE_URL || ''),
+  });
+});
+
 // POST /api/admin/sim-create-user?key=...
 // Body (all optional except email): {
 //   email, name, display_name, home_postcode, instruments, genres,
