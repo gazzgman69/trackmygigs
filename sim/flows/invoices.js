@@ -70,13 +70,15 @@ function composeExpense(ctx) {
     'Amazon', 'PMT', 'Andertons', 'Gear4music', 'Magento', 'Argos',
   ], rand);
   const amount = (5 + Math.floor(rand() * 50) * 5) + Math.floor(rand() * 100) / 100;
+  // POST /api/expenses destructures { amount, description, date, category,
+  // gig_id }. The merchant string lands in `description` (the table column
+  // is actually `vendor` under the hood, but the route normalises that).
   return {
-    merchant,
+    description: merchant,
     amount: Math.round(amount * 100) / 100,
     date: isoDate(addDays(new Date(), -Math.floor(rand() * 90))),
     category: cat,
-    vat: rand() < 0.3 ? Math.round(amount * 0.2 * 100) / 100 : null,
-    notes: rand() < 0.2 ? 'Receipt photo on phone' : null,
+    gig_id: null,
   };
 }
 

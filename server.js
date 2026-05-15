@@ -614,7 +614,7 @@ app.get('/api/admin/sim-stats', async (req, res) => {
   try {
     const pat = SIM_EMAIL_PATTERN;
     const [
-      users, sessions, gigs, invoices, expenses,
+      users, sessions, gigs, invoices, receipts,
       offers, marketplace, marketplaceApps,
       threads, messages, contacts,
       gigsSanity, usersSanity,
@@ -641,7 +641,9 @@ app.get('/api/admin/sim-stats', async (req, res) => {
         COUNT(*) FILTER (WHERE status = 'sent')::int AS sent,
         COUNT(*) FILTER (WHERE status = 'paid')::int AS paid
         FROM invoices`),
-      db.query(`SELECT COUNT(*)::int AS total FROM expenses`),
+      // The user-facing label is "expenses" but the table is named
+      // `receipts` (the URL path /api/expenses is a route alias only).
+      db.query(`SELECT COUNT(*)::int AS total FROM receipts`),
       db.query(`SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
@@ -679,7 +681,7 @@ app.get('/api/admin/sim-stats', async (req, res) => {
       active_sessions: sessions.rows[0].total,
       gigs: gigs.rows[0],
       invoices: invoices.rows[0],
-      expenses: expenses.rows[0].total,
+      expenses: receipts.rows[0].total,
       offers: offers.rows[0],
       marketplace_gigs: marketplace.rows[0],
       marketplace_applications: marketplaceApps.rows[0],
@@ -737,8 +739,8 @@ app.post('/api/admin/wipe-sim-data', async (req, res) => {
       `DELETE FROM invoice_clients WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
     await del('invoices',
       `DELETE FROM invoices WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
-    await del('expenses',
-      `DELETE FROM expenses WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
+    await del('receipts',
+      `DELETE FROM receipts WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`);
     // Messages: delete those sent BY a sim user. Threads where all participants
     // are sim users get nuked next; threads that span sim + non-sim are left
     // alone so we don't wipe real conversations.
