@@ -1,16 +1,19 @@
 const { Pool } = require('pg');
 
-// Replit's helium binding auto-exports both DATABASE_URL (with sslmode=require)
-// and the PG* env vars. If we pass connectionString, pg-connection-string parses
-// the URL at Pool construction and emits a deprecation warning for sslmode=require
-// regardless of any `ssl` option we pass. To avoid that, prefer PG* env vars
-// whenever PGHOST is set, since node-postgres reads them automatically.
+// Replit auto-exports both DATABASE_URL (with sslmode=require) and the PG*
+// env vars. We prefer PG* when PGHOST is set so pg-connection-string does
+// not emit the deprecation warning for the sslmode=require URL param.
+//
+// SSL: Replit Deployments use Neon-backed Postgres for production, and
+// Neon refuses connections that arrive without TLS ("connection is
+// insecure"). Setting ssl: { rejectUnauthorized: false } makes the client
+// negotiate TLS without strict certificate validation, which is what
+// Neon expects from the connection-pooler endpoint. Applies on both
+// branches: PG* env path AND connectionString path.
 let pool;
 if (process.env.PGHOST) {
-  // Replit integrated binding on internal network - SSL not required
-  pool = new Pool({ ssl: false });
+  pool = new Pool({ ssl: { rejectUnauthorized: false } });
 } else {
-  // External cloud DB (Neon-style) - require SSL without strict cert validation
   pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
