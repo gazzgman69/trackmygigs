@@ -265,10 +265,19 @@ body {
   display: flex;
   flex: 1;
   border-top: 1px solid var(--border);
+  /* Centre the buttons as a tight pair with content width rather than
+     stretching each to fill 1/N of the row. Looks balanced for any
+     button count from 1 upwards instead of feeling janky when fewer
+     than four are present. */
+  justify-content: center;
+  gap: 36px;
 }
 
 .nav-quick-btn {
-  flex: 1;
+  flex: 0 0 auto;
+  min-width: 96px;
+  padding-left: 16px;
+  padding-right: 16px;
   display: flex;
   flex-direction: column;
   align-items: center;
