@@ -1,22 +1,25 @@
 const { Pool } = require('pg');
 
-// Replit auto-exports both DATABASE_URL (with sslmode=require) and the PG*
-// env vars. We prefer PG* when PGHOST is set so pg-connection-string does
-// not emit the deprecation warning for the sslmode=require URL param.
+// SSL is required by Neon (the Postgres backing Replit Deployments) and
+// rejected by Replit's internal dev Postgres ("server does not support
+// SSL connections"). We branch on NODE_ENV: Replit Deployments set it to
+// 'production' automatically; the dev workspace runs without it. If your
+// environment doesn't set NODE_ENV for some reason, set `DB_USE_SSL=1`
+// in Secrets to force SSL on.
 //
-// SSL: Replit Deployments use Neon-backed Postgres for production, and
-// Neon refuses connections that arrive without TLS ("connection is
-// insecure"). Setting ssl: { rejectUnauthorized: false } makes the client
-// negotiate TLS without strict certificate validation, which is what
-// Neon expects from the connection-pooler endpoint. Applies on both
-// branches: PG* env path AND connectionString path.
+// On both branches we prefer the PG* env vars over DATABASE_URL when
+// PGHOST is set, so pg-connection-string does not emit the
+// sslmode=require deprecation warning at boot.
+const wantSsl = process.env.NODE_ENV === 'production'
+             || process.env.DB_USE_SSL === '1';
+
 let pool;
 if (process.env.PGHOST) {
-  pool = new Pool({ ssl: { rejectUnauthorized: false } });
+  pool = new Pool(wantSsl ? { ssl: { rejectUnauthorized: false } } : { ssl: false });
 } else {
   pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: wantSsl ? { rejectUnauthorized: false } : false,
   });
 }
 
