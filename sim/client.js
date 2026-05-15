@@ -95,7 +95,7 @@ class SimClient {
         });
       }
 
-      if (event.ok) return { res, body: jsonBody, status, elapsed };
+      if (event.ok) return { ok: true, res, body: jsonBody, status, elapsed };
       if (isTransient && attempt < this.retryCount) {
         // Exponential backoff with jitter: 250ms, 750ms, 2s
         const wait = 250 * Math.pow(3, attempt) + Math.floor(Math.random() * 200);
@@ -105,9 +105,9 @@ class SimClient {
         continue;
       }
       // Non-retryable or out of retries: return the failed event
-      return { res, body: jsonBody, status, elapsed, error: errKind || `http_${status}`, errorEvent: event };
+      return { ok: false, res, body: jsonBody, status, elapsed, error: errKind || `http_${status}`, errorEvent: event };
     }
-    return { error: 'exhausted_retries', errorEvent: lastErr };
+    return { ok: false, error: 'exhausted_retries', errorEvent: lastErr };
   }
 
   get(p, opts)    { return this.request('GET',    p, opts); }

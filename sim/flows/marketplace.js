@@ -111,7 +111,7 @@ function composePost(user, ctx) {
     instruments: [instrument],
     fee_pence,
     is_free: isFreePost,
-    free_reason: isFreePost ? pickFrom(['Charity', 'Showcase', 'Open-mic'], rand) : null,
+    free_reason: isFreePost ? pickFrom(['charity', 'open_mic', 'promo_slot', 'favour', 'student_showcase', 'other'], rand) : null,
     mode: rand() < 0.7 ? 'pick' : 'fcfs',
   };
 }

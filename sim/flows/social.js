@@ -23,47 +23,24 @@ async function run(client, user, ctx) {
   await client.get('/api/network/top-deps?limit=5');
   await client.get('/api/network/suggested-deps?limit=5');
 
-  // Send dep offers from band_leader / active_gigger personas
-  const offersWanted = user.behavior.dep_offers_to_send || 0;
-  const sentOffers = [];
-  if (offersWanted > 0) {
-    // Pull a "nearby" pool to pick recipients from. Real users do the same.
-    const nearby = await client.get('/api/discover?mode=nearby');
-    const candidates = (nearby.body && nearby.body.results) || [];
-    const targets = pickN(candidates, Math.min(offersWanted, candidates.length), ctx.rand);
-    for (const t of targets) {
-      const offer = {
-        recipient_id: t.id,
-        offer_type: 'dep',
-        fee: 100 + Math.floor(ctx.rand() * 8) * 50,
-        deadline: addDaysIso(new Date(), 3 + Math.floor(ctx.rand() * 10)),
-        notes: pickFrom([
-          'Wednesday night, easy gig. £150.',
-          'Need cover for a function. Let me know.',
-          'Last-minute one — can you do Saturday?',
-        ], ctx.rand),
-      };
-      const r = await client.post('/api/offers', { body: offer });
-      if (r.ok && r.body && r.body.id) sentOffers.push(r.body.id);
-      await ctx.shortPause();
-    }
-  }
+  // Dep offer SENDING via POST /api/dep-offers requires the sender to own
+  // a gig AND have contacts. Newly-created sim users won't have contacts
+  // until marketplace Pick auto-adds them, so most sim runs won't satisfy
+  // the precondition. We skip the send step here in v1 to avoid noise;
+  // the offers table is exercised indirectly through marketplace flows
+  // (Pick auto-bootstraps a contact pair) and through the GET routes
+  // above. A follow-up sim wave can add a "send after marketplace Pick"
+  // chained flow once that data exists.
 
-  // Withdraw a fraction of own offers (tests the cancel path)
-  for (const offerId of sentOffers) {
-    if (ctx.rand() < 0.15) {
-      await client.post('/api/offers/' + offerId + '/withdraw', { body: {} });
-    }
-  }
-
-  // Inbound responses: list offers received, accept some, decline some
+  // Inbound responses: list offers received, accept some, decline some.
+  // Accept/decline is a PATCH on the offer with { status }.
   const received = await client.get('/api/offers?direction=received&status=pending');
   const incoming = (received.body && Array.isArray(received.body.offers))
     ? received.body.offers
     : (received.body && Array.isArray(received.body)) ? received.body : [];
   for (const off of incoming.slice(0, 3)) {
-    const action = ctx.rand() < 0.55 ? 'accept' : 'decline';
-    await client.post('/api/offers/' + off.id + '/respond', { body: { action } });
+    const status = ctx.rand() < 0.55 ? 'accepted' : 'declined';
+    await client.patch('/api/offers/' + off.id, { body: { status } });
     await ctx.shortPause();
   }
 
@@ -91,7 +68,7 @@ async function run(client, user, ctx) {
     await ctx.shortPause();
   }
 
-  return { sentOffers, msgsSent: Math.min(msgWanted, tlist.length) };
+  return { msgsSent: Math.min(msgWanted, tlist.length) };
 }
 
 function pickN(arr, n, rand) {
