@@ -696,5 +696,39 @@ router.post('/disconnect', async (req, res) => {
   }
 });
 
+// TEMPORARY (June 2026 stress campaign): create a brand-new [TEST] spreadsheet
+// seeded with gig rows so the import/push/pull cycle can be verified without
+// touching any of the user's saved sheets. Gated on RELOAD_SECRET on top of
+// session auth. Remove after the campaign.
+router.post('/test-create', async (req, res) => {
+  if (req.query.key !== process.env.RELOAD_SECRET) {
+    return res.status(404).json({ error: 'not_found' });
+  }
+  try {
+    const sheets = await getSheetsClient(req.user.id);
+    if (!sheets) return res.status(401).json({ error: 'google_not_connected' });
+    const created = await sheets.spreadsheets.create({
+      requestBody: { properties: { title: `[TEST] TMG sync check ${new Date().toISOString().slice(0, 16)}` } },
+    });
+    const spreadsheetId = created.data.spreadsheetId;
+    const rows = [
+      ['Date', 'Venue', 'Band', 'Fee', 'Start', 'End'],
+      ['2026-09-01', '[TEST] The Import Arms', '[TEST] Sheet Band', '150', '19:00', '22:00'],
+      ['2026-09-08', '[TEST] Pull Tavern', '[TEST] Sheet Band', '175', '20:00', '23:00'],
+      ['2026-09-15', '[TEST] Push Hall', '[TEST] Sheet Band', '200', '20:30', '23:30'],
+    ];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: 'Sheet1!A1',
+      valueInputOption: 'RAW',
+      requestBody: { values: rows },
+    });
+    res.json({ ok: true, spreadsheetId, url: created.data.spreadsheetUrl });
+  } catch (err) {
+    console.error('[sheets/test-create]', err.message);
+    res.status(500).json({ error: 'create_failed', message: err.message });
+  }
+});
+
 module.exports = router;
 module.exports.runSheetsImport = runSheetsImport;

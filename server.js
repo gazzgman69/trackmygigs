@@ -732,7 +732,18 @@ app.post('/api/admin/wipe-sim-data', async (req, res) => {
   const client = await db.getClient();
   try {
     await client.query('BEGIN');
-    const pat = SIM_EMAIL_PATTERN;
+    // Optional ?pattern= override for older synthetic cohorts (e.g. the
+    // April stress-% accounts). Restricted to obviously-synthetic patterns
+    // so a typo can never match real users.
+    let pat = SIM_EMAIL_PATTERN;
+    if (req.query.pattern) {
+      const p = String(req.query.pattern);
+      if (!/^(sim|stress)[-+]/.test(p) || !p.endsWith('@trackmygigs.app')) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'pattern must be sim-/stress-...@trackmygigs.app' });
+      }
+      pat = p;
+    }
     const counts = {};
     async function del(name, sql, params) {
       const r = await client.query(sql + ' RETURNING 1', params || [pat]);
