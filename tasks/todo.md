@@ -35,8 +35,8 @@ Source: mockup-vs-production diff (gigflow-mockup-v3, tmg-marketplace-mockup-v2)
 
 ## Wave 5 — Calendar + availability
 
-- [ ] Block dates: generic weekly recurrence (any weekday + date range + label), CSV bulk upload (uses existing /api/blocked-dates/bulk)
-- [ ] Calendar layers: travel-time + pack-down buffer blocks around gigs in week/day views, toggleable
+- [x] Block dates: generic weekly recurrence (any weekday + date range + label), CSV bulk upload (uses existing /api/blocked-dates/bulk)
+- [x] Calendar layers: no work needed. Travel layer already ships (computeAutoBlocksForGigs + layer toggle); pack-down halos were deliberately removed per Gareth (#138), so not rebuilt.
 
 ## Ship ritual per wave
 
@@ -46,10 +46,29 @@ Source: mockup-vs-production diff (gigflow-mockup-v3, tmg-marketplace-mockup-v2)
 
 ## After all waves
 
-- [ ] Update Musician_App_Platform_Roadmap.docx with a dated heading
-- [ ] Refresh repo CLAUDE.md (stale since April)
-- [ ] Review section added here
+- [x] Update Musician_App_Platform_Roadmap.docx with a dated heading
+- [x] Refresh repo CLAUDE.md (stale since April)
+- [x] Review section added here
 
-## Review
+## Review (2026-06-09)
 
-(to be completed)
+All ten feature areas shipped across five deploy waves (commits a9ae69e, 2fe7782, 175a110, 661ee1f, 485d0f7), each pushed, reloaded, and verified against production.
+
+What was verified live:
+- Setlists: create with duration/description (bug fixed), assign to gig with notes, print page with night-of notes, clear, delete
+- Lineup: 403 premium gate on a free demo account, full CRUD as premium
+- Group threads: 3-person thread created via compose API and cleaned up
+- Receipts: photo stored and streamed back, zip contains photo + CSV + README
+- Itemised invoice: server-computed £266.20 total, qty x rate rows in print + pdfkit
+- EPK: gallery + testimonials saved and rendering on the public page (test data cleared after)
+- Marketplace DM gate: 403 before an application, allowed after, restored
+- Share: ?times=1, ?embed=1 (chrome-free), on-page toggle
+- Recurring blocks: Mon+Wed pattern expanded correctly and stopped at the until date
+- Chrome pass: gig detail sections render, availability buttons present, zero console errors on fresh load
+
+Surprises captured:
+- Production already had: FCFS/pick modes, multi-instrument posts, radius matching, completeness tracker, prep checklist, review links, document expiry alerts, taxable profit + tax estimate, applicant profile modal, worked-together pill
+- Pack-down halos were tried and removed at Gareth's request (#138); left out on purpose
+- The recurring-blocks API existed but ignored its end date; now honours ;until=
+
+Still open (parked, in CLAUDE.md): marketplace-post contextual send, two unverified 28-Apr demo bugs (Profile 0/0/£0, FILLED-gig 500), demo profile photos, Apple Wallet signing.
