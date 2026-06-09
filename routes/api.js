@@ -2019,9 +2019,19 @@ function expandBlockedRow(row, horizonMonths = 18) {
     return out;
   }
 
-  // Recurring: "recurring:mon,tue,..." or "recurring:0,1,..." (0=Sun)
+  // Recurring: "recurring:mon,tue,..." or "recurring:0,1,..." (0=Sun).
+  // June 2026: optional ";until=YYYY-MM-DD" suffix bounds the pattern — the
+  // weekly-block sheet sends an end date. Older rows without it keep the
+  // open-ended to-horizon behaviour.
   if (pattern.startsWith('recurring:')) {
-    const raw = pattern.slice(10).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    let bodyStr = pattern.slice(10);
+    let until = null;
+    const um = bodyStr.match(/;until=(\d{4}-\d{2}-\d{2})$/);
+    if (um) {
+      until = new Date(um[1] + 'T00:00:00Z');
+      bodyStr = bodyStr.slice(0, um.index);
+    }
+    const raw = bodyStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
     const map = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
     const dow = raw.map(x => {
       if (map[x] !== undefined) return map[x];
@@ -2029,7 +2039,8 @@ function expandBlockedRow(row, horizonMonths = 18) {
       return (!isNaN(n) && n >= 0 && n <= 6) ? n : null;
     }).filter(n => n !== null);
     if (dow.length === 0) { out.push(startStr); return out; }
-    for (let d = new Date(start); d <= horizon; d.setUTCDate(d.getUTCDate() + 1)) {
+    const limit = until && until < horizon ? until : horizon;
+    for (let d = new Date(start); d <= limit; d.setUTCDate(d.getUTCDate() + 1)) {
       if (dow.includes(d.getUTCDay())) out.push(d.toISOString().slice(0, 10));
     }
     return out;
@@ -2073,7 +2084,7 @@ router.post('/blocked-dates', async (req, res) => {
   try {
     const { mode, date, from, to, reason, days } = req.body;
     const dateValue = mode === 'single' ? date : from;
-    const pattern = mode === 'recurring' && days ? `recurring:${days.join(',')}` :
+    const pattern = mode === 'recurring' && days ? `recurring:${days.join(',')}${to && /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? ';until=' + to : ''}` :
                     mode === 'range' && to ? `range:${to}` : null;
     const inserted = await db.query(
       `INSERT INTO blocked_dates (user_id, date, reason, recurring_pattern)

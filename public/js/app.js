@@ -7559,6 +7559,12 @@ async function openMyAvailabilityPanel() {
           <span><span class="avail-dot" style="background:var(--danger);"></span>Blocked</span>
         </div>
 
+        <div style="display:flex;gap:8px;margin-bottom:4px;">
+          <button onclick="openRecurringBlockSheet()" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:9px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;">🔁 Repeat weekly…</button>
+          <button onclick="document.getElementById('blockCsvInput').click()" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:9px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;">📄 Upload CSV…</button>
+          <input type="file" id="blockCsvInput" accept=".csv,text/csv,text/plain" style="display:none;" onchange="handleBlockCsvUpload(event)">
+        </div>
+
         <div id="myAvailMonths"></div>
       </div>`;
 
@@ -7673,6 +7679,122 @@ async function toggleAvailabilityDate(dateStr, currentState) {
 
 window.openMyAvailabilityPanel = openMyAvailabilityPanel;
 window.toggleAvailabilityDate = toggleAvailabilityDate;
+
+// ── Recurring + CSV block tools (June 2026 mockup-gap batch) ─────────────────
+//
+// The API has supported mode:'recurring' (weekday list + date range + reason)
+// since the blocked-dates rework; this finally gives it a UI. CSV upload
+// parses dates client-side and feeds the existing /bulk endpoint.
+
+function openRecurringBlockSheet() {
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'recurringBlockSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  const today = new Date().toISOString().slice(0, 10);
+  const threeMonths = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+  const dayBtns = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d, i) =>
+    `<button type="button" data-day="${(i + 1) % 7}" onclick="this.classList.toggle('on');this.style.background=this.classList.contains('on')?'var(--accent)':'var(--card)';this.style.color=this.classList.contains('on')?'#000':'var(--text)';" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 0;font-size:12px;font-weight:600;cursor:pointer;">${d}</button>`
+  ).join('');
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;padding:0 20px 14px;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;"></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 0 10px;">Block a weekly pattern</div>
+      <div style="display:flex;gap:5px;margin-bottom:12px;" id="recurringBlockDays">${dayBtns}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+        <div><div style="font-size:11px;color:var(--text-2);margin-bottom:4px;">From</div><input type="date" id="recurringBlockFrom" value="${today}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+        <div><div style="font-size:11px;color:var(--text-2);margin-bottom:4px;">Until</div><input type="date" id="recurringBlockTo" value="${threeMonths}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px;color:var(--text);font-size:13px;box-sizing:border-box;"></div>
+      </div>
+      <input type="text" id="recurringBlockReason" placeholder="Label (optional) — e.g. Family day, rehearsal" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;box-sizing:border-box;margin-bottom:12px;">
+      <button onclick="submitRecurringBlock()" style="width:100%;background:var(--accent);border:none;color:#000;padding:12px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;margin-bottom:6px;">Block these days</button>
+      <button onclick="closeRecurringBlockSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:10px;cursor:pointer;">Cancel</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeRecurringBlockSheet(); });
+  document.body.appendChild(wrap);
+}
+window.openRecurringBlockSheet = openRecurringBlockSheet;
+
+function closeRecurringBlockSheet() {
+  const el = document.getElementById('recurringBlockSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeRecurringBlockSheet = closeRecurringBlockSheet;
+
+async function submitRecurringBlock() {
+  const days = Array.from(document.querySelectorAll('#recurringBlockDays button.on'))
+    .map(b => parseInt(b.dataset.day, 10));
+  const from = (document.getElementById('recurringBlockFrom') || {}).value;
+  const to = (document.getElementById('recurringBlockTo') || {}).value;
+  const reason = ((document.getElementById('recurringBlockReason') || {}).value || '').trim() || null;
+  if (days.length === 0) { showToast('Pick at least one weekday'); return; }
+  if (!from || !to || to < from) { showToast('Check the date range'); return; }
+  try {
+    const res = await fetch('/api/blocked-dates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'recurring', days, from, to, reason })
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || 'block failed');
+    }
+    closeRecurringBlockSheet();
+    showToast('Weekly pattern blocked');
+    openMyAvailabilityPanel();
+  } catch (err) {
+    console.error('Recurring block error:', err);
+    showToast(err.message || 'Could not block those dates');
+  }
+}
+window.submitRecurringBlock = submitRecurringBlock;
+
+// CSV upload: accepts one date per line (first column if comma-separated).
+// Understands YYYY-MM-DD and DD/MM/YYYY. Header rows and junk lines are
+// skipped; we confirm the count before writing anything.
+async function handleBlockCsvUpload(event) {
+  const file = event && event.target && event.target.files && event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+  const text = await file.text();
+  const dates = [];
+  for (const rawLine of text.split(/\r?\n/)) {
+    const cell = (rawLine.split(',')[0] || '').trim().replace(/^"|"$/g, '');
+    if (!cell) continue;
+    let iso = null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cell)) iso = cell;
+    else {
+      const m = cell.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (m) iso = `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    }
+    if (iso && !dates.includes(iso)) dates.push(iso);
+  }
+  if (dates.length === 0) {
+    showToast('No dates found. Use one date per line (YYYY-MM-DD or DD/MM/YYYY).');
+    return;
+  }
+  const ok = window.confirmModal
+    ? await window.confirmModal(`Block ${dates.length} date${dates.length === 1 ? '' : 's'} from "${file.name}"?`)
+    : confirm(`Block ${dates.length} dates from ${file.name}?`);
+  if (!ok) return;
+  try {
+    const res = await fetch('/api/blocked-dates/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dates, reason: `Imported from ${file.name}`.slice(0, 120) })
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || 'import failed');
+    }
+    const data = await res.json();
+    showToast(`Blocked ${data.inserted != null ? data.inserted : dates.length} dates`);
+    openMyAvailabilityPanel();
+  } catch (err) {
+    console.error('Block CSV error:', err);
+    showToast(err.message || 'Could not import those dates');
+  }
+}
+window.handleBlockCsvUpload = handleBlockCsvUpload;
 
 function copyToClipboard(text) {
   if (navigator.clipboard) {

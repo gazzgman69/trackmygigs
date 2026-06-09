@@ -29,9 +29,9 @@ Source: mockup-vs-production diff (gigflow-mockup-v3, tmg-marketplace-mockup-v2)
 
 ## Wave 4 — Surfaces
 
-- [ ] EPK: gallery (`epk_gallery JSONB`), testimonials (`epk_testimonials JSONB`), audio embed using existing `epk_audio_url`; edit UI + in-app render + public /epk/:slug
-- [ ] Marketplace: "New to TMG" purple chip on applicants with no completed gigs, applicant profile preview sheet, Message button per applicant (thread creation allowed between poster and applicant)
-- [ ] Public share: embed code snippet + free/busy vs detailed toggle on /share/:slug
+- [x] EPK: gallery (`epk_gallery JSONB`), testimonials (`epk_testimonials JSONB`), audio embed using existing `epk_audio_url`; edit UI + in-app render + public /epk/:slug
+- [x] Marketplace: "New to TMG" purple chip on applicants with no completed gigs, applicant profile preview sheet, Message button per applicant (thread creation allowed between poster and applicant)
+- [x] Public share: embed code snippet + free/busy vs detailed toggle on /share/:slug
 
 ## Wave 5 — Calendar + availability
 
