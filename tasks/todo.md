@@ -5,14 +5,14 @@ Source: mockup-vs-production diff (gigflow-mockup-v3, tmg-marketplace-mockup-v2)
 
 ## Wave 1 — Setlists into gigs
 
-- [ ] Migration: re-assert `gigs.setlist_id UUID`, add `gigs.setlist_notes TEXT` (done locally, not yet committed)
-- [ ] API: `PATCH /api/gigs/:id/setlist` to assign/clear a setlist and save per-gig notes (explicit null clears)
-- [ ] API: `GET /api/print/setlist/:id` printable setlist (same auto-print HTML pattern as other print routes)
-- [ ] API: `POST /api/setlists/save-shared` to copy a chat-shared setlist (creates songs + setlist for the receiver, reads trusted snapshot from the message)
-- [ ] Chat server: `setlist` kind in buildAttachmentSnapshot (name, song count, duration, song titles capped)
-- [ ] UI: repertoire Setlists tab fix (correct song counts, tap opens detail) + new setlist detail screen (add/remove/reorder songs, edit, delete, PDF)
-- [ ] UI: gig detail setlist section (assign/change/remove, songs preview, per-gig notes, PDF button)
-- [ ] UI: chat attach sheet "Send a setlist" + picker + sender card + receiver card with "Save to my repertoire"
+- [x] Migration: re-assert `gigs.setlist_id UUID`, add `gigs.setlist_notes TEXT` (done locally, not yet committed)
+- [x] API: `PATCH /api/gigs/:id/setlist` to assign/clear a setlist and save per-gig notes (explicit null clears)
+- [x] API: `GET /api/print/setlist/:id` printable setlist (same auto-print HTML pattern as other print routes)
+- [x] API: `POST /api/setlists/save-shared` to copy a chat-shared setlist (creates songs + setlist for the receiver, reads trusted snapshot from the message)
+- [x] Chat server: `setlist` kind in buildAttachmentSnapshot (name, song count, duration, song titles capped)
+- [x] UI: repertoire Setlists tab fix (correct song counts, tap opens detail) + new setlist detail screen (add/remove/reorder songs, edit, delete, PDF)
+- [x] UI: gig detail setlist section (assign/change/remove, songs preview, per-gig notes, PDF button)
+- [x] UI: chat attach sheet "Send a setlist" + picker + sender card + receiver card with "Save to my repertoire"
 
 ## Wave 2 — Group chat + lineup (gig detail)
 

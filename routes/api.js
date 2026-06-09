@@ -3454,6 +3454,45 @@ router.patch('/gigs/:id/setlist', async (req, res) => {
   }
 });
 
+// ── Lineup on a gig (premium) ───────────────────────────────────────────────
+//
+// Replaces the whole lineup array in one call — lineups are small (capped at
+// 20) so diffing isn't worth the complexity. Premium-gated server-side to
+// match the mockup's Premium badge; the free UI shows a teaser instead.
+const LINEUP_STATUSES = new Set(['pending', 'confirmed', 'declined']);
+
+router.patch('/gigs/:id/lineup', async (req, res) => {
+  try {
+    const tierR = await db.query('SELECT subscription_tier FROM users WHERE id = $1', [req.user.id]);
+    if ((tierR.rows[0] || {}).subscription_tier !== 'premium') {
+      return res.status(403).json({ error: 'premium_required', message: 'Lineup management is a premium feature.' });
+    }
+    const incoming = Array.isArray(req.body.lineup) ? req.body.lineup.slice(0, 20) : null;
+    if (!incoming) return res.status(400).json({ error: 'lineup must be an array' });
+    const lineup = [];
+    for (const m of incoming) {
+      if (!m || typeof m !== 'object') continue;
+      const name = String(m.name || '').trim().slice(0, 120);
+      if (!name) continue;
+      lineup.push({
+        name,
+        role: m.role ? String(m.role).trim().slice(0, 80) : null,
+        status: LINEUP_STATUSES.has(m.status) ? m.status : 'pending',
+        contact_id: m.contact_id || null
+      });
+    }
+    const result = await db.query(
+      `UPDATE gigs SET lineup = $1::jsonb WHERE id = $2 AND user_id = $3 RETURNING *`,
+      [JSON.stringify(lineup), req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update gig lineup error:', error);
+    res.status(500).json({ error: 'Failed to update lineup' });
+  }
+});
+
 // ── Save a chat-shared setlist into your own repertoire ─────────────────────
 //
 // The receiver taps "Save to my repertoire" on a setlist card. We read the

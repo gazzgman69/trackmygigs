@@ -8454,6 +8454,9 @@ let _chatComposeFetchTimer = null;
 function openChatComposeNew() {
   _chatComposeCandidates = [];
   _chatComposeQuery = '';
+  // June 2026 group-chat batch: multi-select state. Tap a row to start a
+  // 1-to-1 as before; tap the + toggle to build a group, then hit Start.
+  window._chatComposeSelected = new Map();
   const search = document.getElementById('chatComposeSearch');
   if (search) search.value = '';
   const results = document.getElementById('chatComposeResults');
@@ -8500,6 +8503,22 @@ function renderChatComposeResults() {
   const contacts = _chatComposeCandidates.filter(c => c.source === 'contact');
   const directory = _chatComposeCandidates.filter(c => c.source === 'directory');
   let html = '';
+  const selected = window._chatComposeSelected || new Map();
+  if (selected.size > 0) {
+    html += `
+      <div style="padding:10px 20px;border-bottom:1px solid var(--border);background:var(--surface);">
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+          ${[...selected.values()].map(c => `
+            <span style="display:inline-flex;align-items:center;gap:6px;background:var(--accent-dim);border:1px solid rgba(240,165,0,.35);color:var(--text);font-size:12px;font-weight:600;border-radius:999px;padding:4px 10px;">
+              ${escapeHtml(c.name || c.email || 'Unnamed')}
+              <span onclick="toggleComposeSelect('${escapeAttr(c.id)}')" style="cursor:pointer;color:var(--text-2);">✕</span>
+            </span>`).join('')}
+        </div>
+        ${selected.size >= 2
+          ? `<button onclick="startGroupChat()" style="width:100%;background:var(--accent);border:none;color:#000;padding:10px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;">Start group chat (${selected.size + 1} people)</button>`
+          : '<div style="font-size:11px;color:var(--text-3);">Pick at least one more person to start a group, or tap a name for a 1-to-1.</div>'}
+      </div>`;
+  }
   if (contacts.length) {
     html += '<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;padding:10px 20px 4px;">Your contacts</div>';
     html += contacts.map(renderChatComposeRow).join('');
@@ -8516,6 +8535,7 @@ function renderChatComposeRow(c) {
   const initial = ((c.name || c.email || '?').charAt(0) || '?').toUpperCase();
   const display = escapeHtml(c.name || c.email || 'Unnamed');
   const sub = c.email && c.name ? `<div style="font-size:11px;color:var(--text-3);">${escapeHtml(c.email)}</div>` : '';
+  const isSelected = (window._chatComposeSelected || new Map()).has(c.id);
   return `
     <div onclick="startChatWith('${c.id}')" style="padding:12px 20px;display:flex;align-items:center;gap:12px;cursor:pointer;border-bottom:1px solid var(--border);">
       <div style="width:36px;height:36px;border-radius:18px;background:var(--info-dim);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--text);flex-shrink:0;">${initial}</div>
@@ -8523,8 +8543,46 @@ function renderChatComposeRow(c) {
         <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${display}</div>
         ${sub}
       </div>
+      <button onclick="event.stopPropagation();toggleComposeSelect('${escapeAttr(c.id)}')" aria-label="${isSelected ? 'Remove from group' : 'Add to group'}" style="width:28px;height:28px;border-radius:14px;flex-shrink:0;border:1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'};background:${isSelected ? 'var(--accent)' : 'transparent'};color:${isSelected ? '#000' : 'var(--text-2)'};font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;">${isSelected ? '✓' : '+'}</button>
     </div>`;
 }
+
+function toggleComposeSelect(userId) {
+  const selected = window._chatComposeSelected || (window._chatComposeSelected = new Map());
+  if (selected.has(userId)) {
+    selected.delete(userId);
+  } else {
+    const c = (_chatComposeCandidates || []).find(x => x && x.id === userId);
+    if (!c) return;
+    selected.set(userId, c);
+  }
+  renderChatComposeResults();
+}
+window.toggleComposeSelect = toggleComposeSelect;
+
+async function startGroupChat() {
+  const selected = window._chatComposeSelected || new Map();
+  if (selected.size < 2) return;
+  try {
+    const resp = await fetch('/api/chat/threads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_type: 'group', participant_ids: [...selected.keys()] })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const msg = (data && data.error) || 'Could not start the group chat.';
+      if (typeof toast === 'function') toast(msg); else alert(msg);
+      return;
+    }
+    window._chatComposeSelected = new Map();
+    closePanel('panel-chat-compose');
+    if (data.thread && data.thread.id) openChatThread(data.thread.id);
+  } catch (err) {
+    console.error('startGroupChat error:', err);
+  }
+}
+window.startGroupChat = startGroupChat;
 
 async function startChatWith(userId) {
   if (!userId) return;
@@ -9155,6 +9213,12 @@ async function openGigDetail(gigId) {
     try {
       const resp = await fetch(`/api/gigs/${gigId}`);
       gig = await resp.json();
+      // Seed the cache so the lineup/setlist helpers can find this gig when
+      // they mutate it later in the same panel session.
+      if (gig && gig.id) {
+        window._cachedGigs = window._cachedGigs || [];
+        if (!window._cachedGigs.find(g => g && g.id === gig.id)) window._cachedGigs.push(gig);
+      }
     } catch (e) {
       body.innerHTML = '<div style="padding:20px;color:var(--text-2);">Could not load gig details.</div>';
       openPanel('panel-gig-detail');
@@ -9253,7 +9317,7 @@ async function openGigDetail(gigId) {
         <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Lineup</div>
         <span style="font-size:9px;font-weight:700;color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:2px 6px;text-transform:uppercase;">Premium</span>
       </div>
-      <div style="font-size:12px;color:var(--text-3);padding:10px;background:var(--card);border:1px dashed var(--border);border-radius:10px;text-align:center;">Lineup management is coming with Premium</div>
+      <div id="gigLineupBody"></div>
     </div>
     <!-- Setlist -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
@@ -9302,6 +9366,9 @@ async function openGigDetail(gigId) {
   // Setlist section renders async (it may need a setlist fetch).
   loadGigSetlistSection(gig);
 
+  // Lineup section renders sync from the gig row.
+  renderGigLineupSection(gig);
+
   // Show mileage: use stored value first, then fetch in background if needed
   const mileageEl = document.getElementById('gigDetailMileage');
   if (gig.mileage_miles && mileageEl) {
@@ -9342,6 +9409,115 @@ async function openGigDetail(gigId) {
     }
   }
 }
+
+// -- Gig lineup section (premium) --
+//
+// June 2026 mockup-gap batch: the mockup's lineup card finally exists.
+// Members are a JSONB array on the gig row; the whole array is replaced via
+// PATCH /api/gigs/:id/lineup on every mutation. Status taps cycle
+// pending → confirmed → declined → pending, matching the mockup's chips.
+
+const LINEUP_STATUS_META = {
+  confirmed: { label: 'Confirmed', color: 'var(--success)', bg: 'var(--success-dim)' },
+  pending: { label: 'Pending', color: 'var(--warning)', bg: 'var(--warning-dim)' },
+  declined: { label: 'Declined', color: 'var(--danger)', bg: 'rgba(248,81,73,.12)' }
+};
+
+function renderGigLineupSection(gig) {
+  const bodyEl = document.getElementById('gigLineupBody');
+  if (!bodyEl) return;
+  const isPremium = (window._currentUser && window._currentUser.subscription_tier) === 'premium';
+  if (!isPremium) {
+    bodyEl.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:10px;background:var(--card);border:1px dashed var(--border);border-radius:10px;text-align:center;">Track who’s playing, who’s confirmed and who needs chasing. Part of Premium.</div>';
+    return;
+  }
+  const lineup = Array.isArray(gig.lineup) ? gig.lineup : [];
+  const confirmed = lineup.filter(m => m.status === 'confirmed').length;
+  bodyEl.innerHTML = `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+      ${lineup.length === 0
+        ? '<div style="padding:16px;text-align:center;color:var(--text-3);font-size:12px;">No lineup yet. Add who’s on the gig.</div>'
+        : lineup.map((m, i) => {
+            const meta = LINEUP_STATUS_META[m.status] || LINEUP_STATUS_META.pending;
+            return `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;${i < lineup.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}">
+          <div style="width:30px;height:30px;border-radius:15px;background:var(--info-dim);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--info);flex-shrink:0;">${escapeHtml((m.name || '?')[0].toUpperCase())}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(m.name)}</div>
+            ${m.role ? `<div style="font-size:11px;color:var(--text-2);">${escapeHtml(m.role)}</div>` : ''}
+          </div>
+          <span onclick="cycleLineupStatus('${escapeAttr(gig.id)}', ${i})" style="font-size:10px;font-weight:700;color:${meta.color};background:${meta.bg};border-radius:8px;padding:3px 9px;cursor:pointer;flex-shrink:0;" title="Tap to change status">${meta.label}</span>
+          <button onclick="removeLineupMember('${escapeAttr(gig.id)}', ${i})" style="background:none;border:none;color:var(--text-3);font-size:14px;cursor:pointer;padding:4px;flex-shrink:0;" aria-label="Remove">✕</button>
+        </div>`;
+          }).join('')}
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;">
+      <span style="font-size:11px;color:var(--text-3);">${lineup.length ? `${confirmed} of ${lineup.length} confirmed` : ''}</span>
+      <span onclick="addLineupMember('${escapeAttr(gig.id)}')" style="font-size:11px;color:var(--accent);cursor:pointer;font-weight:600;">+ Add member</span>
+    </div>`;
+}
+
+async function _patchGigLineup(gigId, lineup) {
+  try {
+    const res = await fetch(`/api/gigs/${gigId}/lineup`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lineup })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.message || data.error || 'patch failed');
+    }
+    const gig = await res.json();
+    if (Array.isArray(window._cachedGigs)) {
+      const idx = window._cachedGigs.findIndex(g => g && g.id === gigId);
+      if (idx >= 0) window._cachedGigs[idx] = gig;
+    }
+    return gig;
+  } catch (err) {
+    console.error('Lineup update error:', err);
+    if (typeof showToast === 'function') showToast(err.message || 'Could not update the lineup');
+    return null;
+  }
+}
+
+function _getCachedGigLineup(gigId) {
+  const gig = (window._cachedGigs || []).find(g => g && g.id === gigId);
+  return { gig, lineup: gig && Array.isArray(gig.lineup) ? gig.lineup.slice() : [] };
+}
+
+async function addLineupMember(gigId) {
+  const name = prompt('Who’s on the gig? (name)');
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const role = prompt('Their role or instrument (optional)') || '';
+  const { lineup } = _getCachedGigLineup(gigId);
+  lineup.push({ name: trimmed, role: role.trim() || null, status: 'pending' });
+  const gig = await _patchGigLineup(gigId, lineup);
+  if (gig) renderGigLineupSection(gig);
+}
+window.addLineupMember = addLineupMember;
+
+async function cycleLineupStatus(gigId, index) {
+  const { lineup } = _getCachedGigLineup(gigId);
+  if (!lineup[index]) return;
+  const order = ['pending', 'confirmed', 'declined'];
+  const current = order.indexOf(lineup[index].status);
+  lineup[index].status = order[(current + 1) % order.length];
+  const gig = await _patchGigLineup(gigId, lineup);
+  if (gig) renderGigLineupSection(gig);
+}
+window.cycleLineupStatus = cycleLineupStatus;
+
+async function removeLineupMember(gigId, index) {
+  const { lineup } = _getCachedGigLineup(gigId);
+  if (index < 0 || index >= lineup.length) return;
+  lineup.splice(index, 1);
+  const gig = await _patchGigLineup(gigId, lineup);
+  if (gig) renderGigLineupSection(gig);
+}
+window.removeLineupMember = removeLineupMember;
 
 // -- Gig setlist section --
 //
@@ -14933,7 +15109,16 @@ function renderChatThread(thread, messages, participants) {
               ${hasContent ? `<div style="font-size:14px;color:var(--text);line-height:1.5;">${escapeHtml(msg.content)}</div>` : ''}
             </div>
             <div style="font-size:10px;color:var(--text-3);margin-top:2px;text-align:right;">
-              ${pending ? '<span>Sending\u2026</span>' : (allRead ? '<span style="color:var(--success);">\u2713\u2713</span> ' : '\u2713 ') + time}
+              ${(() => {
+                if (pending) return '<span>Sending\u2026</span>';
+                if (allRead) return '<span style="color:var(--success);">\u2713\u2713</span> ' + time;
+                // Group threads: show partial read progress ("Read by 1 of 3").
+                // read_by includes the sender, so subtract them from both sides.
+                const readers = Math.max(0, (msg.read_by || []).length - 1);
+                const others = Math.max(0, participantCount - 1);
+                if (others > 1 && readers > 0) return `<span style="color:var(--success);">\u2713\u2713</span> Read by ${readers} of ${others} \u00b7 ${time}`;
+                return '\u2713 ' + time;
+              })()}
             </div>
           </div>
         </div>

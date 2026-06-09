@@ -1239,6 +1239,11 @@ async function runMigrations() {
     // to the gig, not the setlist itself.
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS setlist_id UUID`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS setlist_notes TEXT`);
+
+    // Lineup management (June 2026, premium). Members live as a JSONB array
+    // on the gig: [{ name, role, status, contact_id }]. No separate table —
+    // a lineup never outlives its gig and stays small.
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS lineup JSONB DEFAULT '[]'::jsonb`);
     await db.query(`
       CREATE OR REPLACE FUNCTION gigs_set_updated_at()
       RETURNS TRIGGER AS $$
