@@ -1251,6 +1251,11 @@ async function runMigrations() {
     await db.query(`ALTER TABLE receipts ADD COLUMN IF NOT EXISTS photo_data BYTEA`);
     await db.query(`ALTER TABLE receipts ADD COLUMN IF NOT EXISTS photo_mime VARCHAR(128)`);
 
+    // EPK enrichment (June 2026): photo gallery (array of image URLs) and
+    // testimonials (array of { quote, author }) from the original mockup.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS epk_gallery JSONB DEFAULT '[]'::jsonb`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS epk_testimonials JSONB DEFAULT '[]'::jsonb`);
+
     // Invoice line items (June 2026). Optional JSONB array of
     // { description, qty, rate, amount }; when present the invoice amount is
     // the server-computed sum. Single-amount invoices keep line_items NULL.

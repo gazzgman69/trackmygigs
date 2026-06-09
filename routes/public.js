@@ -131,9 +131,9 @@ function pageHtml(title, bodyHtml, meta) {
   <meta name="twitter:description" content="${esc(desc)}">${twImageTag}${canonicalTag}
   <style>${BASE_STYLES}</style>
 </head>
-<body>
-  <div class="wrap">${bodyHtml}</div>
-  <div class="foot">Powered by <a href="https://trackmygigs.app">TrackMyGigs</a></div>
+<body${meta.embed ? ' style="padding:0;"' : ''}>
+  <div class="wrap"${meta.embed ? ' style="padding:8px;max-width:none;"' : ''}>${bodyHtml}</div>
+  ${meta.embed ? '' : '<div class="foot">Powered by <a href="https://trackmygigs.app">TrackMyGigs</a></div>'}
 </body>
 </html>`;
 }
@@ -238,11 +238,18 @@ router.get('/share/:slug', async (req, res) => {
       return;
     }
 
+    // June 2026 mockup-gap batch: two display variants.
+    //   ?times=1  — booked days also show the gig's time range, so a booker
+    //               can see "busy 7pm-11pm" rather than a whole blocked day.
+    //   ?embed=1  — chrome-free compact rendering for <iframe> embedding.
+    const showTimes = req.query.times === '1';
+    const isEmbed = req.query.embed === '1';
+
     // Pull next 400 days of gigs and blocked dates (~13 months, to cover any
     // partial month at the end of the 12-month window).
     const [gigsR, blockedR] = await Promise.all([
       db.query(
-        `SELECT date FROM gigs
+        `SELECT date, start_time, end_time FROM gigs
          WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '400 days'`,
         [user.id]
       ),
@@ -255,6 +262,18 @@ router.get('/share/:slug', async (req, res) => {
 
     const bookedSet = new Set(gigsR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
     const blockedSet = new Set(blockedR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
+
+    // date → "19:00–23:00" (first gig's range per day; multiple gigs join).
+    const timesByDate = new Map();
+    if (showTimes) {
+      for (const r of gigsR.rows) {
+        const key = r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10);
+        const t = [r.start_time, r.end_time].filter(Boolean).map(x => String(x).slice(0, 5));
+        if (t.length === 0) continue;
+        const label = t.join('–');
+        timesByDate.set(key, timesByDate.has(key) ? timesByDate.get(key) + ', ' + label : label);
+      }
+    }
 
     // Build 12 months of calendar HTML (Mon-first). Headings are sticky-ish —
     // the month label sits above its grid so a long scroll still reads cleanly.
@@ -275,14 +294,22 @@ router.get('/share/:slug', async (req, res) => {
         if (bookedSet.has(dateStr)) cls = 'booked';
         else if (blockedSet.has(dateStr)) cls = 'blocked';
         if (isPast) cls += ' past';
-        cells += `<div class="cal-cell ${cls}">${d}</div>`;
+        const timeLabel = showTimes && timesByDate.has(dateStr) && !isPast
+          ? `<div style="font-size:7px;line-height:1.1;opacity:.85;white-space:nowrap;overflow:hidden;">${esc(timesByDate.get(dateStr))}</div>`
+          : '';
+        cells += `<div class="cal-cell ${cls}"${showTimes && timesByDate.has(dateStr) ? ` title="Booked ${esc(timesByDate.get(dateStr))}"` : ''}>${d}${timeLabel}</div>`;
       }
       return `<div class="cal-month">${esc(monthLabel)}</div><div class="cal-grid">${cells}</div>`;
     }).join('');
 
+    const toggleHref = `/share/${esc(req.params.slug)}${showTimes ? '' : '?times=1'}`;
+    const toggleLink = isEmbed ? '' : `
+      <p style="text-align:center;margin:4px 0 12px;">
+        <a href="${toggleHref}" style="font-size:12px;color:#F0A500;text-decoration:none;">${showTimes ? 'Hide gig times (free/busy only)' : 'Show gig times on booked days'}</a>
+      </p>`;
     const body = `
-      <h1 style="text-align:center;">Availability</h1>
-      <p class="sub" style="text-align:center;">Next 12 months</p>
+      ${isEmbed ? '' : '<h1 style="text-align:center;">Availability</h1>\n      <p class="sub" style="text-align:center;">Next 12 months</p>'}
+      ${toggleLink}
       <div class="legend">
         <span><span class="legend-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
         <span><span class="legend-dot" style="background:var(--danger);"></span>Booked</span>
@@ -296,6 +323,7 @@ router.get('/share/:slug', async (req, res) => {
     res.set('Content-Type', 'text/html').send(pageHtml('Availability', body, {
       description: 'Live availability for the next 12 months.',
       noindex: true,
+      embed: isEmbed,
     }));
   } catch (err) {
     console.error('Public share error:', err);
@@ -547,6 +575,27 @@ router.get('/epk/:slug', async (req, res) => {
       ${videoEmbed ? `<div class="section-label">Video</div>${videoEmbed}` : ''}
 
       ${audioUrl ? `<div class="section-label">Listen</div><div class="card"><audio class="media" controls src="${esc(audioUrl)}"></audio></div>` : ''}
+
+      ${(() => {
+        const gallery = Array.isArray(user.epk_gallery) ? user.epk_gallery.filter(u => /^https?:\/\//i.test(String(u))) : [];
+        if (gallery.length === 0) return '';
+        return `<div class="section-label">Gallery</div>
+          <div class="card" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">
+            ${gallery.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Gallery photo" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;display:block;"></a>`).join('')}
+          </div>`;
+      })()}
+
+      ${(() => {
+        const quotes = Array.isArray(user.epk_testimonials) ? user.epk_testimonials.filter(t => t && t.quote) : [];
+        if (quotes.length === 0) return '';
+        return `<div class="section-label">What people say</div>
+          <div class="card">
+            ${quotes.map(t => `<div style="padding:10px 0;border-bottom:1px solid var(--border);">
+              <div style="font-size:14px;line-height:1.5;font-style:italic;">“${esc(t.quote)}”</div>
+              ${t.author ? `<div style="color:var(--text-3);font-size:12px;margin-top:4px;">— ${esc(t.author)}</div>` : ''}
+            </div>`).join('')}
+          </div>`;
+      })()}
 
       ${rateCardHtml}
 

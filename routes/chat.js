@@ -392,6 +392,19 @@ router.post('/threads', async (req, res) => {
           [req.user.id, pid]
         );
         if (contactCheck.rows.length > 0) continue;
+        // Marketplace relationship: a poster and an applicant on the same
+        // gig may DM each other (mockup v2 "message before picking"). The
+        // application is the consent — applying exposes you to the poster,
+        // and posting exposes you to applicants.
+        const mktCheck = await db.query(
+          `SELECT 1 FROM marketplace_applications ma
+             JOIN marketplace_gigs mg ON mg.id = ma.marketplace_gig_id
+            WHERE (mg.poster_user_id = $1 AND ma.applicant_user_id = $2)
+               OR (mg.poster_user_id = $2 AND ma.applicant_user_id = $1)
+            LIMIT 1`,
+          [req.user.id, pid]
+        );
+        if (mktCheck.rows.length > 0) continue;
         // Not a contact -> fall back to the open-DM toggle. Both ends must
         // have it on. We also verify the target is a real, non-blocked user
         // so a guessed UUID can't slip through.

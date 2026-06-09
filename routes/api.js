@@ -1348,7 +1348,7 @@ router.patch('/user/profile', async (req, res) => {
   try {
     const { name, display_name, phone, instruments, home_postcode, avatar_url, google_review_url, facebook_review_url,
             bank_details, invoice_prefix, invoice_next_number, invoice_format, colour_theme,
-            epk_bio, epk_photo_url, epk_video_url, epk_audio_url,
+            epk_bio, epk_photo_url, epk_video_url, epk_audio_url, epk_gallery, epk_testimonials,
             rate_standard, rate_premium, rate_dep, rate_deposit_pct, rate_notes,
             travel_radius_miles,
             business_address, business_phone, vat_number,
@@ -1593,6 +1593,41 @@ router.patch('/user/profile', async (req, res) => {
         [payLinkValue, req.user.id]
       );
       if (r2.rows[0]) row = r2.rows[0];
+    }
+
+    // EPK gallery + testimonials use the same follow-up-UPDATE pattern as
+    // payment_link_url so the main positional query stays manageable.
+    if (row && (epk_gallery !== undefined || epk_testimonials !== undefined)) {
+      let galleryValue = null;
+      if (Array.isArray(epk_gallery)) {
+        galleryValue = epk_gallery
+          .map(u => String(u || '').trim())
+          .filter(u => /^https?:\/\//i.test(u))
+          .slice(0, 12)
+          .map(u => u.slice(0, 500));
+      }
+      let testimonialsValue = null;
+      if (Array.isArray(epk_testimonials)) {
+        testimonialsValue = epk_testimonials
+          .filter(t => t && typeof t === 'object' && String(t.quote || '').trim())
+          .slice(0, 10)
+          .map(t => ({
+            quote: String(t.quote).trim().slice(0, 500),
+            author: t.author ? String(t.author).trim().slice(0, 120) : null
+          }));
+      }
+      const r3 = await db.query(
+        `UPDATE users SET
+           epk_gallery = CASE WHEN $1::boolean THEN $2::jsonb ELSE epk_gallery END,
+           epk_testimonials = CASE WHEN $3::boolean THEN $4::jsonb ELSE epk_testimonials END
+         WHERE id = $5 RETURNING *`,
+        [
+          galleryValue !== null, JSON.stringify(galleryValue || []),
+          testimonialsValue !== null, JSON.stringify(testimonialsValue || []),
+          req.user.id
+        ]
+      );
+      if (r3.rows[0]) row = r3.rows[0];
     }
 
     res.json(row);

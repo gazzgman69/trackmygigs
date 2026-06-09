@@ -752,8 +752,10 @@
       ? `<div style="font-size:11px;color:var(--text-2);margin-top:2px;">${a.instruments.map(i=>esc(i)).join(' · ')}</div>` : '';
     const note = a.note ? `<div style="font-size:12px;color:var(--text);margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;white-space:pre-wrap;">${esc(a.note)}</div>` : '';
     const dist = a.distance_miles != null ? ` · ${esc(fmtDistance(a.distance_miles))}` : '';
+    // Mockup v2: purple "New to TMG" chip instead of a star rating for
+    // applicants with no gig history yet.
     const newBadge = a.is_new_to_tmg
-      ? `<span style="margin-left:6px;padding:1px 6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:9px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;">New</span>` : '';
+      ? `<span style="margin-left:6px;padding:1px 8px;background:rgba(167,139,250,.15);border:1px solid rgba(167,139,250,.5);border-radius:8px;font-size:9px;color:#A78BFA;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;">New to TMG</span>` : '';
     // 2026-04-28 dep-network batch: Worked-together pill is the highest signal
     // a poster has at Pick time. Compact copy so the chip never wraps inside
     // a word — "Worked 4×" reads cleanly at chip width, full count is in the
@@ -773,11 +775,23 @@
           ${instrs}
           <div style="font-size:10px;color:var(--text-3);">Applied ${esc(fmtRelative(a.applied_at || a.created_at))}${dist}</div>
         </div>
+        <button onclick="_mktMessageApplicant('${escAttr(applicantId)}')" title="Message before picking" style="background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:16px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px;">💬</button>
         <button onclick="_mktPick(${gigId}, '${escAttr(applicantId)}')" style="background:var(--accent);color:#000;border:none;border-radius:16px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;">Pick</button>
       </div>
       ${note}
     </div>`;
   }
+
+  // Mockup v2 "scope before picking": open a 1-to-1 chat with an applicant
+  // without committing to them. Delegates to app.js's thread helper; the
+  // server allows the DM because a live application links the two of you.
+  window._mktMessageApplicant = function (applicantId) {
+    const modal = document.getElementById('mktApplicantModal');
+    if (modal) modal.remove();
+    if (typeof window.openChatWithUser === 'function') {
+      window.openChatWithUser(applicantId);
+    }
+  };
 
   // Profile-preview modal: uses the applicant data already fetched by
   // loadApplicants. No second round-trip so this is instant.
@@ -825,6 +839,7 @@
       ${statBlocks}
       ${bioBlock}
       ${newNote}
+      <button onclick="_mktMessageApplicant('${escAttr(applicantId)}')" style="width:100%;margin-top:14px;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">💬 Message ${esc((a.name || '').split(' ')[0] || 'them')} before picking</button>
     </div>`;
     document.body.appendChild(modal);
   };

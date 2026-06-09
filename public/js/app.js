@@ -10691,6 +10691,18 @@ function buildEPKEditor() {
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">A direct MP3, SoundCloud, or Dropbox link.</div>
       </div>
 
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Photo gallery</label>
+        <textarea id="epkGallery" rows="4" placeholder="One image URL per line (up to 12)" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:13px;box-sizing:border-box;resize:vertical;font-family:inherit;">${escapeHtml(Array.isArray(profile.epk_gallery) ? profile.epk_gallery.join('\n') : '')}</textarea>
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Live shots, band photos, stage setups. One direct image URL per line.</div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Testimonials</label>
+        <textarea id="epkTestimonials" rows="4" placeholder="Absolutely made our wedding | Sarah & Tom&#10;Best sax player we've booked | The Grand, Manchester" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:13px;box-sizing:border-box;resize:vertical;font-family:inherit;">${escapeHtml(Array.isArray(profile.epk_testimonials) ? profile.epk_testimonials.map(t => (t.quote || '') + (t.author ? ' | ' + t.author : '')).join('\n') : '')}</textarea>
+        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">One per line: the quote, then a | and who said it (up to 10).</div>
+      </div>
+
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:20px;">
         <button onclick="saveEPK()" class="pill-g">Save EPK</button>
         <button onclick="previewEPK()" class="pill-o">Preview public page</button>
@@ -10826,6 +10838,19 @@ async function saveEPK() {
   const epk_video_url = document.getElementById('epkVideo')?.value?.trim();
   const epk_audio_url = document.getElementById('epkAudio')?.value?.trim();
 
+  // Gallery: one URL per line. Testimonials: "quote | author" per line.
+  const epk_gallery = (document.getElementById('epkGallery')?.value || '')
+    .split('\n').map(s => s.trim()).filter(Boolean).slice(0, 12);
+  const epk_testimonials = (document.getElementById('epkTestimonials')?.value || '')
+    .split('\n').map(s => s.trim()).filter(Boolean).slice(0, 10)
+    .map(line => {
+      const sep = line.indexOf('|');
+      return sep >= 0
+        ? { quote: line.slice(0, sep).trim(), author: line.slice(sep + 1).trim() || null }
+        : { quote: line, author: null };
+    })
+    .filter(t => t.quote);
+
   try {
     const res = await fetch('/api/user/profile', {
       method: 'PATCH',
@@ -10835,6 +10860,8 @@ async function saveEPK() {
         epk_photo_url: epk_photo_url || '',
         epk_video_url: epk_video_url || '',
         epk_audio_url: epk_audio_url || '',
+        epk_gallery,
+        epk_testimonials,
       }),
     });
     if (!res.ok) throw new Error('save failed');
@@ -10856,14 +10883,63 @@ async function previewEPK() {
 }
 window.previewEPK = previewEPK;
 
+window._shareOrCopy = _shareOrCopy;
+
 async function shareAvailability() {
   const slug = await _ensurePublicSlug();
   if (!slug) { showToast('Could not generate share link'); return; }
   const name = window._currentUser?.display_name || window._currentUser?.name || 'my';
   const url = `${location.origin}/share/${slug}`;
-  _shareOrCopy(url, `${name} availability`, `Book ${name}. Live availability here.`);
+  // June 2026 mockup-gap batch: sheet with the three share flavours instead
+  // of a bare copy — plain link (free/busy), link with gig times, and an
+  // iframe embed snippet for websites.
+  const embedCode = `<iframe src="${url}?embed=1" style="width:100%;max-width:420px;height:480px;border:1px solid #ccc;border-radius:12px;" title="Availability"></iframe>`;
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'shareAvailabilitySheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  const row = (label, sub) => `style="width:100%;text-align:left;background:transparent;border:none;color:var(--text);font-size:15px;padding:14px 20px;cursor:pointer;border-bottom:1px solid var(--border);"`;
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;padding-bottom:8px;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;"></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;">Share your availability</div>
+      <button onclick="closeShareAvailabilitySheet();window._shareOrCopy('${escapeAttr(url)}', '${escapeAttr(name)} availability', 'Book ${escapeAttr(name)}. Live availability here.')" ${row()}>
+        <div style="font-weight:600;">Share link (free / busy)</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Day-level availability, no details</div>
+      </button>
+      <button onclick="closeShareAvailabilitySheet();window._shareOrCopy('${escapeAttr(url)}?times=1', '${escapeAttr(name)} availability', 'Book ${escapeAttr(name)}. Live availability with gig times.')" ${row()}>
+        <div style="font-weight:600;">Share link with gig times</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Booked days show when you're playing, so bookers can see free hours</div>
+      </button>
+      <button onclick="copyShareEmbedCode()" ${row()}>
+        <div style="font-weight:600;">Copy embed code</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Drop the calendar into your website as an iframe</div>
+      </button>
+      <button onclick="closeShareAvailabilitySheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;">Cancel</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeShareAvailabilitySheet(); });
+  window._shareEmbedCode = embedCode;
+  document.body.appendChild(wrap);
 }
 window.shareAvailability = shareAvailability;
+
+function closeShareAvailabilitySheet() {
+  const el = document.getElementById('shareAvailabilitySheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeShareAvailabilitySheet = closeShareAvailabilitySheet;
+
+async function copyShareEmbedCode() {
+  closeShareAvailabilitySheet();
+  const code = window._shareEmbedCode || '';
+  try {
+    await navigator.clipboard.writeText(code);
+    showToast('Embed code copied. Paste it into your website.');
+  } catch (_) {
+    prompt('Copy this embed code:', code);
+  }
+}
+window.copyShareEmbedCode = copyShareEmbedCode;
 
 // Share the public "next gig" widget link. Lightweight card a recipient
 // can drop into an email signature, link-in-bio, or paste straight into

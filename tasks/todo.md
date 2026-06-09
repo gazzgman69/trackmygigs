@@ -22,10 +22,10 @@ Source: mockup-vs-production diff (gigflow-mockup-v3, tmg-marketplace-mockup-v2)
 
 ## Wave 3 — Money
 
-- [ ] Receipt photos: store on the receipts row (BYTEA, same pattern as documents), wire AI-scan and photo-snap flows to save the image
-- [ ] Receipts zip: `GET /api/expenses/export.zip?year=` with photos + CSV manifest (free, data export is always free)
-- [ ] Finance: taxable profit line (income minus claimable expenses) with personal allowance note
-- [ ] Invoice line items: `invoices.line_items JSONB` (description/qty/rate), form UI, preview + PDF + detail render; single-amount path stays the default
+- [x] Receipt photos: store on the receipts row (BYTEA, same pattern as documents), wire AI-scan and photo-snap flows to save the image
+- [x] Receipts zip: `GET /api/expenses/export.zip?year=` with photos + CSV manifest (free, data export is always free)
+- [x] Finance: taxable profit line — already existed in production (estimateTax + tax-year overview), no change needed
+- [x] Invoice line items: `invoices.line_items JSONB` (description/qty/rate), form UI, preview + PDF + detail render; single-amount path stays the default
 
 ## Wave 4 — Surfaces
 
