@@ -16,9 +16,9 @@ Source: mockup-vs-production diff (gigflow-mockup-v3, tmg-marketplace-mockup-v2)
 
 ## Wave 2 — Group chat + lineup (gig detail)
 
-- [ ] Group chat: multi-select in the compose contact picker (backend already supports group threads)
-- [ ] Read receipts: show read count in group threads ("Read by 2 of 4"), keep double-tick for 1-to-1
-- [ ] Lineup (premium): `gigs.lineup JSONB` members with role + status (confirmed/pending/declined), add/edit/remove on gig detail, premium-gated per mockup
+- [x] Group chat: multi-select in the compose contact picker (backend already supports group threads)
+- [x] Read receipts: show read count in group threads ("Read by 2 of 4"), keep double-tick for 1-to-1
+- [x] Lineup (premium): `gigs.lineup JSONB` members with role + status (confirmed/pending/declined), add/edit/remove on gig detail, premium-gated per mockup
 
 ## Wave 3 — Money
 

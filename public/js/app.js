@@ -11801,6 +11801,7 @@ async function openStandaloneInvoice() {
   fields.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   const linked = document.getElementById('invLinkedGig');
   if (linked) linked.value = '';
+  if (typeof resetInvoiceItemise === 'function') resetInvoiceItemise();
   openPanel('panel-invoice');
   // Wire gig dropdown, saved-client auto-fill, preview listeners, invoice
   // number generation. Without this the panel opens but auto-fill and live
@@ -15904,6 +15905,105 @@ function onGigSelected() {
   updateInvoicePreview();
 }
 
+// \u2500\u2500 Invoice line items (June 2026 mockup-gap batch) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+//
+// Optional itemised mode: rows of description + qty + rate. When on, the
+// Amount field becomes the read-only sum and the rows ride along with the
+// POST as line_items (server recomputes the total authoritatively).
+
+window._invItemiseOn = false;
+
+function toggleInvoiceItemise() {
+  const rowsEl = document.getElementById('invItemRows');
+  const toggleBtn = document.getElementById('invItemiseToggle');
+  const amountEl = document.getElementById('invAmount');
+  if (!rowsEl || !toggleBtn) return;
+  window._invItemiseOn = !window._invItemiseOn;
+  if (window._invItemiseOn) {
+    rowsEl.style.display = '';
+    toggleBtn.textContent = '\u2212 Back to a single amount';
+    if (!rowsEl.querySelector('.inv-item-row')) {
+      // Seed from whatever is already typed so nothing is lost.
+      const desc = (document.getElementById('invDesc')?.value || '').trim();
+      const amt = parseFloat(amountEl?.value);
+      addInvoiceItemRow(desc || '', 1, Number.isFinite(amt) && amt > 0 ? amt : '');
+    }
+    recalcInvoiceItems();
+  } else {
+    rowsEl.style.display = 'none';
+    rowsEl.innerHTML = '';
+    toggleBtn.textContent = '+ Itemise this invoice (multiple lines)';
+    if (amountEl) { amountEl.readOnly = false; amountEl.style.opacity = ''; }
+    updateInvoicePreview();
+  }
+}
+window.toggleInvoiceItemise = toggleInvoiceItemise;
+
+function addInvoiceItemRow(desc, qty, rate) {
+  const rowsEl = document.getElementById('invItemRows');
+  if (!rowsEl) return;
+  // Keep the "+ Add line" button at the bottom by re-creating it after append.
+  const addBtn = rowsEl.querySelector('#invItemAddBtn');
+  if (addBtn) addBtn.remove();
+  const row = document.createElement('div');
+  row.className = 'inv-item-row';
+  row.style.cssText = 'display:grid;grid-template-columns:1fr 52px 76px 26px;gap:6px;margin-bottom:6px;align-items:center;';
+  row.innerHTML = `
+    <input type="text" class="form-input inv-item-desc" placeholder="Description" value="${escapeAttr(desc || '')}" oninput="recalcInvoiceItems()" style="margin:0;">
+    <input type="number" class="form-input inv-item-qty" placeholder="Qty" min="0" step="0.5" value="${qty != null && qty !== '' ? escapeAttr(qty) : '1'}" oninput="recalcInvoiceItems()" style="margin:0;padding-left:8px;padding-right:4px;">
+    <input type="number" class="form-input inv-item-rate" placeholder="Rate \u00A3" min="0" step="0.01" value="${rate != null && rate !== '' ? escapeAttr(rate) : ''}" oninput="recalcInvoiceItems()" style="margin:0;padding-left:8px;padding-right:4px;">
+    <button type="button" onclick="this.parentElement.remove();recalcInvoiceItems();" aria-label="Remove line" style="background:none;border:none;color:var(--text-3);font-size:15px;cursor:pointer;padding:0;">\u2715</button>`;
+  rowsEl.appendChild(row);
+  const newAdd = document.createElement('button');
+  newAdd.type = 'button';
+  newAdd.id = 'invItemAddBtn';
+  newAdd.textContent = '+ Add line';
+  newAdd.style.cssText = 'background:none;border:none;color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;padding:2px 0;';
+  newAdd.onclick = () => addInvoiceItemRow('', 1, '');
+  rowsEl.appendChild(newAdd);
+}
+window.addInvoiceItemRow = addInvoiceItemRow;
+
+function collectInvoiceItems() {
+  if (!window._invItemiseOn) return null;
+  const rows = document.querySelectorAll('#invItemRows .inv-item-row');
+  const items = [];
+  rows.forEach(row => {
+    const desc = (row.querySelector('.inv-item-desc')?.value || '').trim();
+    const qty = parseFloat(row.querySelector('.inv-item-qty')?.value);
+    const rate = parseFloat(row.querySelector('.inv-item-rate')?.value);
+    if (!desc || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(rate) || rate < 0) return;
+    items.push({ description: desc, qty, rate, amount: Math.round(qty * rate * 100) / 100 });
+  });
+  return items.length > 0 ? items : null;
+}
+window.collectInvoiceItems = collectInvoiceItems;
+
+function recalcInvoiceItems() {
+  const amountEl = document.getElementById('invAmount');
+  if (!window._invItemiseOn) return;
+  const items = collectInvoiceItems() || [];
+  const sum = Math.round(items.reduce((s, it) => s + it.amount, 0) * 100) / 100;
+  if (amountEl) {
+    amountEl.value = sum > 0 ? sum.toFixed(2) : '';
+    amountEl.readOnly = true;
+    amountEl.style.opacity = '0.65';
+  }
+  updateInvoicePreview();
+}
+window.recalcInvoiceItems = recalcInvoiceItems;
+
+function resetInvoiceItemise() {
+  window._invItemiseOn = false;
+  const rowsEl = document.getElementById('invItemRows');
+  const toggleBtn = document.getElementById('invItemiseToggle');
+  const amountEl = document.getElementById('invAmount');
+  if (rowsEl) { rowsEl.style.display = 'none'; rowsEl.innerHTML = ''; }
+  if (toggleBtn) toggleBtn.textContent = '+ Itemise this invoice (multiple lines)';
+  if (amountEl) { amountEl.readOnly = false; amountEl.style.opacity = ''; }
+}
+window.resetInvoiceItemise = resetInvoiceItemise;
+
 function updateInvoicePreview() {
   const to = document.getElementById('invBillTo').value || '--';
   const desc = document.getElementById('invDesc').value || 'Performance fee';
@@ -15914,6 +16014,26 @@ function updateInvoicePreview() {
   document.getElementById('invPreviewDesc').textContent = desc;
   document.getElementById('invPreviewAmt').textContent = fmt;
   document.getElementById('invPreviewTotal').textContent = fmt;
+
+  // Itemised mode: swap the single description row for one row per item.
+  const itemsHost = document.getElementById('invPreviewItems');
+  const singleRow = document.getElementById('invPreviewSingleRow');
+  const items = collectInvoiceItems();
+  if (itemsHost && singleRow) {
+    if (items) {
+      itemsHost.innerHTML = items.map(it => `
+        <div class="invoice-line-item">
+          <span style="flex:1;min-width:0;word-wrap:break-word;">${escapeHtml(it.description)}${it.qty !== 1 ? ` <span style="color:var(--text-3);font-size:11px;">\u00B7 ${it.qty} \u00D7 \u00A3${it.rate.toFixed(2)}</span>` : ''}</span>
+          <span style="font-size:15px;font-weight:700;color:var(--text);white-space:nowrap;">\u00A3${it.amount.toFixed(2)}</span>
+        </div>`).join('');
+      itemsHost.style.display = '';
+      singleRow.style.display = 'none';
+    } else {
+      itemsHost.style.display = 'none';
+      itemsHost.innerHTML = '';
+      singleRow.style.display = '';
+    }
+  }
 
   const currentUser = window._currentUser;
   if (currentUser) {
@@ -15993,6 +16113,23 @@ function openInvoicePdfPreview() {
   byId('pdfAmount').textContent = fmt;
   byId('pdfTotal').textContent = fmt;
 
+  // Itemised mode: inject one table row per item and hide the single row.
+  const pdfSingleRow = byId('pdfSingleRow');
+  if (pdfSingleRow) {
+    pdfSingleRow.parentElement.querySelectorAll('.pdf-item-row').forEach(el => el.remove());
+    const items = collectInvoiceItems();
+    if (items) {
+      pdfSingleRow.style.display = 'none';
+      const rowsHtml = items.map(it => `<tr class="pdf-item-row" style="border-bottom:1px solid #e5e7eb;">
+        <td style="padding:10px 6px;font-size:13px;color:#111;">${escapeHtml(it.description)}${it.qty !== 1 ? ` <span style="color:#777;font-size:11px;">· ${it.qty} × £${it.rate.toFixed(2)}</span>` : ''}</td>
+        <td style="padding:10px 6px;text-align:right;font-size:13px;color:#111;font-weight:600;">£${it.amount.toFixed(2)}</td>
+      </tr>`).join('');
+      pdfSingleRow.insertAdjacentHTML('beforebegin', rowsHtml);
+    } else {
+      pdfSingleRow.style.display = '';
+    }
+  }
+
   const venueRow = byId('pdfVenueRow');
   const venueEl = byId('pdfVenue');
   if (venueText && venueRow && venueEl) {
@@ -16060,6 +16197,7 @@ async function submitInvoice() {
         venue_address: venueAddress,
         recipient_address: document.getElementById('invClientAddress')?.value?.trim() || null,
         status: 'sent',
+        line_items: collectInvoiceItems(),
       }),
     });
     if (res.ok) {
@@ -16132,6 +16270,7 @@ async function saveInvoiceDraft() {
         venue_address: venueAddress,
         recipient_address: document.getElementById('invClientAddress')?.value?.trim() || null,
         status: 'draft',
+        line_items: collectInvoiceItems(),
       }),
     });
     if (!res.ok) {
@@ -16426,7 +16565,9 @@ async function initReceiptPanel() {
 }
 
 function showReceiptForm(type) {
-  // Toggle the correct form open and hide the other
+  // Toggle the correct form open and hide the other. Clear any photo stash
+  // from a previous receipt so it can't leak onto the next save.
+  window._pendingReceiptPhoto = null;
   const snap = document.getElementById('receiptSnapForm');
   const manual = document.getElementById('receiptManualForm');
   if (type === 'snap') {
@@ -16451,9 +16592,9 @@ function hideReceiptForm(type) {
 window.hideReceiptForm = hideReceiptForm;
 
 function handleReceiptSnap(event) {
-  // Preview the selected photo inline inside the Snap form. We do not upload
-  // the photo yet — the backend expense endpoint doesn't accept file uploads,
-  // so the photo currently lives only in the browser until the user picks Save.
+  // Preview the selected photo inline inside the Snap form, and stash it so
+  // submitReceipt can upload it with the expense (stored server-side for the
+  // accountant zip export).
   const file = event && event.target && event.target.files && event.target.files[0];
   if (!file) return;
   const preview = document.getElementById('receiptSnapPreview');
@@ -16467,6 +16608,7 @@ function handleReceiptSnap(event) {
     }
     if (icon) icon.style.display = 'none';
     if (hint) hint.textContent = 'Tap to retake';
+    window._pendingReceiptPhoto = { dataUrl: ev.target.result, mime: file.type || 'image/jpeg' };
   };
   reader.readAsDataURL(file);
 }
@@ -16478,6 +16620,12 @@ window.handleReceiptSnap = handleReceiptSnap;
 function applyAIScannedReceipt(data) {
   if (!data) return;
   showReceiptForm('manual');
+  // showReceiptForm clears the photo stash, so move the scanned image into
+  // place afterwards. Saved with the expense by submitReceipt.
+  if (window._aiReceiptScanImage) {
+    window._pendingReceiptPhoto = window._aiReceiptScanImage;
+    window._aiReceiptScanImage = null;
+  }
   const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
   setVal('receiptMerchant', data.merchant || '');
   setVal('receiptAmount', data.amount != null ? data.amount : '');
@@ -17023,7 +17171,7 @@ function renderReceiptList() {
     return `
     <div class="receipt-item" onclick="openReceiptDetail('${e.id}')" style="cursor:pointer;">
       <div>
-        <div style="font-size:14px;font-weight:600;color:var(--text)">${escapeHtml(e.description || 'Expense')}</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text)">${escapeHtml(e.description || 'Expense')}${e.has_photo ? ' <span title="Photo attached" style="font-size:11px;">📷</span>' : ''}</div>
         <div style="font-size:12px;color:var(--text-2)">${escapeHtml(e.category || '')} &middot; ${formatDate(e.date)}</div>
       </div>
       <div style="font-size:15px;font-weight:700;color:var(--text)">${amount}</div>
@@ -17052,8 +17200,9 @@ function openReceiptDetail(id) {
 
   host.innerHTML = `
     <div id="receiptEditOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;" onclick="if(event.target===this)closeReceiptDetail()">
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);max-width:420px;width:100%;padding:20px;">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);max-width:420px;width:100%;padding:20px;max-height:85vh;overflow-y:auto;">
         <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:12px;">Edit receipt</div>
+        ${e.has_photo ? `<img src="/api/expenses/${escapeAttr(e.id)}/photo" alt="Receipt photo" style="width:100%;max-height:220px;object-fit:contain;border-radius:10px;border:1px solid var(--border);margin-bottom:12px;background:var(--card);">` : ''}
         <div class="form-group"><div class="form-label">Amount (&pound;)</div><input type="number" class="form-input" id="editReceiptAmount" value="${parseFloat(e.amount || 0)}"></div>
         <div class="form-group"><div class="form-label">Description</div><input type="text" class="form-input" id="editReceiptDesc" value="${escapedDesc}" maxlength="200"></div>
         <div class="form-group"><div class="form-label">Date</div><input type="date" class="form-input" id="editReceiptDate" value="${dateVal}"></div>
@@ -17140,12 +17289,21 @@ async function submitReceipt(source) {
   if (!desc) { showToast('Enter a description'); return; }
 
   try {
+    const payload = { amount, description: desc, date, category };
+    // Attach the receipt photo when one was snapped or AI-scanned. Sent as a
+    // data URL; the server decodes and stores it for the zip export.
+    const pendingPhoto = window._pendingReceiptPhoto;
+    if (pendingPhoto && pendingPhoto.dataUrl) {
+      payload.photo_base64 = pendingPhoto.dataUrl;
+      payload.photo_mime = pendingPhoto.mime || 'image/jpeg';
+    }
     const res = await fetch('/api/expenses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount, description: desc, date, category }),
+      body: JSON.stringify(payload),
     });
     if (res.ok) {
+      window._pendingReceiptPhoto = null;
       if (amountEl) amountEl.value = '';
       if (descEl) descEl.value = '';
       // Reset the snap photo preview if that was the source

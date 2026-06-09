@@ -270,6 +270,12 @@
       const data = await postAI('/extract-receipt', { image: imageData, mediaType, text });
       result.innerHTML = '';
       if (!data) return;
+      // Keep the scanned image around so the expense form can upload it with
+      // the saved receipt (applyAIScannedReceipt moves this into
+      // _pendingReceiptPhoto after the form opens).
+      window._aiReceiptScanImage = imageData
+        ? { dataUrl: 'data:' + (mediaType || 'image/jpeg') + ';base64,' + imageData, mime: mediaType || 'image/jpeg' }
+        : null;
       result.appendChild(renderReceiptPreview(data, onApply));
     });
   }

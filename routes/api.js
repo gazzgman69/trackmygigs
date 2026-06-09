@@ -851,10 +851,37 @@ router.post('/invoices', async (req, res) => {
   try {
     const { gig_id, band_name, amount, status, invoice_number, payment_terms, due_date,
             venue_address, venue_name, description, notes, recipient_email, recipient_address,
-            payment_link_url_override } = req.body;
+            payment_link_url_override, line_items } = req.body;
 
     const effectiveStatus = status || 'draft';
     const sentAt = effectiveStatus === 'sent' ? new Date() : null;
+
+    // June 2026: optional line items. Each row is description + qty + rate;
+    // amounts and the invoice total are computed server-side so a tampered
+    // client can't make the maths disagree with the rows.
+    let lineItemsValue = null;
+    let effectiveAmount = amount;
+    if (Array.isArray(line_items) && line_items.length > 0) {
+      const cleaned = [];
+      for (const it of line_items.slice(0, 30)) {
+        if (!it || typeof it !== 'object') continue;
+        const desc = String(it.description || '').trim().slice(0, 200);
+        if (!desc) continue;
+        const qty = Number(it.qty);
+        const rate = Number(it.rate);
+        if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(rate) || rate < 0) continue;
+        cleaned.push({
+          description: desc,
+          qty: Math.round(qty * 100) / 100,
+          rate: Math.round(rate * 100) / 100,
+          amount: Math.round(qty * rate * 100) / 100
+        });
+      }
+      if (cleaned.length > 0) {
+        lineItemsValue = cleaned;
+        effectiveAmount = Math.round(cleaned.reduce((s, it) => s + it.amount, 0) * 100) / 100;
+      }
+    }
 
     // Universal pay-link (#292): mint a short public slug for every new
     // invoice so the email + PDF Pay Online button can resolve to a stable
@@ -878,14 +905,14 @@ router.post('/invoices', async (req, res) => {
     const result = await db.query(
       `INSERT INTO invoices (user_id, gig_id, band_name, amount, status, invoice_number, payment_terms, due_date,
                              venue_address, venue_name, description, notes, recipient_email, recipient_address, sent_at,
-                             public_pay_slug, payment_link_url_override)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                             public_pay_slug, payment_link_url_override, line_items)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb)
        RETURNING *`,
       [
         req.user.id,
         gig_id,
         band_name,
-        amount,
+        effectiveAmount,
         effectiveStatus,
         invoice_number,
         payment_terms,
@@ -899,6 +926,7 @@ router.post('/invoices', async (req, res) => {
         sentAt,
         publicPaySlug,
         overrideValue,
+        lineItemsValue ? JSON.stringify(lineItemsValue) : null,
       ]
     );
 
@@ -1689,7 +1717,8 @@ router.get('/expenses', async (req, res) => {
     const gigFilter = req.query.gig_id ? ' AND gig_id = $2' : '';
     const params = req.query.gig_id ? [req.user.id, req.query.gig_id] : [req.user.id];
     const result = await db.query(
-      `SELECT id, vendor AS description, amount, category, date, gig_id
+      `SELECT id, vendor AS description, amount, category, date, gig_id,
+              (photo_data IS NOT NULL) AS has_photo
          FROM receipts
         WHERE user_id = $1${gigFilter}
         ORDER BY date DESC`,
@@ -1699,6 +1728,103 @@ router.get('/expenses', async (req, res) => {
   } catch (error) {
     console.error('Get expenses error:', error);
     res.json({ expenses: [] });
+  }
+});
+
+// Receipt photo, streamed inline (same shape as the documents file route).
+router.get('/expenses/:id/photo', async (req, res) => {
+  try {
+    const r = await db.query(
+      'SELECT photo_data, photo_mime FROM receipts WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (r.rows.length === 0 || !r.rows[0].photo_data) {
+      return res.status(404).send('No photo for this receipt');
+    }
+    res.set('Content-Type', r.rows[0].photo_mime || 'image/jpeg');
+    res.set('Content-Disposition', 'inline');
+    res.send(r.rows[0].photo_data);
+  } catch (error) {
+    console.error('Get receipt photo error:', error);
+    res.status(500).send('Failed to fetch photo');
+  }
+});
+
+// Accountant bundle: every receipt for a tax year as a zip — CSV manifest
+// plus the stored photos. Free (data export is always free). ?year= is the
+// tax-year start year (e.g. 2026 = 6 Apr 2026 to 5 Apr 2027); defaults to
+// the current tax year.
+router.get('/expenses/export.zip', async (req, res) => {
+  try {
+    const archiver = require('archiver');
+    const now = new Date();
+    let startYear = parseInt(req.query.year, 10);
+    if (!Number.isFinite(startYear)) {
+      startYear = (now.getMonth() + 1 > 4 || (now.getMonth() + 1 === 4 && now.getDate() >= 6))
+        ? now.getFullYear()
+        : now.getFullYear() - 1;
+    }
+    const from = `${startYear}-04-06`;
+    const to = `${startYear + 1}-04-05`;
+    const r = await db.query(
+      `SELECT id, vendor, amount, category, date, photo_data, photo_mime
+         FROM receipts
+        WHERE user_id = $1 AND date >= $2 AND date <= $3
+        ORDER BY date ASC`,
+      [req.user.id, from, to]
+    );
+
+    res.set('Content-Type', 'application/zip');
+    res.set('Content-Disposition', `attachment; filename="receipts-${startYear}-${(startYear + 1).toString().slice(2)}.zip"`);
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.on('error', (err) => {
+      console.error('Receipts zip error:', err);
+      try { res.status(500).end(); } catch (_) {}
+    });
+    archive.pipe(res);
+
+    const extFor = (mime) => {
+      if (!mime) return 'jpg';
+      if (mime.includes('png')) return 'png';
+      if (mime.includes('webp')) return 'webp';
+      if (mime.includes('heic') || mime.includes('heif')) return 'heic';
+      if (mime.includes('pdf')) return 'pdf';
+      return 'jpg';
+    };
+    const safe = (s) => String(s || '').replace(/[^a-zA-Z0-9 _-]/g, '').trim().slice(0, 40) || 'receipt';
+
+    const csvRows = [['date', 'description', 'category', 'amount_gbp', 'photo_file']];
+    let n = 0;
+    let total = 0;
+    for (const row of r.rows) {
+      n += 1;
+      total += Number(row.amount) || 0;
+      const dateStr = row.date instanceof Date ? row.date.toISOString().slice(0, 10) : String(row.date).slice(0, 10);
+      let photoFile = '';
+      if (row.photo_data) {
+        photoFile = `photos/${String(n).padStart(3, '0')}_${dateStr}_${safe(row.vendor)}.${extFor(row.photo_mime)}`;
+        archive.append(row.photo_data, { name: photoFile });
+      }
+      csvRows.push([
+        dateStr,
+        (row.vendor || '').replace(/"/g, '""'),
+        row.category || 'Other',
+        (Number(row.amount) || 0).toFixed(2),
+        photoFile
+      ]);
+    }
+    csvRows.push([]);
+    csvRows.push(['TOTAL', '', '', total.toFixed(2), '']);
+    const csv = csvRows.map(cols => cols.map(c => `"${c}"`).join(',')).join('\n');
+    archive.append(csv, { name: `receipts-${startYear}-${(startYear + 1).toString().slice(2)}.csv` });
+    archive.append(
+      `Receipts export from TrackMyGigs\nTax year: 6 Apr ${startYear} to 5 Apr ${startYear + 1}\nReceipts: ${n}\nTotal: £${total.toFixed(2)}\n\nThe CSV lists every expense; the photos folder holds the receipt images that were captured in the app.\n`,
+      { name: 'README.txt' }
+    );
+    await archive.finalize();
+  } catch (error) {
+    console.error('Receipts export error:', error);
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to build receipts export' });
   }
 });
 
@@ -1735,11 +1861,27 @@ router.post('/expenses', async (req, res) => {
     const dateValue = date && /^\d{4}-\d{2}-\d{2}/.test(String(date))
       ? String(date).slice(0, 10)
       : todayIsoDate();
+    // June 2026: optional receipt photo, stored BYTEA like documents. The
+    // snap and AI-scan flows already have the image client-side; now it
+    // survives for the accountant zip export instead of being discarded.
+    let photoBuf = null;
+    let photoMime = null;
+    if (req.body.photo_base64) {
+      const decoded = _docDecodeBase64(req.body.photo_base64);
+      if (decoded && decoded.buf && decoded.buf.length > 0) {
+        if (decoded.buf.length > DOC_MAX_BYTES) {
+          return res.status(413).json({ error: 'Photo is too large. Keep it under 8MB.' });
+        }
+        photoBuf = decoded.buf;
+        photoMime = decoded.mime || req.body.photo_mime || 'image/jpeg';
+      }
+    }
     const result = await db.query(
-      `INSERT INTO receipts (user_id, vendor, amount, category, date, gig_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, vendor AS description, amount, category, date, gig_id`,
-      [req.user.id, description, amount, category || 'Other', dateValue, gigIdValue]
+      `INSERT INTO receipts (user_id, vendor, amount, category, date, gig_id, photo_data, photo_mime)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, vendor AS description, amount, category, date, gig_id,
+                 (photo_data IS NOT NULL) AS has_photo`,
+      [req.user.id, description, amount, category || 'Other', dateValue, gigIdValue, photoBuf, photoMime]
     );
     res.json({ success: true, expense: result.rows[0] });
   } catch (error) {
@@ -4546,10 +4688,15 @@ router.get('/print/invoice/:id', async (req, res) => {
             </tr>
           </thead>
           <tbody>
-            <tr style="border-bottom:1px solid #e5e7eb;">
+            ${Array.isArray(inv.line_items) && inv.line_items.length > 0
+              ? inv.line_items.map(it => `<tr style="border-bottom:1px solid #e5e7eb;">
+                  <td style="padding:10px 6px;font-size:13px;color:#111;">${_printEscape(it.description)}${Number(it.qty) !== 1 ? `<span style="color:#777;font-size:11px;"> &middot; ${_printEscape(it.qty)} &times; ${_printEscape(_gbp(it.rate))}</span>` : ''}</td>
+                  <td style="padding:10px 6px;text-align:right;font-size:13px;color:#111;font-weight:600;">${_printEscape(_gbp(it.amount))}</td>
+                </tr>`).join('')
+              : `<tr style="border-bottom:1px solid #e5e7eb;">
               <td style="padding:12px 6px;font-size:13px;color:#111;">${_printEscape(desc)}</td>
               <td style="padding:12px 6px;text-align:right;font-size:13px;color:#111;font-weight:600;">${_printEscape(amount)}</td>
-            </tr>
+            </tr>`}
             ${venueRow}
           </tbody>
           <tfoot>

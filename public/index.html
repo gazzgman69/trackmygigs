@@ -210,7 +210,8 @@
         <div class="invoice-preview-row"><span>Gig</span><span id="invPreviewGig">--</span></div>
         <div class="invoice-preview-row" id="invPreviewVenueRow" style="display:none"><span>Venue</span><span id="invPreviewVenue" style="text-align:right;max-width:65%;word-wrap:break-word;">--</span></div>
         <div class="invoice-divider"></div>
-        <div class="invoice-line-item">
+        <div id="invPreviewItems" style="display:none;"></div>
+        <div class="invoice-line-item" id="invPreviewSingleRow">
           <span id="invPreviewDesc" style="flex:1;min-width:0;word-wrap:break-word;">Performance fee</span>
           <span id="invPreviewAmt" style="font-size:15px;font-weight:700;color:var(--text);white-space:nowrap;">£0.00</span>
         </div>
@@ -256,6 +257,10 @@
         <div class="form-group"><div class="form-label">Amount (£)</div><input class="form-input" id="invAmount" type="number" placeholder="0.00"></div>
         <div class="form-group"><div class="form-label">Payment due</div><input class="form-input" id="invDueDate" type="date"></div>
       </div>
+      <div style="margin-bottom:12px;">
+        <button type="button" id="invItemiseToggle" onclick="toggleInvoiceItemise()" style="background:none;border:none;color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;padding:0;">+ Itemise this invoice (multiple lines)</button>
+        <div id="invItemRows" style="display:none;margin-top:8px;"></div>
+      </div>
       <div class="form-group"><div class="form-label">Bank / payment details</div><textarea class="form-input" id="invNotes" rows="3" placeholder="Sort code, account number..." style="resize:vertical;min-height:60px;"></textarea><div style="font-size:10px;color:var(--text-3);margin-top:3px;">Auto-filled from profile. Edit here for this invoice only.</div></div>
       <button class="btn-pill" id="sendInvoiceBtn">Send invoice</button>
       <button class="btn-pill-outline" style="margin-top:10px" id="invoicePdfPreviewBtn" onclick="openInvoicePdfPreview()">Preview as PDF</button>
@@ -300,7 +305,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr style="border-bottom:1px solid #e5e7eb;">
+            <tr id="pdfSingleRow" style="border-bottom:1px solid #e5e7eb;">
               <td id="pdfDesc" style="padding:12px 6px;font-size:13px;color:#111;">Performance fee</td>
               <td id="pdfAmount" style="padding:12px 6px;text-align:right;font-size:13px;color:#111;font-weight:600;">&pound;0.00</td>
             </tr>
@@ -449,6 +454,9 @@
           <div style="font-size:9px;color:var(--text-3);margin-top:2px">Type it in yourself</div>
         </button>
       </div>
+      <button onclick="window.open('/api/expenses/export.zip', '_blank')" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-s,10px);padding:10px;margin-bottom:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;color:var(--text);font-size:12px;font-weight:600;">
+        🗂️ Download for your accountant <span style="color:var(--text-3);font-weight:400;">(zip: CSV + receipt photos, this tax year)</span>
+      </button>
       <!-- Snap receipt flow: photo picker + fields + AI upsell -->
       <div id="receiptSnapForm" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px">
         <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px">📸 Snap a receipt</div>

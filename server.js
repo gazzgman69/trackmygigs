@@ -1244,6 +1244,17 @@ async function runMigrations() {
     // on the gig: [{ name, role, status, contact_id }]. No separate table —
     // a lineup never outlives its gig and stays small.
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS lineup JSONB DEFAULT '[]'::jsonb`);
+
+    // Receipt photos (June 2026). Same BYTEA-in-Postgres pattern as
+    // user_documents — receipts are small phone photos and the accountant
+    // zip export needs them server-side.
+    await db.query(`ALTER TABLE receipts ADD COLUMN IF NOT EXISTS photo_data BYTEA`);
+    await db.query(`ALTER TABLE receipts ADD COLUMN IF NOT EXISTS photo_mime VARCHAR(128)`);
+
+    // Invoice line items (June 2026). Optional JSONB array of
+    // { description, qty, rate, amount }; when present the invoice amount is
+    // the server-computed sum. Single-amount invoices keep line_items NULL.
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS line_items JSONB`);
     await db.query(`
       CREATE OR REPLACE FUNCTION gigs_set_updated_at()
       RETURNS TRIGGER AS $$
