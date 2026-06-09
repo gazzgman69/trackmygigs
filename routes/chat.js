@@ -91,6 +91,53 @@ async function buildAttachmentSnapshot(attachment, actorId) {
       }
     };
   }
+  if (attachment.kind === 'setlist') {
+    const setlistId = attachment.setlist_id;
+    if (!setlistId) return null;
+    // Sender must own the setlist. Songs are snapshotted by title/key/duration
+    // (capped at 60) so the receiver can read and even copy the list without
+    // ever touching the sender's live rows.
+    const r = await db.query(
+      `SELECT id, name, description, song_ids, total_duration
+         FROM setlists
+        WHERE id = $1 AND user_id = $2
+        LIMIT 1`,
+      [setlistId, actorId]
+    );
+    if (r.rows.length === 0) return null;
+    const sl = r.rows[0];
+    let songs = [];
+    if (Array.isArray(sl.song_ids) && sl.song_ids.length > 0) {
+      const sr = await db.query(
+        `SELECT id, title, artist, key, duration FROM songs WHERE id = ANY($1) AND user_id = $2`,
+        [sl.song_ids, actorId]
+      );
+      const byId = new Map(sr.rows.map(s => [s.id, s]));
+      // Preserve setlist order, drop any dangling ids.
+      songs = sl.song_ids
+        .map(id => byId.get(id))
+        .filter(Boolean)
+        .slice(0, 60)
+        .map(s => ({
+          title: s.title,
+          artist: s.artist || null,
+          key: s.key || null,
+          duration: s.duration != null ? Number(s.duration) : null
+        }));
+    }
+    return {
+      kind: 'setlist',
+      setlist_id: sl.id,
+      sent_at: new Date().toISOString(),
+      snapshot: {
+        name: sl.name || 'Setlist',
+        description: sl.description || null,
+        song_count: Array.isArray(sl.song_ids) ? sl.song_ids.length : 0,
+        total_duration: sl.total_duration != null ? Number(sl.total_duration) : null,
+        songs
+      }
+    };
+  }
   // Unknown kind — refuse rather than store untrusted shape.
   return null;
 }

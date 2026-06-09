@@ -8657,6 +8657,13 @@ function openChatAttachSheet() {
           <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Introduce someone from your contacts</div>
         </div>
       </button>
+      <button onclick="openChatSetlistPicker()" style="width:100%;text-align:left;background:transparent;border:none;color:var(--text);font-size:15px;padding:14px 20px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+        <span style="font-size:20px;">🎼</span>
+        <div>
+          <div style="font-weight:600;">Send a setlist</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Songs, keys and lengths from your repertoire</div>
+        </div>
+      </button>
       <button onclick="closeChatAttachSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;">Cancel</button>
     </div>`;
   wrap.addEventListener('click', (e) => { if (e.target === wrap) closeChatAttachSheet(); });
@@ -8850,6 +8857,74 @@ async function attachGigToChat(gigId) {
   await sendChatMessage();
 }
 window.attachGigToChat = attachGigToChat;
+
+// June 2026 mockup-gap batch: setlist contextual send. Same flow as the gig
+// picker — tap a setlist, it sends as a server-side snapshot the receiver can
+// read or copy into their own repertoire.
+async function openChatSetlistPicker() {
+  closeChatAttachSheet();
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'chatSetlistPickerSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;flex-shrink:0;">Pick a setlist to share</div>
+      <div id="chatSetlistPickerList" style="flex:1;overflow-y:auto;">
+        <div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Loading your setlists…</div>
+      </div>
+      <button onclick="closeChatSetlistPicker()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Cancel</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeChatSetlistPicker(); });
+  document.body.appendChild(wrap);
+
+  const render = (setlists) => {
+    const container = document.getElementById('chatSetlistPickerList');
+    if (!container) return;
+    const list = Array.isArray(setlists) ? setlists : [];
+    if (list.length === 0) {
+      container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No setlists yet. Build one in Repertoire first.</div>';
+      return;
+    }
+    container.innerHTML = list.map(sl => {
+      const count = Array.isArray(sl.song_ids) ? sl.song_ids.length : 0;
+      return `<div onclick="attachSetlistToChat('${escapeAttr(sl.id)}')" style="padding:12px 20px;border-bottom:1px solid var(--border);cursor:pointer;">
+        <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(sl.name || 'Setlist')}</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${count} song${count === 1 ? '' : 's'}${sl.total_duration ? ' · ' + sl.total_duration + ' mins' : ''}</div>
+      </div>`;
+    }).join('');
+  };
+
+  if (Array.isArray(window._cachedSetlists)) render(window._cachedSetlists);
+  try {
+    const res = await fetch('/api/setlists');
+    if (res.ok) {
+      const setlists = await res.json();
+      window._cachedSetlists = setlists;
+      render(setlists);
+    } else if (!Array.isArray(window._cachedSetlists)) {
+      render([]);
+    }
+  } catch (_) {
+    if (!Array.isArray(window._cachedSetlists)) render([]);
+  }
+}
+window.openChatSetlistPicker = openChatSetlistPicker;
+
+function closeChatSetlistPicker() {
+  const el = document.getElementById('chatSetlistPickerSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeChatSetlistPicker = closeChatSetlistPicker;
+
+async function attachSetlistToChat(setlistId) {
+  if (!setlistId || !_currentThreadId) return;
+  closeChatSetlistPicker();
+  window._chatPendingAttachment = { kind: 'setlist', setlist_id: setlistId };
+  await sendChatMessage();
+}
+window.attachSetlistToChat = attachSetlistToChat;
 
 // 2026-04-29 chat-info batch: tap-the-header → chat info sheet. Shows
 // the editable chat name + a list of members with photos. Each member row
@@ -9184,9 +9259,9 @@ async function openGigDetail(gigId) {
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">🎵 Setlist</div>
-        <span style="font-size:11px;color:var(--accent);cursor:pointer;">Change</span>
+        <span id="gigSetlistAction"></span>
       </div>
-      <div style="font-size:12px;color:var(--text-3);padding:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;text-align:center;">No setlist assigned yet</div>
+      <div id="gigSetlistBody" style="font-size:12px;color:var(--text-3);">Loading…</div>
     </div>
     <!-- Prep checklist -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
@@ -9223,6 +9298,9 @@ async function openGigDetail(gigId) {
   `;
 
   openPanel('panel-gig-detail');
+
+  // Setlist section renders async (it may need a setlist fetch).
+  loadGigSetlistSection(gig);
 
   // Show mileage: use stored value first, then fetch in background if needed
   const mileageEl = document.getElementById('gigDetailMileage');
@@ -9264,6 +9342,168 @@ async function openGigDetail(gigId) {
     }
   }
 }
+
+// -- Gig setlist section --
+//
+// June 2026 mockup-gap batch: gigs can carry a setlist (gigs.setlist_id) plus
+// per-gig notes (gigs.setlist_notes). The section paints after the panel is
+// open because the assigned setlist may need its own fetch.
+
+window._setlistCacheById = window._setlistCacheById || {};
+
+async function loadGigSetlistSection(gig) {
+  const bodyEl = document.getElementById('gigSetlistBody');
+  const actionEl = document.getElementById('gigSetlistAction');
+  if (!bodyEl) return;
+
+  if (!gig.setlist_id) {
+    if (actionEl) actionEl.innerHTML = '';
+    bodyEl.innerHTML = `
+      <button onclick="openGigSetlistPicker('${escapeAttr(gig.id)}')" style="width:100%;background:var(--card);border:1px dashed var(--border);color:var(--accent);padding:12px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;">+ Assign a setlist</button>`;
+    return;
+  }
+
+  if (actionEl) {
+    actionEl.innerHTML = `<span onclick="openGigSetlistPicker('${escapeAttr(gig.id)}')" style="font-size:11px;color:var(--accent);cursor:pointer;">Change</span>`;
+  }
+
+  let setlist = window._setlistCacheById[gig.setlist_id];
+  if (!setlist) {
+    try {
+      const res = await fetch(`/api/setlists/${gig.setlist_id}`);
+      if (res.ok) {
+        setlist = await res.json();
+        window._setlistCacheById[gig.setlist_id] = setlist;
+      }
+    } catch (_) {}
+  }
+  if (!setlist) {
+    // Dangling reference (setlist deleted on another device, or fetch failed).
+    bodyEl.innerHTML = `
+      <div style="font-size:12px;color:var(--text-3);padding:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;text-align:center;">
+        Could not load the assigned setlist.
+        <span onclick="clearGigSetlist('${escapeAttr(gig.id)}')" style="color:var(--danger);cursor:pointer;font-weight:600;"> Remove it</span>
+      </div>`;
+    return;
+  }
+
+  const byId = new Map((setlist.songs || []).map(s => [s.id, s]));
+  const ordered = (setlist.song_ids || []).map(id => byId.get(id)).filter(Boolean);
+  const preview = ordered.slice(0, 5);
+  const more = ordered.length - preview.length;
+  const sumMins = ordered.reduce((s, x) => s + (Number(x.duration) || 0), 0);
+  const mins = setlist.total_duration || sumMins || null;
+
+  bodyEl.innerHTML = `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;">
+      <div onclick="openSetlistDetail('${escapeAttr(setlist.id)}')" style="cursor:pointer;">
+        <div style="font-size:14px;font-weight:700;color:var(--text);">${escapeHtml(setlist.name || 'Setlist')}</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${ordered.length} song${ordered.length === 1 ? '' : 's'}${mins ? ' · about ' + mins + ' mins' : ''}</div>
+        ${preview.length ? `<div style="font-size:12px;color:var(--text-2);margin-top:8px;line-height:1.6;">${preview.map((s, i) => `${i + 1}. ${escapeHtml(s.title)}`).join('<br>')}${more > 0 ? `<br><span style="color:var(--text-3);">+${more} more</span>` : ''}</div>` : ''}
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+          <span style="font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;">Notes for this gig</span>
+          <span onclick="editGigSetlistNotes('${escapeAttr(gig.id)}')" style="font-size:11px;color:var(--accent);cursor:pointer;">${gig.setlist_notes ? 'Edit' : '+ Add'}</span>
+        </div>
+        ${gig.setlist_notes
+          ? `<div style="font-size:12px;color:var(--text-2);white-space:pre-wrap;">${escapeHtml(gig.setlist_notes)}</div>`
+          : '<div style="font-size:11px;color:var(--text-3);">Song tweaks for the night, e.g. "drop the encore if we run over".</div>'}
+      </div>
+      <div style="display:flex;gap:6px;margin-top:10px;">
+        <button onclick="window.open('/api/print/setlist/${escapeAttr(setlist.id)}?gig=${escapeAttr(gig.id)}', '_blank')" style="flex:1;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:11px;font-weight:600;cursor:pointer;">📄 Print / PDF</button>
+        <button onclick="clearGigSetlist('${escapeAttr(gig.id)}')" style="flex:1;background:var(--surface);color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:8px;font-size:11px;font-weight:600;cursor:pointer;">Remove from gig</button>
+      </div>
+    </div>`;
+}
+
+async function openGigSetlistPicker(gigId) {
+  let setlists = window._cachedSetlists;
+  if (!Array.isArray(setlists)) {
+    try {
+      const res = await fetch('/api/setlists');
+      setlists = res.ok ? await res.json() : [];
+      window._cachedSetlists = setlists;
+    } catch (_) { setlists = []; }
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'gigSetlistPickerSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  const rows = (setlists || []).map(sl => {
+    const count = Array.isArray(sl.song_ids) ? sl.song_ids.length : 0;
+    return `<div onclick="assignSetlistToGig('${escapeAttr(gigId)}', '${escapeAttr(sl.id)}')" style="padding:12px 20px;border-bottom:1px solid var(--border);cursor:pointer;">
+      <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(sl.name)}</div>
+      <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${count} song${count === 1 ? '' : 's'}${sl.total_duration ? ' · ' + sl.total_duration + ' mins' : ''}</div>
+    </div>`;
+  }).join('');
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;flex-shrink:0;">Pick a setlist for this gig</div>
+      <div style="flex:1;overflow-y:auto;">
+        ${rows || '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No setlists yet. Build one in Repertoire first.</div>'}
+      </div>
+      <button onclick="closeGigSetlistPicker()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Cancel</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeGigSetlistPicker(); });
+  document.body.appendChild(wrap);
+}
+window.openGigSetlistPicker = openGigSetlistPicker;
+
+function closeGigSetlistPicker() {
+  const el = document.getElementById('gigSetlistPickerSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeGigSetlistPicker = closeGigSetlistPicker;
+
+async function _patchGigSetlist(gigId, payload) {
+  try {
+    const res = await fetch(`/api/gigs/${gigId}/setlist`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error('patch failed');
+    const gig = await res.json();
+    // Keep the gig cache fresh so re-opening the detail shows the change.
+    if (Array.isArray(window._cachedGigs)) {
+      const idx = window._cachedGigs.findIndex(g => g && g.id === gigId);
+      if (idx >= 0) window._cachedGigs[idx] = gig;
+    }
+    return gig;
+  } catch (err) {
+    console.error('Gig setlist update error:', err);
+    if (typeof showToast === 'function') showToast('Could not update the setlist');
+    return null;
+  }
+}
+
+async function assignSetlistToGig(gigId, setlistId) {
+  closeGigSetlistPicker();
+  const gig = await _patchGigSetlist(gigId, { setlist_id: setlistId });
+  if (gig) {
+    if (typeof showToast === 'function') showToast('Setlist assigned');
+    loadGigSetlistSection(gig);
+  }
+}
+window.assignSetlistToGig = assignSetlistToGig;
+
+async function clearGigSetlist(gigId) {
+  const gig = await _patchGigSetlist(gigId, { setlist_id: null });
+  if (gig) loadGigSetlistSection(gig);
+}
+window.clearGigSetlist = clearGigSetlist;
+
+async function editGigSetlistNotes(gigId) {
+  const cached = (window._cachedGigs || []).find(g => g && g.id === gigId);
+  const current = cached && cached.setlist_notes ? cached.setlist_notes : '';
+  const notes = prompt('Notes for this gig’s set (key changes, cuts, encore plan...)', current);
+  if (notes === null) return;
+  const gig = await _patchGigSetlist(gigId, { setlist_notes: notes.trim() || null });
+  if (gig) loadGigSetlistSection(gig);
+}
+window.editGigSetlistNotes = editGigSetlistNotes;
 
 // -- Checklist functions --
 
@@ -11238,12 +11478,21 @@ async function openRepertoirePanel() {
         <button onclick="openPanel('panel-create-setlist')" class="pill">+ Create Setlist</button>
         <button type="button" onclick="window.aiSetListGenerator && window.aiSetListGenerator()" style="background:var(--accent-dim, rgba(240,165,0,.18));color:var(--accent,#f0a500);border:1px solid rgba(240,165,0,.4);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;">&#10024; Generate with AI</button>
       </div>
-      ${setlists.map(setlist => `
-      <div style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
-        <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(setlist.name)}</div>
-        <div style="font-size:11px;color:var(--text-2);">${setlist.song_count} songs · ${setlist.duration || '?'} mins · ${setlist.linked_gig ? 'Linked to gig' : 'Not linked'}</div>
-      </div>`).join('')}
+      ${setlists.length === 0 ? '<div style="padding:24px 0;text-align:center;color:var(--text-3);font-size:13px;">No setlists yet. Create one to get started.</div>' : ''}
+      ${setlists.map(setlist => {
+        const count = Array.isArray(setlist.song_ids) ? setlist.song_ids.length : 0;
+        const mins = setlist.total_duration ? `${setlist.total_duration} mins` : '';
+        return `
+      <div onclick="openSetlistDetail('${escapeAttr(setlist.id)}')" style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(setlist.name)}</div>
+          <div style="font-size:11px;color:var(--text-2);">${count} song${count === 1 ? '' : 's'}${mins ? ' · ' + mins : ''}</div>
+        </div>
+        <span style="color:var(--text-3);font-size:16px;">&rsaquo;</span>
+      </div>`;
+      }).join('')}
     </div>`;
+    window._cachedSetlists = setlists;
 
     // Import tab (ChordPro)
     html += `<div id="importTab" style="display:none;padding:12px 0;">
@@ -11760,7 +12009,7 @@ async function saveNewSetlist() {
     const res = await fetch('/api/setlists', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, duration: duration ? parseInt(duration, 10) : null, notes: notes || null })
+      body: JSON.stringify({ name, total_duration: duration ? parseInt(duration, 10) : null, description: notes || null })
     });
     if (!res.ok) throw new Error('Create failed');
     ['setlistName','setlistDuration','setlistNotes'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -11772,6 +12021,235 @@ async function saveNewSetlist() {
     if (typeof showToast === 'function') showToast('Could not create setlist');
   }
 }
+
+// ── Setlist detail ───────────────────────────────────────────────────────────
+//
+// June 2026 mockup-gap batch: setlists finally get a detail screen. Songs are
+// stored as an ordered UUID array on the setlist row, so add/remove/reorder
+// are all "mutate the array, PATCH song_ids, re-render". The whole screen
+// re-renders from window._setlistDetailCache after every mutation.
+
+window._setlistDetailCache = null;
+
+async function openSetlistDetail(setlistId) {
+  const body = document.getElementById('setlistDetailBody');
+  if (!body) return;
+  body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading setlist...</div>';
+  openPanel('panel-setlist-detail');
+  try {
+    const res = await fetch(`/api/setlists/${setlistId}`);
+    if (!res.ok) throw new Error('fetch failed');
+    const setlist = await res.json();
+    window._setlistDetailCache = setlist;
+    renderSetlistDetail();
+  } catch (err) {
+    console.error('Setlist detail error:', err);
+    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load setlist</div>';
+  }
+}
+window.openSetlistDetail = openSetlistDetail;
+
+function renderSetlistDetail() {
+  const body = document.getElementById('setlistDetailBody');
+  const sl = window._setlistDetailCache;
+  if (!body || !sl) return;
+  // Songs come back expanded from GET /setlists/:id but in table order, not
+  // setlist order. Re-order them by song_ids so the list matches the stand.
+  const byId = new Map((sl.songs || []).map(s => [s.id, s]));
+  const ordered = (sl.song_ids || []).map(id => byId.get(id)).filter(Boolean);
+  const sumMins = ordered.reduce((s, x) => s + (Number(x.duration) || 0), 0);
+  const mins = sl.total_duration || sumMins || null;
+
+  body.innerHTML = `
+    <div style="padding:0 16px 20px;">
+      <div style="padding:14px 0 4px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <div style="font-size:19px;font-weight:700;color:var(--text);">${escapeHtml(sl.name || 'Setlist')}</div>
+          <span onclick="renameSetlist()" style="font-size:11px;color:var(--accent);cursor:pointer;flex-shrink:0;">Rename</span>
+        </div>
+        ${sl.description ? `<div style="font-size:12px;color:var(--text-2);margin-top:4px;white-space:pre-wrap;">${escapeHtml(sl.description)}</div>` : ''}
+        <div style="font-size:11px;color:var(--text-3);margin-top:6px;">${ordered.length} song${ordered.length === 1 ? '' : 's'}${mins ? ' · about ' + mins + ' mins' : ''}</div>
+      </div>
+      <div style="display:flex;gap:8px;margin:10px 0 14px;flex-wrap:wrap;">
+        <button onclick="openSetlistSongPicker()" class="pill">+ Add songs</button>
+        <button onclick="window.open('/api/print/setlist/${escapeAttr(sl.id)}', '_blank')" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;">📄 Print / PDF</button>
+        <button onclick="deleteSetlist('${escapeAttr(sl.id)}')" style="background:var(--card);color:var(--danger);border:1px solid var(--danger);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;">Delete</button>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+        ${ordered.length === 0
+          ? '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No songs yet. Tap "+ Add songs" to build the set.</div>'
+          : ordered.map((s, i) => `
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;${i < ordered.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}">
+            <span style="font-size:11px;color:var(--text-3);width:18px;text-align:right;flex-shrink:0;">${i + 1}</span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.title)}</div>
+              <div style="font-size:11px;color:var(--text-2);">${escapeHtml([s.artist, s.key, s.duration ? s.duration + ' min' : ''].filter(Boolean).join(' · '))}</div>
+            </div>
+            <button onclick="moveSetlistSong(${i}, -1)" ${i === 0 ? 'disabled' : ''} style="background:none;border:none;color:${i === 0 ? 'var(--border)' : 'var(--text-2)'};font-size:15px;cursor:${i === 0 ? 'default' : 'pointer'};padding:4px;" aria-label="Move up">▲</button>
+            <button onclick="moveSetlistSong(${i}, 1)" ${i === ordered.length - 1 ? 'disabled' : ''} style="background:none;border:none;color:${i === ordered.length - 1 ? 'var(--border)' : 'var(--text-2)'};font-size:15px;cursor:${i === ordered.length - 1 ? 'default' : 'pointer'};padding:4px;" aria-label="Move down">▼</button>
+            <button onclick="removeSetlistSong(${i})" style="background:none;border:none;color:var(--danger);font-size:15px;cursor:pointer;padding:4px;" aria-label="Remove">✕</button>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+async function _patchSetlistSongs(songIds) {
+  const sl = window._setlistDetailCache;
+  if (!sl) return false;
+  try {
+    const res = await fetch(`/api/setlists/${sl.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ song_ids: songIds })
+    });
+    if (!res.ok) throw new Error('patch failed');
+    sl.song_ids = songIds;
+    return true;
+  } catch (err) {
+    console.error('Setlist songs update error:', err);
+    if (typeof showToast === 'function') showToast('Could not update setlist');
+    return false;
+  }
+}
+
+async function moveSetlistSong(index, delta) {
+  const sl = window._setlistDetailCache;
+  if (!sl) return;
+  const ids = (sl.song_ids || []).slice();
+  const target = index + delta;
+  if (target < 0 || target >= ids.length) return;
+  [ids[index], ids[target]] = [ids[target], ids[index]];
+  if (await _patchSetlistSongs(ids)) renderSetlistDetail();
+}
+window.moveSetlistSong = moveSetlistSong;
+
+async function removeSetlistSong(index) {
+  const sl = window._setlistDetailCache;
+  if (!sl) return;
+  const ids = (sl.song_ids || []).slice();
+  ids.splice(index, 1);
+  if (await _patchSetlistSongs(ids)) renderSetlistDetail();
+}
+window.removeSetlistSong = removeSetlistSong;
+
+async function renameSetlist() {
+  const sl = window._setlistDetailCache;
+  if (!sl) return;
+  const name = prompt('Setlist name', sl.name || '');
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  try {
+    const res = await fetch(`/api/setlists/${sl.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: trimmed })
+    });
+    if (!res.ok) throw new Error('rename failed');
+    sl.name = trimmed;
+    renderSetlistDetail();
+  } catch (err) {
+    console.error('Rename setlist error:', err);
+    if (typeof showToast === 'function') showToast('Could not rename setlist');
+  }
+}
+window.renameSetlist = renameSetlist;
+
+async function deleteSetlist(setlistId) {
+  const ok = window.confirmModal
+    ? await window.confirmModal('Delete this setlist? Songs stay in your library.')
+    : confirm('Delete this setlist? Songs stay in your library.');
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/setlists/${setlistId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('delete failed');
+    if (typeof showToast === 'function') showToast('Setlist deleted');
+    closePanel('panel-setlist-detail');
+    if (typeof openRepertoirePanel === 'function') openRepertoirePanel();
+  } catch (err) {
+    console.error('Delete setlist error:', err);
+    if (typeof showToast === 'function') showToast('Could not delete setlist');
+  }
+}
+window.deleteSetlist = deleteSetlist;
+
+// Song picker sheet for the setlist detail screen. Lists the user's songs
+// that aren't already in the set, with a search filter; tapping adds to the
+// end of the set. Stays open so several songs can be added in one visit.
+async function openSetlistSongPicker() {
+  const sl = window._setlistDetailCache;
+  if (!sl) return;
+  let songs = window._cachedSongs;
+  if (!Array.isArray(songs) || songs.length === 0) {
+    try {
+      const res = await fetch('/api/songs');
+      songs = res.ok ? await res.json() : [];
+      window._cachedSongs = songs;
+    } catch (_) { songs = []; }
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'setlistSongPickerSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;flex-shrink:0;">Add songs to the set</div>
+      <div style="padding:0 20px 8px;flex-shrink:0;">
+        <input type="text" id="setlistSongPickerSearch" placeholder="Search songs..." oninput="_renderSetlistSongPickerList()" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box;" />
+      </div>
+      <div id="setlistSongPickerList" style="flex:1;overflow-y:auto;"></div>
+      <button onclick="closeSetlistSongPicker()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Done</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSetlistSongPicker(); });
+  document.body.appendChild(wrap);
+  _renderSetlistSongPickerList();
+}
+window.openSetlistSongPicker = openSetlistSongPicker;
+
+function _renderSetlistSongPickerList() {
+  const container = document.getElementById('setlistSongPickerList');
+  const sl = window._setlistDetailCache;
+  if (!container || !sl) return;
+  const q = ((document.getElementById('setlistSongPickerSearch') || {}).value || '').trim().toLowerCase();
+  const inSet = new Set(sl.song_ids || []);
+  const candidates = (window._cachedSongs || [])
+    .filter(s => s && !inSet.has(s.id))
+    .filter(s => !q || (s.title || '').toLowerCase().includes(q) || (s.artist || '').toLowerCase().includes(q));
+  if (candidates.length === 0) {
+    container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">${q ? 'No songs match that search.' : 'All your songs are already in this set. Add more from the Songs tab.'}</div>`;
+    return;
+  }
+  container.innerHTML = candidates.slice(0, 80).map(s => `
+    <div onclick="addSongToSetlist('${escapeAttr(s.id)}')" style="padding:11px 20px;border-bottom:1px solid var(--border);cursor:pointer;">
+      <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(s.title)}</div>
+      <div style="font-size:11px;color:var(--text-2);">${escapeHtml([s.artist, s.key].filter(Boolean).join(' · '))}</div>
+    </div>`).join('');
+}
+window._renderSetlistSongPickerList = _renderSetlistSongPickerList;
+
+async function addSongToSetlist(songId) {
+  const sl = window._setlistDetailCache;
+  if (!sl) return;
+  const ids = (sl.song_ids || []).slice();
+  if (ids.includes(songId)) return;
+  ids.push(songId);
+  if (await _patchSetlistSongs(ids)) {
+    // Keep the expanded songs list in step so renderSetlistDetail can show
+    // the new row without a refetch.
+    const song = (window._cachedSongs || []).find(s => s && s.id === songId);
+    if (song && Array.isArray(sl.songs) && !sl.songs.find(s => s.id === songId)) sl.songs.push(song);
+    renderSetlistDetail();
+    _renderSetlistSongPickerList();
+  }
+}
+window.addSongToSetlist = addSongToSetlist;
+
+function closeSetlistSongPicker() {
+  const el = document.getElementById('setlistSongPickerSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeSetlistSongPicker = closeSetlistSongPicker;
 
 // BUG-AUDIT-01: Loader for the notification-preferences panel. The panel open hook already
 // tries typeof loadNotificationSettings, so we simply need to define it so the checkboxes
@@ -13650,6 +14128,9 @@ function renderThreadItem(thread, type) {
     } else if (att && att.kind === 'contact') {
       const cname = (att.snapshot && att.snapshot.name) ? att.snapshot.name : 'contact';
       preview = `👤 Contact: ${cname.length > 32 ? cname.substring(0, 32) + '...' : cname}`;
+    } else if (att && att.kind === 'setlist') {
+      const sname = (att.snapshot && att.snapshot.name) ? att.snapshot.name : 'setlist';
+      preview = `🎼 Setlist: ${sname.length > 32 ? sname.substring(0, 32) + '...' : sname}`;
     } else {
       preview = '📎 Attachment';
     }
@@ -13795,7 +14276,7 @@ async function openGigChat(gigId) {
 // time so we read everything off att.snapshot — never the live gig row.
 // Keep this purely visual; click handler is wired separately so it works
 // for both sender and receiver bubbles.
-function renderMessageAttachment(att, isMe) {
+function renderMessageAttachment(att, isMe, msgId) {
   if (!att || typeof att !== 'object') return '';
   // Card colours adapt to bubble side. On the sender side we sit DIRECTLY
   // on the orange bubble — transparent inner card, white text — so the
@@ -13842,6 +14323,22 @@ function renderMessageAttachment(att, isMe) {
         <div style="font-size:14px;font-weight:700;color:${titleColor};line-height:1.3;">${escapeHtml(name)}</div>
         ${insts ? `<div style="font-size:12px;color:${subColor};margin-top:2px;">${escapeHtml(insts)}</div>` : ''}
         <div style="font-size:11px;color:${ctaColor};margin-top:6px;font-weight:600;">${cta}</div>
+      </div>`;
+  }
+
+  if (att.kind === 'setlist') {
+    const s = att.snapshot || {};
+    const name = s.name || 'Setlist';
+    const count = s.song_count != null ? Number(s.song_count) : (Array.isArray(s.songs) ? s.songs.length : 0);
+    const mins = s.total_duration ? `${s.total_duration} mins` : '';
+    const preview = Array.isArray(s.songs) ? s.songs.slice(0, 3) : [];
+    return `
+      <div class="chat-setlist-card" onclick="openSharedSetlistCard('${escapeAttr(msgId || '')}')" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer;">
+        <div style="font-size:10px;font-weight:700;color:${labelColor};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">🎼 Setlist</div>
+        <div style="font-size:14px;font-weight:700;color:${titleColor};line-height:1.3;">${escapeHtml(name)}</div>
+        <div style="font-size:12px;color:${subColor};margin-top:2px;">${count} song${count === 1 ? '' : 's'}${mins ? ' · ' + mins : ''}</div>
+        ${preview.length ? `<div style="font-size:11px;color:${subColor};margin-top:4px;line-height:1.5;">${preview.map(x => escapeHtml(x.title || '')).filter(Boolean).join('<br>')}${count > preview.length ? '<br>…' : ''}</div>` : ''}
+        <div style="font-size:11px;color:${ctaColor};margin-top:6px;font-weight:600;">View setlist &rsaquo;</div>
       </div>`;
   }
 
@@ -13901,6 +14398,90 @@ function renderMessageAttachment(att, isMe) {
       <div style="font-size:11px;color:${ctaColor};margin-top:6px;font-weight:600;">View gig &rsaquo;</div>
     </div>`;
 }
+
+// Shared setlist card tap → full-screen sheet with every song from the
+// snapshot. Receivers get "Save to my repertoire" which copies songs +
+// setlist into their own account via /api/setlists/save-shared.
+function openSharedSetlistCard(msgId) {
+  if (!msgId) return;
+  const msgs = (window._chatThreadCache && window._chatThreadCache.messages) || [];
+  const msg = msgs.find(m => m && (m.id === msgId || m.tempId === msgId));
+  if (!msg) { try { toast('Could not open that setlist.'); } catch (_) {} return; }
+  const atts = Array.isArray(msg.attachments) ? msg.attachments : (msg.attachments ? [msg.attachments] : []);
+  const att = atts.find(a => a && a.kind === 'setlist');
+  if (!att || !att.snapshot) return;
+  const s = att.snapshot;
+  const me = window.currentUser || (typeof currentUser !== 'undefined' ? currentUser : null);
+  const isSender = me && msg.sender_id === me.id;
+  const songs = Array.isArray(s.songs) ? s.songs : [];
+  const mins = s.total_duration ? `${s.total_duration} mins` : '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'sharedSetlistSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:85vh;display:flex;flex-direction:column;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
+      <div style="padding:14px 20px 8px;flex-shrink:0;">
+        <div style="font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;">🎼 Shared setlist</div>
+        <div style="font-size:17px;font-weight:700;color:var(--text);margin-top:4px;">${escapeHtml(s.name || 'Setlist')}</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${songs.length} song${songs.length === 1 ? '' : 's'}${mins ? ' · ' + mins : ''}</div>
+        ${s.description ? `<div style="font-size:12px;color:var(--text-2);margin-top:6px;white-space:pre-wrap;">${escapeHtml(s.description)}</div>` : ''}
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:0 20px;">
+        ${songs.length === 0
+          ? '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No songs in this setlist.</div>'
+          : songs.map((x, i) => `
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);">
+            <span style="font-size:11px;color:var(--text-3);width:18px;text-align:right;flex-shrink:0;">${i + 1}</span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(x.title || '')}</div>
+              <div style="font-size:11px;color:var(--text-2);">${escapeHtml([x.artist, x.key, x.duration ? x.duration + ' min' : ''].filter(Boolean).join(' · '))}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+      <div style="padding:12px 20px;flex-shrink:0;border-top:1px solid var(--border);">
+        ${!isSender ? `<button id="saveSharedSetlistBtn" onclick="saveSharedSetlist('${escapeAttr(msgId)}')" style="width:100%;background:var(--accent);border:none;color:#000;padding:12px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;margin-bottom:8px;">Save to my repertoire</button>` : ''}
+        <button onclick="closeSharedSetlistSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:10px;cursor:pointer;">Close</button>
+      </div>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSharedSetlistSheet(); });
+  document.body.appendChild(wrap);
+}
+window.openSharedSetlistCard = openSharedSetlistCard;
+
+function closeSharedSetlistSheet() {
+  const el = document.getElementById('sharedSetlistSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeSharedSetlistSheet = closeSharedSetlistSheet;
+
+async function saveSharedSetlist(msgId) {
+  const btn = document.getElementById('saveSharedSetlistBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; btn.style.opacity = '0.6'; }
+  try {
+    const res = await fetch('/api/setlists/save-shared', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_id: _currentThreadId, message_id: msgId })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'save failed');
+    }
+    const data = await res.json();
+    // Invalidate the setlists cache so Repertoire shows the new copy.
+    window._cachedSetlists = null;
+    closeSharedSetlistSheet();
+    try { toast(`Saved "${(data.setlist && data.setlist.name) || 'setlist'}" to your repertoire`); } catch (_) {}
+  } catch (err) {
+    console.error('Save shared setlist error:', err);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save to my repertoire'; btn.style.opacity = ''; }
+    try { toast(err.message || 'Could not save that setlist.'); } catch (_) {}
+  }
+}
+window.saveSharedSetlist = saveSharedSetlist;
 
 // Click handler for shared gig cards in chat. If the receiver owns a gig
 // with this id they jump straight into the detail. Otherwise we surface a
@@ -14342,7 +14923,7 @@ function renderChatThread(thread, messages, participants) {
       // surface. msg.pending \u2192 dimmed bubble + "Sending..." footer for the
       // optimistic UI added the same session.
       const pending = msg.pending === true;
-      const attsHTML = atts.map(a => renderMessageAttachment(a, true)).join('');
+      const attsHTML = atts.map(a => renderMessageAttachment(a, true, msg.id)).join('');
       messagesHTML += `
         <div style="display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;${pending ? 'opacity:0.55;' : ''}" data-msg-id="${escapeAttr(msg.id || msg.tempId || '')}">
           <div style="width:30px;height:30px;border-radius:15px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">${userInitial}</div>
@@ -14358,7 +14939,7 @@ function renderChatThread(thread, messages, participants) {
         </div>
       `;
     } else {
-      const attsHTML = atts.map(a => renderMessageAttachment(a, false)).join('');
+      const attsHTML = atts.map(a => renderMessageAttachment(a, false, msg.id)).join('');
       messagesHTML += `
         <div style="display:flex;gap:8px;margin-bottom:12px;">
           <div style="width:30px;height:30px;border-radius:15px;background:var(--info-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--info);flex-shrink:0;">${senderInitial}</div>
@@ -14562,6 +15143,22 @@ async function sendChatMessage() {
       }];
     }
   }
+  if (pendingAttachment && pendingAttachment.kind === 'setlist') {
+    const sl = (window._cachedSetlists || []).find(x => x && x.id === pendingAttachment.setlist_id);
+    optimisticAttachments = [{
+      kind: 'setlist',
+      setlist_id: pendingAttachment.setlist_id,
+      sent_at: new Date().toISOString(),
+      snapshot: sl
+        ? {
+            name: sl.name || 'Setlist',
+            song_count: Array.isArray(sl.song_ids) ? sl.song_ids.length : 0,
+            total_duration: sl.total_duration != null ? Number(sl.total_duration) : null,
+            songs: []
+          }
+        : { name: 'Loading setlist…', song_count: 0, songs: [] }
+    }];
+  }
   const optimistic = {
     id: tempId,
     tempId,
@@ -14659,7 +15256,7 @@ function _appendOptimisticBubble(msg) {
   const atts = Array.isArray(msg.attachments)
     ? msg.attachments
     : (msg.attachments ? [msg.attachments] : []);
-  const attsHTML = atts.map(a => renderMessageAttachment(a, true)).join('');
+  const attsHTML = atts.map(a => renderMessageAttachment(a, true, msg.id)).join('');
   const hasContent = !!(msg.content && String(msg.content).trim());
   const div = document.createElement('div');
   div.style.cssText = 'display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;opacity:0.55;';

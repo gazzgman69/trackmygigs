@@ -3357,12 +3357,15 @@ router.get('/setlists/:id', async (req, res) => {
 
 router.post('/setlists', async (req, res) => {
   try {
-    const { name, description, song_ids, gig_id } = req.body;
+    const { name, description, song_ids, gig_id, total_duration } = req.body;
     const result = await db.query(
-      `INSERT INTO setlists (user_id, name, description, song_ids, gig_id)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO setlists (user_id, name, description, song_ids, gig_id, total_duration)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [req.user.id, name, description || null, song_ids || [], gig_id || null]
+      [
+        req.user.id, name, description || null, song_ids || [], gig_id || null,
+        Number.isFinite(Number(total_duration)) && Number(total_duration) > 0 ? Number(total_duration) : null
+      ]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -3398,10 +3401,131 @@ router.delete('/setlists/:id', async (req, res) => {
       [req.params.id, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Setlist not found' });
+    // Detach from any gigs that pointed at it so gig detail doesn't render a
+    // dangling reference.
+    await db.query('UPDATE gigs SET setlist_id = NULL WHERE setlist_id = $1 AND user_id = $2', [req.params.id, req.user.id]);
     res.json({ success: true });
   } catch (error) {
     console.error('Delete setlist error:', error);
     res.status(500).json({ error: 'Failed to delete setlist' });
+  }
+});
+
+// ── Setlist on a gig ────────────────────────────────────────────────────────
+//
+// Kept out of the big positional PATCH /gigs/:id so an explicit null can
+// clear the assignment (COALESCE there can't unset a column). Accepts either
+// or both of setlist_id and setlist_notes; a key that's absent is left alone.
+router.patch('/gigs/:id/setlist', async (req, res) => {
+  try {
+    const hasSetlistId = Object.prototype.hasOwnProperty.call(req.body, 'setlist_id');
+    const hasNotes = Object.prototype.hasOwnProperty.call(req.body, 'setlist_notes');
+    if (!hasSetlistId && !hasNotes) {
+      return res.status(400).json({ error: 'Nothing to update' });
+    }
+    const { setlist_id, setlist_notes } = req.body;
+    if (hasSetlistId && setlist_id) {
+      const sl = await db.query(
+        'SELECT id FROM setlists WHERE id = $1 AND user_id = $2',
+        [setlist_id, req.user.id]
+      );
+      if (sl.rows.length === 0) return res.status(404).json({ error: 'Setlist not found' });
+    }
+    const sets = [];
+    const params = [];
+    if (hasSetlistId) {
+      params.push(setlist_id || null);
+      sets.push(`setlist_id = $${params.length}`);
+    }
+    if (hasNotes) {
+      params.push(setlist_notes ? String(setlist_notes).slice(0, 4000) : null);
+      sets.push(`setlist_notes = $${params.length}`);
+    }
+    params.push(req.params.id, req.user.id);
+    const result = await db.query(
+      `UPDATE gigs SET ${sets.join(', ')} WHERE id = $${params.length - 1} AND user_id = $${params.length} RETURNING *`,
+      params
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update gig setlist error:', error);
+    res.status(500).json({ error: 'Failed to update gig setlist' });
+  }
+});
+
+// ── Save a chat-shared setlist into your own repertoire ─────────────────────
+//
+// The receiver taps "Save to my repertoire" on a setlist card. We read the
+// snapshot from the referenced message (trusted: buildAttachmentSnapshot
+// wrote it), reuse any of the caller's existing songs that match on
+// title+artist, create the rest, and assemble a new setlist in their account.
+router.post('/setlists/save-shared', async (req, res) => {
+  try {
+    const { thread_id, message_id } = req.body;
+    if (!thread_id || !message_id) {
+      return res.status(400).json({ error: 'thread_id and message_id are required' });
+    }
+    const msg = await db.query(
+      `SELECT m.attachments FROM messages m
+        JOIN threads t ON t.id = m.thread_id
+       WHERE m.id = $1 AND m.thread_id = $2 AND $3 = ANY(t.participant_ids)`,
+      [message_id, thread_id, req.user.id]
+    );
+    if (msg.rows.length === 0) return res.status(404).json({ error: 'Message not found' });
+    const atts = Array.isArray(msg.rows[0].attachments) ? msg.rows[0].attachments : [];
+    const att = atts.find(a => a && a.kind === 'setlist');
+    if (!att || !att.snapshot) {
+      return res.status(400).json({ error: 'No setlist attached to that message' });
+    }
+    const snap = att.snapshot;
+    const songsIn = Array.isArray(snap.songs) ? snap.songs.slice(0, 100) : [];
+    const songIds = [];
+    for (const s of songsIn) {
+      if (!s || !s.title) continue;
+      const title = String(s.title).slice(0, 255);
+      const artist = s.artist ? String(s.artist).slice(0, 255) : null;
+      // Reuse an existing song on title+artist match so repeat saves don't
+      // fill the library with duplicates.
+      const existing = await db.query(
+        `SELECT id FROM songs
+          WHERE user_id = $1 AND LOWER(title) = LOWER($2)
+            AND COALESCE(LOWER(artist), '') = COALESCE(LOWER($3), '')
+          LIMIT 1`,
+        [req.user.id, title, artist]
+      );
+      if (existing.rows.length > 0) {
+        songIds.push(existing.rows[0].id);
+        continue;
+      }
+      const created = await db.query(
+        `INSERT INTO songs (user_id, title, artist, key, duration, source_app)
+         VALUES ($1, $2, $3, $4, $5, 'chat-share') RETURNING id`,
+        [
+          req.user.id,
+          title,
+          artist,
+          s.key ? String(s.key).slice(0, 20) : null,
+          Number.isFinite(Number(s.duration)) ? Number(s.duration) : null
+        ]
+      );
+      songIds.push(created.rows[0].id);
+    }
+    const created = await db.query(
+      `INSERT INTO setlists (user_id, name, description, song_ids, total_duration)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [
+        req.user.id,
+        String(snap.name || 'Shared setlist').slice(0, 255),
+        snap.description || null,
+        songIds,
+        Number.isFinite(Number(snap.total_duration)) ? Number(snap.total_duration) : null
+      ]
+    );
+    res.json({ setlist: created.rows[0], song_count: songIds.length });
+  } catch (error) {
+    console.error('Save shared setlist error:', error);
+    res.status(500).json({ error: 'Failed to save setlist' });
   }
 });
 
@@ -4207,6 +4331,77 @@ router.get('/print/gigs', async (req, res) => {
     res.set('Content-Type', 'text/html; charset=utf-8').send(printPage('Gig log \u00b7 TrackMyGigs', body));
   } catch (err) {
     console.error('Print gigs error:', err);
+    res.status(500).send('Failed to build print page');
+  }
+});
+
+// Printable setlist. Optional ?gig=<gigId> adds the gig header and the
+// per-gig setlist notes so the printout matches what's on the stand that
+// night rather than the generic library version.
+router.get('/print/setlist/:id', async (req, res) => {
+  try {
+    const slR = await db.query(
+      'SELECT * FROM setlists WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (slR.rows.length === 0) return res.status(404).send('Setlist not found');
+    const sl = slR.rows[0];
+
+    let songs = [];
+    if (Array.isArray(sl.song_ids) && sl.song_ids.length > 0) {
+      const sr = await db.query(
+        'SELECT id, title, artist, key, duration FROM songs WHERE id = ANY($1) AND user_id = $2',
+        [sl.song_ids, req.user.id]
+      );
+      const byId = new Map(sr.rows.map(s => [s.id, s]));
+      songs = sl.song_ids.map(id => byId.get(id)).filter(Boolean);
+    }
+
+    let gigHeader = '';
+    let gigNotes = '';
+    if (req.query.gig) {
+      const gR = await db.query(
+        'SELECT band_name, venue_name, date, setlist_notes FROM gigs WHERE id = $1 AND user_id = $2',
+        [req.query.gig, req.user.id]
+      );
+      if (gR.rows.length > 0) {
+        const g = gR.rows[0];
+        const bits = [g.band_name, g.venue_name, _fmtDate(g.date)].filter(Boolean);
+        if (bits.length) gigHeader = `<div class="meta">${_printEscape(bits.join(' \u00b7 '))}</div>`;
+        if (g.setlist_notes) {
+          gigNotes = `<div class="section-title">Notes for this gig</div>
+            <div style="white-space:pre-wrap;font-size:12px;">${_printEscape(g.setlist_notes)}</div>`;
+        }
+      }
+    }
+
+    const totalMins = sl.total_duration
+      || songs.reduce((s, x) => s + (Number(x.duration) || 0), 0)
+      || null;
+
+    const rows = songs.length
+      ? songs.map((s, i) => `<tr>
+          <td style="width:28px;color:#888;">${i + 1}</td>
+          <td>${_printEscape(s.title)}</td>
+          <td>${_printEscape(s.artist || '')}</td>
+          <td>${_printEscape(s.key || '')}</td>
+          <td class="right">${s.duration ? _printEscape(s.duration + ' min') : ''}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="5" style="text-align:center;color:#888;padding:20px;">No songs in this setlist yet</td></tr>`;
+
+    const body = `
+      <h1>${_printEscape(sl.name || 'Setlist')}</h1>
+      ${gigHeader}
+      ${sl.description ? `<div class="sub">${_printEscape(sl.description)}</div>` : ''}
+      <div class="meta">${songs.length} song${songs.length === 1 ? '' : 's'}${totalMins ? ' \u00b7 about ' + totalMins + ' mins' : ''}</div>
+      <table>
+        <thead><tr><th>#</th><th>Title</th><th>Artist</th><th>Key</th><th class="right">Length</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${gigNotes}`;
+    res.set('Content-Type', 'text/html; charset=utf-8').send(printPage(`${sl.name || 'Setlist'} \u00b7 TrackMyGigs`, body));
+  } catch (err) {
+    console.error('Print setlist error:', err);
     res.status(500).send('Failed to build print page');
   }
 });

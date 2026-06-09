@@ -1232,6 +1232,13 @@ async function runMigrations() {
     // COLUMN IF NOT EXISTS, CREATE OR REPLACE the function, DROP+CREATE the
     // trigger so the migration is safe to re-run on every startup.
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`);
+
+    // Setlist-on-gig wiring (June 2026). setlist_id exists in the base schema
+    // but older live DBs may predate it, so re-assert defensively. setlist_notes
+    // holds per-gig song tweaks ("skip the second chorus tonight") that belong
+    // to the gig, not the setlist itself.
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS setlist_id UUID`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS setlist_notes TEXT`);
     await db.query(`
       CREATE OR REPLACE FUNCTION gigs_set_updated_at()
       RETURNS TRIGGER AS $$
