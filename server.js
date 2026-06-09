@@ -1256,6 +1256,13 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS epk_gallery JSONB DEFAULT '[]'::jsonb`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS epk_testimonials JSONB DEFAULT '[]'::jsonb`);
 
+    // Dep-accept fix (June 2026): when a dep wins work (offer accepted,
+    // marketplace pick, FCFS take) a copy of the gig is stamped into their
+    // diary. These origin markers make the stamp idempotent so a retried
+    // accept can't double-book the date.
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS origin_offer_id UUID`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS origin_marketplace_id INTEGER`);
+
     // Invoice line items (June 2026). Optional JSONB array of
     // { description, qty, rate, amount }; when present the invoice amount is
     // the server-computed sum. Single-amount invoices keep line_items NULL.

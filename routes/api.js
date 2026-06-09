@@ -60,6 +60,104 @@ function networkRankComparator(a, b) {
 // linked to the other user, or UPDATE notes to append the new gig context
 // when one already exists. Failures are caught and logged: the chat thread
 // already shipped, so a contact-write hiccup must never roll back the Pick.
+// June 2026 dep-accept fix: when a dep wins work, stamp a copy of the gig
+// into THEIR diary so it shows in their calendar and gig list. Previously
+// accepting an offer (and winning a marketplace gig) only flipped statuses,
+// so the dep's calendar stayed empty — the bug Gareth hit on 2026-06-09.
+// Idempotent via the origin_offer_id / origin_marketplace_id markers.
+// Best-effort like upsertContactPair: never roll back the status flip.
+async function stampGigForDep(client, winnerUserId, fields, origin) {
+  try {
+    if (origin.offerId) {
+      const dup = await client.query(
+        'SELECT id FROM gigs WHERE user_id = $1 AND origin_offer_id = $2 LIMIT 1',
+        [winnerUserId, origin.offerId]
+      );
+      if (dup.rows.length > 0) return dup.rows[0];
+    }
+    if (origin.marketplaceId) {
+      const dup = await client.query(
+        'SELECT id FROM gigs WHERE user_id = $1 AND origin_marketplace_id = $2 LIMIT 1',
+        [winnerUserId, origin.marketplaceId]
+      );
+      if (dup.rows.length > 0) return dup.rows[0];
+    }
+    const r = await client.query(
+      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, venue_postcode,
+                         venue_lat, venue_lng, date, start_time, end_time, load_in_time,
+                         fee, status, source, dress_code, notes, gig_type,
+                         gig_leader_name, gig_leader_phone, gig_leader_email,
+                         origin_offer_id, origin_marketplace_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'confirmed', $13,
+               $14, $15, $16, $17, $18, $19, $20, $21)
+       RETURNING *`,
+      [
+        winnerUserId,
+        fields.band_name || null,
+        fields.venue_name || null,
+        fields.venue_address || null,
+        fields.venue_postcode || null,
+        fields.venue_lat != null ? fields.venue_lat : null,
+        fields.venue_lng != null ? fields.venue_lng : null,
+        fields.date,
+        fields.start_time || null,
+        fields.end_time || null,
+        fields.load_in_time || null,
+        fields.fee != null ? fields.fee : null,
+        origin.source,
+        fields.dress_code || null,
+        fields.notes || null,
+        fields.gig_type || null,
+        fields.gig_leader_name || null,
+        fields.gig_leader_phone || null,
+        fields.gig_leader_email || null,
+        origin.offerId || null,
+        origin.marketplaceId || null,
+      ]
+    );
+    return r.rows[0];
+  } catch (err) {
+    console.warn('[stampGigForDep] failed (non-fatal):', err.message);
+    return null;
+  }
+}
+
+// Marketplace flavour of the diary stamp. Runs AFTER the fill transaction
+// commits (a failed insert inside it would poison the transaction), so it
+// uses the pool, not the transaction client.
+async function stampMarketplaceGigForWinner(marketplaceId, winnerUserId) {
+  try {
+    const r = await db.query(
+      `SELECT mg.*, u.name AS poster_name, u.display_name AS poster_display_name,
+              u.email AS poster_email, u.phone AS poster_phone
+         FROM marketplace_gigs mg JOIN users u ON u.id = mg.poster_user_id
+        WHERE mg.id = $1`,
+      [marketplaceId]
+    );
+    const mg = r.rows[0];
+    if (!mg) return null;
+    return await stampGigForDep(db, winnerUserId, {
+      band_name: mg.title || 'Marketplace gig',
+      venue_name: mg.venue_name,
+      venue_address: mg.venue_address,
+      venue_postcode: mg.venue_postcode,
+      venue_lat: mg.venue_lat,
+      venue_lng: mg.venue_lng,
+      date: mg.gig_date,
+      start_time: mg.start_time,
+      end_time: mg.end_time,
+      fee: mg.is_free ? 0 : (mg.fee_pence != null ? mg.fee_pence / 100 : null),
+      notes: mg.description,
+      gig_leader_name: mg.poster_display_name || mg.poster_name || null,
+      gig_leader_phone: mg.poster_phone || null,
+      gig_leader_email: mg.poster_email || null,
+    }, { source: 'marketplace-fill', marketplaceId: Number(mg.id) });
+  } catch (err) {
+    console.warn('[stampMarketplaceGigForWinner] failed (non-fatal):', err.message);
+    return null;
+  }
+}
+
 async function upsertContactPair(client, userIdA, userIdB, contextNote, fallbackInstruments) {
   if (!userIdA || !userIdB || userIdA === userIdB) return;
   try {
@@ -1066,16 +1164,43 @@ router.patch('/offers/:id', async (req, res) => {
       try {
         const offerRow = result.rows[0];
         const ctxRow = await db.query(
-          `SELECT g.band_name, g.venue_name, g.date AS gig_date
-             FROM gigs g WHERE g.id = $1`,
-          [offerRow.gig_id]
+          `SELECT g.*, u.name AS sender_name, u.display_name AS sender_display_name,
+                  u.email AS sender_email, u.phone AS sender_phone
+             FROM gigs g JOIN users u ON u.id = $2
+            WHERE g.id = $1`,
+          [offerRow.gig_id, offerRow.sender_id]
         );
         const ctx = ctxRow.rows[0] || {};
-        const dateStr = ctx.gig_date ? new Date(ctx.gig_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+        const dateStr = ctx.date ? new Date(ctx.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
         const ctxNote = `Dep offer: ${ctx.band_name || 'gig'}${ctx.venue_name ? ' at ' + ctx.venue_name : ''}${dateStr ? ', ' + dateStr : ''}`;
         await upsertContactPair(db, offerRow.sender_id, offerRow.recipient_id, ctxNote);
+        // The fix Gareth hit on 2026-06-09: the accepted gig now lands in the
+        // dep's own diary. Sender becomes the gig leader on the copy; the
+        // offer fee (if set) wins over the original gig fee since that's the
+        // agreed dep rate.
+        if (ctx.id) {
+          await stampGigForDep(db, offerRow.recipient_id, {
+            band_name: ctx.band_name,
+            venue_name: ctx.venue_name,
+            venue_address: ctx.venue_address,
+            venue_postcode: ctx.venue_postcode,
+            venue_lat: ctx.venue_lat,
+            venue_lng: ctx.venue_lng,
+            date: ctx.date,
+            start_time: ctx.start_time,
+            end_time: ctx.end_time,
+            load_in_time: ctx.load_in_time,
+            fee: offerRow.fee != null ? offerRow.fee : ctx.fee,
+            dress_code: ctx.dress_code,
+            notes: ctx.notes,
+            gig_type: ctx.gig_type,
+            gig_leader_name: ctx.sender_display_name || ctx.sender_name || null,
+            gig_leader_phone: ctx.sender_phone || null,
+            gig_leader_email: ctx.sender_email || null,
+          }, { source: 'dep-accept', offerId: offerRow.id });
+        }
       } catch (contactErr) {
-        console.warn('[PATCH /offers/:id] contact upsert failed:', contactErr);
+        console.warn('[PATCH /offers/:id] accept side-effects failed:', contactErr);
       }
     }
 
@@ -6498,6 +6623,9 @@ router.post('/marketplace/:id/apply', async (req, res) => {
       }
 
       await client.query('COMMIT');
+      // Mockup's locked FCFS copy is "You're on... Added to your calendar."
+      // Make that true: the winner gets the gig in their diary.
+      await stampMarketplaceGigForWinner(id, userId);
       return res.json({ ok: true, mode: 'fcfs', status: 'accepted' });
     }
 
@@ -6616,6 +6744,9 @@ router.post('/marketplace/:id/pick', async (req, res) => {
     }
 
     await client.query('COMMIT');
+    // Same diary stamp as the FCFS path: the picked dep gets the gig in
+    // their calendar, not just a status flip.
+    await stampMarketplaceGigForWinner(id, applicant_user_id);
     return res.json({ ok: true, thread_id: threadId });
   } catch (err) {
     await client.query('ROLLBACK');
