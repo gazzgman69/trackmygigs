@@ -30,11 +30,25 @@ const wantSsl = !isInternalReplitDev && (
   process.env.DB_USE_SSL === '1'
 );
 
+// June 2026 stress-campaign hardening. pg defaults are max 10 connections
+// and an INFINITE connect wait, so under sustained load every request queued
+// forever once 10 were busy and the API looked dead until a restart (seen
+// during the 150-user run). Bounded waits turn that into fast 500s the
+// client retry layer can handle, and statement_timeout stops a stuck query
+// holding a connection hostage.
+const POOL_TUNING = {
+  max: parseInt(process.env.PG_POOL_MAX || '20', 10),
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
+  statement_timeout: 30000,
+};
+
 let pool;
 if (process.env.PGHOST) {
-  pool = new Pool(wantSsl ? { ssl: { rejectUnauthorized: false } } : { ssl: false });
+  pool = new Pool({ ...POOL_TUNING, ssl: wantSsl ? { rejectUnauthorized: false } : false });
 } else {
   pool = new Pool({
+    ...POOL_TUNING,
     connectionString: process.env.DATABASE_URL,
     ssl: wantSsl ? { rejectUnauthorized: false } : false,
   });
