@@ -75,10 +75,9 @@ prod-only expenses table -> drift guard). PRODUCTION.md runbook written.
       musician's typed facts (called a sax player a guitarist) and printed
       the home postcode into a public bio; both prompt-fixed and retested
       clean. Gareth's profile instruments corrected to saxophone/keys.
-      KNOWN LIMITATION: normalize-chordpro can drop a chord when two
-      chord-over-lyric lines have identical patterns (7 of 8 tokens after
-      prompt hardening, was 6). If chord sheets become a core workflow,
-      upgrade that one endpoint to Sonnet (one-line change in routes/ai.js).
+      RESOLVED: normalize-chordpro upgraded to Sonnet (commit e228038);
+      retest kept all 8 chord tokens with musical mid-line placement. Every
+      other endpoint stays on Haiku.
 
 ## Wave 4 - full regression on PROD (days 9-12)
 
