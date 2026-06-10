@@ -12848,48 +12848,227 @@ async function openSetlistDetail(setlistId) {
 }
 window.openSetlistDetail = openSetlistDetail;
 
+function _slMeta(sl) {
+  const m = (sl.stage_meta && typeof sl.stage_meta === 'object') ? sl.stage_meta : {};
+  m.breaks = Array.isArray(m.breaks) ? m.breaks : [];
+  m.markers = Array.isArray(m.markers) ? m.markers : [];
+  m.notes = m.notes || {};
+  m.speeds = m.speeds || {};
+  m.transpose = m.transpose || {};
+  sl.stage_meta = m;
+  return m;
+}
+
+async function _patchSetlistMeta() {
+  const sl = window._setlistDetailCache;
+  if (!sl) return;
+  try {
+    await fetch(`/api/setlists/${sl.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stage_meta: sl.stage_meta }),
+    });
+  } catch (err) {
+    if (typeof showToast === 'function') showToast('Could not save the change');
+  }
+}
+
 function renderSetlistDetail() {
   const body = document.getElementById('setlistDetailBody');
   const sl = window._setlistDetailCache;
   if (!body || !sl) return;
-  // Songs come back expanded from GET /setlists/:id but in table order, not
-  // setlist order. Re-order them by song_ids so the list matches the stand.
   const byId = new Map((sl.songs || []).map(s => [s.id, s]));
   const ordered = (sl.song_ids || []).map(id => byId.get(id)).filter(Boolean);
-  const sumMins = ordered.reduce((s, x) => s + (Number(x.duration) || 0), 0);
-  const mins = sl.total_duration || sumMins || null;
+  const meta = _slMeta(sl);
+  const breaks = meta.breaks.filter(b => b > 0 && b < ordered.length).sort((a, b) => a - b);
+  const bounds = [0, ...breaks, ordered.length];
 
+  const songRow = (s, i) => {
+    const note = meta.notes[s.id];
+    const marker = meta.markers.find(m => m && m.after === i);
+    return `
+      <div class="sl-row" data-idx="${i}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);background:var(--card);touch-action:pan-y;">
+        <span class="sl-grip" data-idx="${i}" style="color:var(--text-3);font-size:15px;cursor:grab;letter-spacing:-2px;padding:6px 2px;touch-action:none;">&#8942;&#8942;</span>
+        <div style="flex:1;min-width:0;" onclick="openSetlistSongOptions(${i})">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.title)}</div>
+          <div style="font-size:11px;color:var(--text-2);">${escapeHtml([s.artist, s.duration ? s.duration + ' min' : ''].filter(Boolean).join(' \u00B7 '))}</div>
+          ${note ? `<div style="font-size:10px;font-weight:700;color:var(--accent);margin-top:2px;">\u26A0 ${escapeHtml(note)}</div>` : ''}
+        </div>
+        ${s.key ? `<span style="font-size:10px;font-weight:800;color:var(--info);background:rgba(88,166,255,.12);border-radius:6px;padding:2px 7px;flex-shrink:0;">${escapeHtml(s.key)}</span>` : ''}
+        <button onclick="removeSetlistSong(${i})" style="background:none;border:none;color:var(--text-3);font-size:14px;cursor:pointer;padding:4px;" aria-label="Remove">\u2715</button>
+      </div>
+      ${marker ? `<div onclick="editSetlistMarker(${i})" style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--accent-dim);border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--accent);cursor:pointer;">\uD83D\uDCE3 ${escapeHtml(marker.text)} <span style="font-weight:400;color:var(--text-3);margin-left:auto;">edit</span></div>` : ''}`;
+  };
+
+  let listHtml = '';
+  for (let si = 0; si < bounds.length - 1; si++) {
+    const slice = ordered.slice(bounds[si], bounds[si + 1]);
+    const mins = slice.reduce((a, x) => a + (Number(x.duration) || 0), 0);
+    if (bounds.length > 2 || si > 0) {
+      listHtml += `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 4px 5px;">
+          <span style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.8px;">Set ${si + 1}</span>
+          <span style="font-size:11px;color:var(--text-2);">${slice.length} song${slice.length === 1 ? '' : 's'} \u00B7 ${Math.round(mins)} min${si > 0 ? ` <span onclick="removeSetBreak(${bounds[si]})" style="color:var(--text-3);cursor:pointer;margin-left:8px;">merge \u2715</span>` : ''}</span>
+        </div>`;
+    }
+    listHtml += `<div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;">`
+      + slice.map((s, i) => songRow(s, bounds[si] + i)).join('')
+      + `</div>`;
+  }
+
+  const sumMins = ordered.reduce((s, x) => s + (Number(x.duration) || 0), 0);
   body.innerHTML = `
     <div style="padding:0 16px 20px;">
       <div style="padding:14px 0 4px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-          <div style="font-size:19px;font-weight:700;color:var(--text);">${escapeHtml(sl.name || 'Setlist')}</div>
-          <span onclick="renameSetlist()" style="font-size:11px;color:var(--accent);cursor:pointer;flex-shrink:0;">Rename</span>
+          <div style="font-size:19px;font-weight:700;color:var(--text);min-width:0;">${escapeHtml(sl.name || 'Setlist')}</div>
+          <button onclick="openStagePerform()" style="background:var(--accent);color:#000;border:none;border-radius:999px;padding:9px 18px;font-size:13px;font-weight:800;cursor:pointer;flex-shrink:0;">\u25B6 Perform</button>
         </div>
         ${sl.description ? `<div style="font-size:12px;color:var(--text-2);margin-top:4px;white-space:pre-wrap;">${escapeHtml(sl.description)}</div>` : ''}
-        <div style="font-size:11px;color:var(--text-3);margin-top:6px;">${ordered.length} song${ordered.length === 1 ? '' : 's'}${mins ? ' · about ' + mins + ' mins' : ''}</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:6px;">${ordered.length} song${ordered.length === 1 ? '' : 's'}${sumMins ? ' \u00B7 about ' + Math.round(sumMins) + ' mins' : ''} \u00B7 hold the dots to drag \u00B7 tap a song for notes &amp; breaks</div>
       </div>
       <div style="display:flex;gap:8px;margin:10px 0 14px;flex-wrap:wrap;">
         <button onclick="openSetlistSongPicker()" class="pill">+ Add songs</button>
-        <button onclick="window.open('/api/print/setlist/${escapeAttr(sl.id)}', '_blank')" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;">📄 Print / PDF</button>
+        <button onclick="renameSetlist()" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;">Rename</button>
+        <button onclick="window.open('/api/print/setlist/${escapeAttr(sl.id)}', '_blank')" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;">\uD83D\uDCC4 Print / PDF</button>
         <button onclick="deleteSetlist('${escapeAttr(sl.id)}')" style="background:var(--card);color:var(--danger);border:1px solid var(--danger);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;">Delete</button>
       </div>
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+      <div id="setlistRows">
         ${ordered.length === 0
-          ? '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No songs yet. Tap "+ Add songs" to build the set.</div>'
-          : ordered.map((s, i) => `
-          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;${i < ordered.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}">
-            <span style="font-size:11px;color:var(--text-3);width:18px;text-align:right;flex-shrink:0;">${i + 1}</span>
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.title)}</div>
-              <div style="font-size:11px;color:var(--text-2);">${escapeHtml([s.artist, s.key, s.duration ? s.duration + ' min' : ''].filter(Boolean).join(' · '))}</div>
-            </div>
-            <button onclick="moveSetlistSong(${i}, -1)" ${i === 0 ? 'disabled' : ''} style="background:none;border:none;color:${i === 0 ? 'var(--border)' : 'var(--text-2)'};font-size:15px;cursor:${i === 0 ? 'default' : 'pointer'};padding:4px;" aria-label="Move up">▲</button>
-            <button onclick="moveSetlistSong(${i}, 1)" ${i === ordered.length - 1 ? 'disabled' : ''} style="background:none;border:none;color:${i === ordered.length - 1 ? 'var(--border)' : 'var(--text-2)'};font-size:15px;cursor:${i === ordered.length - 1 ? 'default' : 'pointer'};padding:4px;" aria-label="Move down">▼</button>
-            <button onclick="removeSetlistSong(${i})" style="background:none;border:none;color:var(--danger);font-size:15px;cursor:pointer;padding:4px;" aria-label="Remove">✕</button>
-          </div>`).join('')}
+          ? '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;border:1px solid var(--border);border-radius:12px;">No songs yet. Tap "+ Add songs" to build the set.</div>'
+          : listHtml}
       </div>
     </div>`;
+  initSetlistDrag();
+}
+
+// Per-song options: stage note, announcement marker, set break, remove.
+function openSetlistSongOptions(index) {
+  const sl = window._setlistDetailCache;
+  if (!sl) return;
+  const byId = new Map((sl.songs || []).map(s => [s.id, s]));
+  const ordered = (sl.song_ids || []).map(id => byId.get(id)).filter(Boolean);
+  const song = ordered[index];
+  if (!song) return;
+  const meta = _slMeta(sl);
+  const hasBreak = meta.breaks.includes(index);
+  const existing = document.getElementById('slSongSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'slSongSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  const btn = (label, fn, danger) => `<button onclick="${fn}" style="width:100%;background:var(--card);color:${danger ? 'var(--danger)' : 'var(--text)'};border:1px solid var(--border);border-radius:10px;padding:13px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:8px;text-align:left;padding-left:16px;">${label}</button>`;
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>'
+    + '<div style="font-size:14px;font-weight:700;text-align:center;margin-bottom:12px;">' + escapeHtml(song.title) + '</div>'
+    + btn((meta.notes[song.id] ? '\u270F Edit stage note' : '\u26A0 Add a stage note (shows big on stage)'), `editSetlistNote(${index})`)
+    + btn('\uD83D\uDCE3 Announcement after this song', `editSetlistMarker(${index})`)
+    + (index > 0 ? btn(hasBreak ? 'Merge sets (remove break before this song)' : '\u2702 Start a new set here', hasBreak ? `removeSetBreak(${index})` : `addSetBreak(${index})`) : '')
+    + btn('Remove from setlist', `document.getElementById('slSongSheet').remove();removeSetlistSong(${index})`, true)
+    + '<button onclick="document.getElementById(\'slSongSheet\').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Cancel</button>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) sheet.remove(); });
+  document.body.appendChild(sheet);
+}
+window.openSetlistSongOptions = openSetlistSongOptions;
+
+function editSetlistNote(index) {
+  const sheet = document.getElementById('slSongSheet');
+  if (sheet) sheet.remove();
+  const sl = window._setlistDetailCache;
+  const byId = new Map((sl.songs || []).map(s => [s.id, s]));
+  const song = (sl.song_ids || []).map(id => byId.get(id)).filter(Boolean)[index];
+  if (!song) return;
+  const meta = _slMeta(sl);
+  const v = prompt('Stage note for "' + song.title + '" (shows big and orange in perform mode):', meta.notes[song.id] || '');
+  if (v === null) return;
+  if (v.trim()) meta.notes[song.id] = v.trim().slice(0, 120);
+  else delete meta.notes[song.id];
+  _patchSetlistMeta();
+  renderSetlistDetail();
+}
+window.editSetlistNote = editSetlistNote;
+
+function editSetlistMarker(index) {
+  const sheet = document.getElementById('slSongSheet');
+  if (sheet) sheet.remove();
+  const sl = window._setlistDetailCache;
+  const meta = _slMeta(sl);
+  const cur = meta.markers.find(m => m && m.after === index);
+  const v = prompt('Announcement after this song (e.g. BIRTHDAY SHOUTOUT FOR KAREN). Empty removes it:', cur ? cur.text : '');
+  if (v === null) return;
+  meta.markers = meta.markers.filter(m => m && m.after !== index);
+  if (v.trim()) meta.markers.push({ after: index, text: v.trim().slice(0, 120) });
+  _patchSetlistMeta();
+  renderSetlistDetail();
+}
+window.editSetlistMarker = editSetlistMarker;
+
+function addSetBreak(index) {
+  const sheet = document.getElementById('slSongSheet');
+  if (sheet) sheet.remove();
+  const meta = _slMeta(window._setlistDetailCache);
+  if (!meta.breaks.includes(index)) meta.breaks.push(index);
+  _patchSetlistMeta();
+  renderSetlistDetail();
+}
+window.addSetBreak = addSetBreak;
+
+function removeSetBreak(index) {
+  const sheet = document.getElementById('slSongSheet');
+  if (sheet) sheet.remove();
+  const meta = _slMeta(window._setlistDetailCache);
+  meta.breaks = meta.breaks.filter(b => b !== index);
+  _patchSetlistMeta();
+  renderSetlistDetail();
+}
+window.removeSetBreak = removeSetBreak;
+
+// Hold-and-drag reorder on the grip. Pointer events cover touch and mouse;
+// rows shuffle live and the order patches once on drop.
+function initSetlistDrag() {
+  const container = document.getElementById('setlistRows');
+  if (!container || container._dragWired) return;
+  container._dragWired = true;
+  let dragging = null;
+  container.addEventListener('pointerdown', (e) => {
+    const grip = e.target.closest('.sl-grip');
+    if (!grip) return;
+    e.preventDefault();
+    dragging = grip.closest('.sl-row');
+    dragging.style.opacity = '.45';
+    dragging.style.outline = '1px dashed var(--accent)';
+    try { grip.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+  });
+  container.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    e.preventDefault();
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const row = under && under.closest ? under.closest('.sl-row') : null;
+    if (!row || row === dragging) return;
+    const r = row.getBoundingClientRect();
+    if (e.clientY < r.top + r.height / 2) row.parentElement.insertBefore(dragging, row);
+    else row.parentElement.insertBefore(dragging, row.nextSibling);
+  });
+  const drop = async () => {
+    if (!dragging) return;
+    dragging.style.opacity = '';
+    dragging.style.outline = '';
+    dragging = null;
+    const sl = window._setlistDetailCache;
+    const byId = new Map((sl.songs || []).map(s => [s.id, s]));
+    const ordered = (sl.song_ids || []).map(id => byId.get(id)).filter(Boolean);
+    const newOrder = [...container.querySelectorAll('.sl-row')]
+      .map(el => ordered[Number(el.dataset.idx)])
+      .filter(Boolean)
+      .map(s => s.id);
+    if (newOrder.length === ordered.length && JSON.stringify(newOrder) !== JSON.stringify(sl.song_ids)) {
+      await _patchSetlistSongs(newOrder);
+    }
+    renderSetlistDetail();
+  };
+  container.addEventListener('pointerup', drop);
+  container.addEventListener('pointercancel', drop);
 }
 
 async function _patchSetlistSongs(songIds) {

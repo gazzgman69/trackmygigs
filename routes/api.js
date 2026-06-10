@@ -4378,15 +4378,17 @@ router.post('/setlists', async (req, res) => {
 
 router.patch('/setlists/:id', async (req, res) => {
   try {
-    const { name, description, song_ids, gig_id } = req.body;
+    const { name, description, song_ids, gig_id, stage_meta } = req.body;
     const result = await db.query(
       `UPDATE setlists SET
          name = COALESCE($1, name),
          description = COALESCE($2, description),
          song_ids = COALESCE($3, song_ids),
-         gig_id = COALESCE($4, gig_id)
+         gig_id = COALESCE($4, gig_id),
+         stage_meta = COALESCE($7::jsonb, stage_meta)
        WHERE id = $5 AND user_id = $6 RETURNING *`,
-      [name, description, song_ids, gig_id, req.params.id, req.user.id]
+      [name, description, song_ids, gig_id, req.params.id, req.user.id,
+       stage_meta !== undefined ? JSON.stringify(stage_meta) : null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Setlist not found' });
     res.json(result.rows[0]);
