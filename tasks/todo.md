@@ -1,3 +1,73 @@
+# PRODUCTION READINESS (target: 2026-06-24, plan pending Gareth sign-off)
+
+Goal: trackmygigs.app live and safe for real users in 2 weeks.
+
+## External blockers (start day 1, not under our control)
+
+- [ ] Google OAuth verification: calendar+sheets are sensitive scopes. Until
+      Google verifies the app, users see the scary "unverified app" screen
+      and there is a 100-user cap. Verification takes days to weeks. Submit
+      NOW. Mitigation if late: launch with sync labelled early access and
+      the warning documented; the cap is fine at launch scale.
+- [ ] Resend (transactional email) domain verification for trackmygigs.app.
+      Magic-link login IS the auth, so this must be bulletproof. Needs DNS
+      records at the registrar. Minutes of work + DNS propagation.
+- [ ] Stripe live webhook endpoint registered for the prod domain; checkout
+      success/cancel URLs point at prod.
+
+## Wave 1 - security hardening (days 1-3, code)
+
+- [ ] Prod env checklist doc: DISABLE_DEV_LOGIN=true, fresh RELOAD_SECRET
+      (current value is written in repo docs), APP_URL, RESEND_API_KEY,
+      VAPID keys, Google creds + prod redirect URI, PG_POOL_MAX, Stripe live
+      keys + webhook secret. Gareth applies in Replit Secrets for the
+      production deployment.
+- [ ] Security headers middleware: HSTS, X-Content-Type-Options, Referrer-
+      Policy, X-Frame-Options DENY except the ?embed=1 share route.
+- [ ] Rate limiting extended: light in-memory limits on auth/google, public
+      token pages (/t, /docs, /share, /epk), and a general API ceiling.
+- [ ] Fresh multi-tenancy pass over every route added this session (venues,
+      polls, splits, documents share, testimonials, radar, followup).
+- [ ] Account deletion endpoint + Settings button (GDPR right to erasure;
+      currently missing). Export already exists.
+
+## Wave 2 - prod data + pipeline (days 3-5)
+
+- [ ] Prod DB: deploy runs startup migrations; wipe stale test data from
+      prod; confirm Neon backup/PITR story.
+- [ ] Document the release process: push main -> Gareth clicks Republish
+      (admin/reload only refreshes the dev workspace).
+- [ ] /health endpoint + free uptime monitor + error visibility.
+
+## Wave 3 - legal + onboarding (days 5-9)
+
+- [ ] Privacy policy + Terms pages (UK/GDPR basics, only-essential-cookies
+      statement), linked from landing + app. Support email on both.
+- [ ] First-run experience: fresh-account walk of every screen, fix empty
+      states that assume data.
+- [ ] AI features: Gareth hand-tests this week OR we hide them for launch.
+
+## Wave 4 - full regression on PROD (days 9-12)
+
+- [ ] Sim campaign against production (Neon took 50 concurrent in May).
+- [ ] Browser walk on prod domain; PWA install + push end-to-end on the
+      actual iPhone; Google connect with prod redirect; Stripe checkout URL
+      (never completed).
+
+## Wave 5 - launch (days 12-14)
+
+- [ ] DNS/SSL check, landing live, waitlist switch-over, install-the-app
+      instructions page, final findings sweep, go/no-go.
+
+## Gareth's side (can start today)
+
+- [ ] Submit Google OAuth verification (I prep everything, you click)
+- [ ] Resend account + DNS records at the registrar
+- [ ] Replit Secrets for prod (I give you the exact list and values to set)
+- [ ] Hand-test the AI features, or tell me to hide them
+- [ ] Pick the support email address
+- [ ] Republish clicks when each wave lands
+
 # Musician-life wave 2 (2026-06-10, "lets add 4-10")
 
 Mockups first for the four new screens, then build in waves.
