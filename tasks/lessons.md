@@ -28,3 +28,11 @@ A multi-replacement script asserted halfway and exited without writing, leaving 
 the intended edits applied on the next partial run. Rule: run all assertions before
 any replace, or apply each edit in its own script run, and grep the file for EVERY
 expected symbol afterwards.
+
+## 2026-06-10 — No position:fixed floaters inside the app column
+The calendar Today pill used position:fixed, which anchors to the BROWSER viewport,
+not the app column. On desktop it floated way off to the right of the app; on iOS
+fixed positioning inside a scrolling PWA is unreliable. Gareth caught it on the
+desktop preview. Rule: controls belong inline in the app's own layout (header
+chips, in-flow buttons). If something must float, anchor it to the app container,
+never the viewport, and check it at both phone and desktop widths.
