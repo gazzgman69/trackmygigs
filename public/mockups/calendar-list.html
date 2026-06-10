@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Calendar List view</title>
+<style>
+:root{--bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;--text:#E6EDF3;--text-2:#8B949E;--text-3:#6E7681;--accent:#F0A500;--accent-dim:rgba(240,165,0,.15);--success:#3FB950;--danger:#F85149;--info:#58A6FF;--dep:#A78BFA;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;padding-bottom:80px;}
+.note{background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);margin:10px;padding:10px 12px;border-radius:10px;font-size:12px;color:var(--text-2);}
+.note strong{color:var(--accent);}
+header{padding:14px 16px 6px;display:flex;align-items:center;justify-content:space-between;}
+h1{font-size:22px;}
+.view-tabs{display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:3px;}
+.view-tabs span{font-size:11px;padding:5px 10px;border-radius:7px;color:var(--text-2);}
+.view-tabs .on{background:var(--accent);color:#000;font-weight:700;}
+.month-head{display:flex;align-items:center;justify-content:space-between;padding:6px 16px;}
+.month-head .label{font-size:15px;font-weight:700;}
+.month-head .sum{font-size:11px;color:var(--text-2);}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:0 12px;}
+.hd{font-size:9px;color:var(--text-3);text-align:center;text-transform:uppercase;padding:4px 0;}
+.cell{aspect-ratio:.95;border-radius:8px;display:flex;flex-direction:column;align-items:center;padding-top:5px;font-size:13px;color:var(--text);position:relative;}
+.cell.dim{color:var(--text-3);}
+.cell.today .num{background:var(--accent);color:#000;font-weight:800;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;}
+.cell.sel{outline:2px solid var(--accent);outline-offset:-2px;}
+.bars{display:flex;gap:2px;margin-top:3px;height:4px;}
+.bar{height:4px;border-radius:2px;width:9px;}
+.b-gig{background:var(--accent);}.b-blk{background:var(--text-3);}.b-goo{background:var(--info);}.b-dep{background:var(--dep);}
+.legend{display:flex;gap:12px;justify-content:center;font-size:10px;color:var(--text-2);padding:8px 0 2px;}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;}
+.list{padding:4px 12px;}
+.dayhead{display:flex;align-items:center;justify-content:space-between;padding:14px 4px 6px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);}
+.dayhead .d{font-size:12px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;}
+.dayhead.today .d{color:var(--accent);}
+.dayhead .free{font-size:10px;color:var(--text-3);}
+.row{display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);align-items:center;}
+.rail{width:4px;align-self:stretch;border-radius:2px;flex-shrink:0;}
+.r-gig{background:var(--accent);}.r-blk{background:var(--text-3);}.r-goo{background:var(--info);}.r-dep{background:var(--dep);}
+.body{flex:1;min-width:0;}
+.t{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.s{font-size:11px;color:var(--text-2);margin-top:1px;}
+.warn{font-size:9px;color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:1px 6px;margin-left:6px;font-weight:700;}
+.dep-chip{font-size:9px;color:var(--dep);background:rgba(167,139,250,.14);border:1px solid rgba(167,139,250,.4);border-radius:6px;padding:1px 6px;margin-left:6px;font-weight:700;}
+.time{text-align:right;font-size:12px;color:var(--text-2);flex-shrink:0;line-height:1.5;}
+.time b{display:block;color:var(--text);font-weight:700;}
+.fee{color:var(--success);font-weight:700;font-size:12px;}
+.fab{position:fixed;bottom:84px;right:16px;background:var(--card);border:1px solid var(--border);color:var(--accent);border-radius:999px;padding:9px 16px;font-size:12px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.5);}
+.allday{font-size:11px;color:var(--text-2);}
+</style>
+</head>
+<body>
+<div class="note"><strong>MOCKUP — not wired.</strong> Apple-style month + list flow. Scrolling the list moves the selected day; tapping a day scrolls the list. List becomes the default, remembered view. Day/Week stay available in the toggle.</div>
+
+<header><h1>Calendar</h1><div class="view-tabs"><span class="on">List</span><span>Day</span><span>Week</span></div></header>
+
+<div class="month-head"><span style="color:var(--text-3);font-size:18px;">&lsaquo;</span><span class="label">June 2026</span><span style="color:var(--text-3);font-size:18px;">&rsaquo;</span></div>
+<div class="month-head" style="padding-top:0;"><span class="sum">7 gigs &middot; <span style="color:var(--success);font-weight:700;">£1,830 confirmed</span></span><span class="sum">2 days blocked</span></div>
+
+<div class="grid">
+  <div class="hd">M</div><div class="hd">T</div><div class="hd">W</div><div class="hd">T</div><div class="hd">F</div><div class="hd">S</div><div class="hd">S</div>
+  <div class="cell"><span class="num">1</span></div>
+  <div class="cell"><span class="num">2</span></div>
+  <div class="cell"><span class="num">3</span></div>
+  <div class="cell"><span class="num">4</span></div>
+  <div class="cell"><span class="num">5</span></div>
+  <div class="cell"><span class="num">6</span><div class="bars"><div class="bar b-gig"></div></div></div>
+  <div class="cell"><span class="num">7</span></div>
+  <div class="cell"><span class="num">8</span></div>
+  <div class="cell"><span class="num">9</span></div>
+  <div class="cell today"><span class="num">10</span><div class="bars"><div class="bar b-goo"></div></div></div>
+  <div class="cell"><span class="num">11</span></div>
+  <div class="cell sel"><span class="num">12</span><div class="bars"><div class="bar b-gig"></div><div class="bar b-dep"></div></div></div>
+  <div class="cell"><span class="num">13</span><div class="bars"><div class="bar b-blk"></div></div></div>
+  <div class="cell"><span class="num">14</span><div class="bars"><div class="bar b-blk"></div></div></div>
+  <div class="cell"><span class="num">15</span></div>
+  <div class="cell"><span class="num">16</span></div>
+  <div class="cell"><span class="num">17</span></div>
+  <div class="cell"><span class="num">18</span></div>
+  <div class="cell"><span class="num">19</span><div class="bars"><div class="bar b-gig"></div></div></div>
+  <div class="cell"><span class="num">20</span><div class="bars"><div class="bar b-gig"></div><div class="bar b-goo"></div></div></div>
+  <div class="cell"><span class="num">21</span></div>
+  <div class="cell"><span class="num">22</span></div>
+  <div class="cell"><span class="num">23</span></div>
+  <div class="cell"><span class="num">24</span></div>
+  <div class="cell"><span class="num">25</span><div class="bars"><div class="bar b-gig"></div></div></div>
+  <div class="cell"><span class="num">26</span></div>
+  <div class="cell"><span class="num">27</span><div class="bars"><div class="bar b-gig"></div></div></div>
+  <div class="cell"><span class="num">28</span></div>
+  <div class="cell"><span class="num">29</span></div>
+  <div class="cell"><span class="num">30</span></div>
+  <div class="cell dim"></div><div class="cell dim"></div><div class="cell dim"></div><div class="cell dim"></div><div class="cell dim"></div>
+</div>
+<div class="legend"><span><i style="background:var(--accent)"></i>Gig</span><span><i style="background:var(--dep)"></i>Dep / offer</span><span><i style="background:var(--info)"></i>Google</span><span><i style="background:var(--text-3)"></i>Blocked</span></div>
+
+<div class="list">
+  <div class="dayhead today"><span class="d">Today &middot; Wed 10 June</span><span class="free">1 item</span></div>
+  <div class="row"><div class="rail r-goo"></div><div class="body"><div class="t">Doz&rsquo;s birthday <span class="warn">From Google</span></div><div class="s">Tap to import as a gig or keep as a pin</div></div><div class="time allday">all-day</div></div>
+
+  <div class="dayhead"><span class="d">Fri 12 June</span><span class="free"></span></div>
+  <div class="row"><div class="rail r-gig"></div><div class="body"><div class="t">The UX Test Tavern <span class="warn">No fee set</span></div><div class="s">Funk Collective &middot; Leave by 18:40 &middot; 24 mi</div></div><div class="time"><b>20:00&ndash;23:00</b><span class="fee">&pound;220</span></div></div>
+  <div class="row"><div class="rail r-dep"></div><div class="body"><div class="t">Dep request: Drums <span class="dep-chip">Needs answer</span></div><div class="s">From Megan H &middot; Brum Soul Collective</div></div><div class="time"><b>&pound;250</b><span style="font-size:10px;color:var(--text-3);">respond by Thu</span></div></div>
+
+  <div class="dayhead"><span class="d">Sat 13 &ndash; Sun 14 June</span></div>
+  <div class="row"><div class="rail r-blk"></div><div class="body"><div class="t">Blocked &middot; Family weekend</div><div class="s">Hidden from your public availability</div></div><div class="time allday">all-day</div></div>
+
+  <div class="dayhead"><span class="d">Fri 19 June</span></div>
+  <div class="row"><div class="rail r-gig"></div><div class="body"><div class="t">Gaz gig at The Heyford</div><div class="s">Confirmed &middot; setlist attached</div></div><div class="time"><b>19:30&ndash;22:30</b><span class="fee">&pound;300</span></div></div>
+
+  <div class="dayhead"><span class="d">Sat 20 June</span></div>
+  <div class="row"><div class="rail r-gig"></div><div class="body"><div class="t">Anthony Parry Wedding</div><div class="s">First dance 19:45 &middot; dress: black tie</div></div><div class="time"><b>17:00&ndash;23:30</b><span class="fee">&pound;450</span></div></div>
+  <div class="row"><div class="rail r-goo"></div><div class="body"><div class="t">Wedding anniversary</div><div class="s">Google Calendar</div></div><div class="time allday">all-day</div></div>
+</div>
+
+<div class="fab">&darr; Today</div>
+</body>
+</html>
