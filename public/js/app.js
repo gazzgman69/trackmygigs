@@ -20059,7 +20059,10 @@ function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
     const label = run.from === run.to
       ? new Date(run.from).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
       : `${new Date(run.from).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' })} – ${new Date(run.to).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}`;
-    push(run.from, '00:00', `
+    // Day-panel mode: the run row appears on every day it covers.
+    const runDays = [];
+    for (let d = new Date(run.from + 'T00:00:00'); _calIso(d) <= run.to; d.setDate(d.getDate() + 1)) runDays.push(_calIso(d));
+    runDays.forEach(dayIso => push(dayIso, '00:00', `
       <div onclick="openMyAvailabilityPanel()" style="display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;">
         <div style="width:4px;align-self:stretch;border-radius:2px;background:var(--text-3);flex-shrink:0;"></div>
         <div style="flex:1;min-width:0;">
@@ -20067,25 +20070,20 @@ function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
           <div style="font-size:11px;color:var(--text-2);margin-top:1px;">${escapeHtml(label)} · hidden from your public availability</div>
         </div>
         <div style="text-align:right;font-size:12px;color:var(--text-3);flex-shrink:0;">all-day</div>
-      </div>`);
+      </div>`));
   });
 
-  const dayKeys = Object.keys(itemsByDate).sort();
-  let listHtml = '';
-  if (dayKeys.length === 0) {
-    listHtml = '<div style="padding:32px 16px;text-align:center;color:var(--text-3);font-size:13px;">Nothing on this month. Enjoy the quiet, or check the marketplace.</div>';
-  } else {
-    dayKeys.forEach(iso => {
-      const d = new Date(iso);
-      const isToday = iso === todayIso;
-      const label = (isToday ? 'Today · ' : '') + d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long' });
-      listHtml += `
-        <div class="cal-list-dayhead" data-date="${iso}" style="display:flex;align-items:center;justify-content:space-between;padding:14px 4px 6px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:2;">
-          <span style="font-size:12px;font-weight:700;color:${isToday ? 'var(--accent)' : 'var(--text-2)'};text-transform:uppercase;letter-spacing:.6px;">${escapeHtml(label)}</span>
-        </div>`;
-      itemsByDate[iso].sort((a, b) => a.sortKey.localeCompare(b.sortKey)).forEach(it => { listHtml += it.html; });
-    });
+  // Apple behaviour (Gareth's correction): the list shows ONLY the
+  // highlighted day. Selection defaults to today in the current month, or
+  // the 1st when browsing another month. Stash itemsByDate so day taps can
+  // repaint just the list without a full screen render.
+  window._calListItems = itemsByDate;
+  let selected = window._calListSelected;
+  if (!selected || !inMonth(selected)) {
+    selected = inMonth(todayIso) ? todayIso : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    window._calListSelected = selected;
   }
+  const listHtml = buildCalListDayHtml(selected);
 
   return `
     <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px 2px;">
@@ -20105,40 +20103,71 @@ function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
       <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:var(--text-3);"></i>Blocked</span>
     </div>
     <div id="calListBody" style="padding:4px 12px 24px;">${listHtml}</div>
-    <button id="calListTodayFab" onclick="calListGoToday()" style="display:none;position:fixed;bottom:84px;right:16px;background:var(--card);border:1px solid var(--border);color:var(--accent);border-radius:999px;padding:9px 16px;font-size:12px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer;z-index:50;">↓ Today</button>`;
+    <button id="calListTodayFab" onclick="calListGoToday()" style="display:none;position:fixed;bottom:84px;right:16px;background:var(--card);border:1px solid var(--border);color:var(--accent);border-radius:999px;padding:9px 16px;font-size:12px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer;z-index:50;">Today</button>`;
 }
 
-// The app's scroll container is .app-content, not the window.
-function _calScroller() {
-  return document.querySelector('.app-content') || document.scrollingElement;
-}
-
-function _calScrollToEl(el, offset) {
-  const sc = _calScroller();
-  if (!sc || !el) return;
-  const top = el.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop - (offset || 64);
-  sc.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+// Render one day's rows (header with prev/next chevrons + items or empty state).
+function buildCalListDayHtml(iso) {
+  const items = (window._calListItems || {})[iso] || [];
+  const todayIso = _calIso(new Date());
+  const d = new Date(iso + 'T00:00:00');
+  const label = (iso === todayIso ? 'Today · ' : '') + d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 6px;border-bottom:1px solid var(--border);">
+      <button onclick="calListShiftDay(-1)" style="background:none;border:none;color:var(--accent);font-size:18px;cursor:pointer;padding:0 8px;">&#8249;</button>
+      <span style="font-size:12px;font-weight:700;color:${iso === todayIso ? 'var(--accent)' : 'var(--text-2)'};text-transform:uppercase;letter-spacing:.6px;">${escapeHtml(label)}</span>
+      <button onclick="calListShiftDay(1)" style="background:none;border:none;color:var(--accent);font-size:18px;cursor:pointer;padding:0 8px;">&#8250;</button>
+    </div>`;
+  if (items.length === 0) {
+    html += `
+      <div style="padding:28px 16px;text-align:center;color:var(--text-3);font-size:13px;">
+        Nothing on this day.
+        <div style="margin-top:10px;"><span onclick="openDayActionSheet('${iso}')" style="color:var(--accent);font-weight:600;cursor:pointer;font-size:12px;">Day options ›</span></div>
+      </div>`;
+  } else {
+    items.sort((a, b) => a.sortKey.localeCompare(b.sortKey)).forEach(it => { html += it.html; });
+    html += `<div style="padding:10px 4px;text-align:right;"><span onclick="openDayActionSheet('${iso}')" style="color:var(--text-3);font-size:11px;cursor:pointer;">Day options ›</span></div>`;
+  }
+  return html;
 }
 
 function selectCalListDay(iso) {
+  window._calListSelected = iso;
   document.querySelectorAll('.cal-list-cell').forEach(c => {
     c.style.outline = c.dataset.date === iso ? '2px solid var(--accent)' : '';
     c.style.outlineOffset = c.dataset.date === iso ? '-2px' : '';
   });
-  // Scroll to that day's header, or the next day that has anything on.
-  const heads = Array.from(document.querySelectorAll('.cal-list-dayhead'));
-  const target = heads.find(h => h.dataset.date >= iso) || heads[heads.length - 1];
-  if (target) _calScrollToEl(target);
+  const body = document.getElementById('calListBody');
+  if (body) body.innerHTML = buildCalListDayHtml(iso);
+  const fab = document.getElementById('calListTodayFab');
+  if (fab) fab.style.display = iso === _calIso(new Date()) ? 'none' : 'block';
 }
 window.selectCalListDay = selectCalListDay;
+
+// Prev/next day chevrons and swipe both route here; crossing a month
+// boundary moves the whole view to that month.
+function calListShiftDay(delta) {
+  const cur = new Date((window._calListSelected || _calIso(new Date())) + 'T00:00:00');
+  cur.setDate(cur.getDate() + delta);
+  const iso = _calIso(cur);
+  const grid = document.querySelector(`.cal-list-cell[data-date="${iso}"]`);
+  if (!grid) {
+    window._calDate = cur;
+    window._calListSelected = iso;
+    renderCalendarScreen();
+    return;
+  }
+  selectCalListDay(iso);
+}
+window.calListShiftDay = calListShiftDay;
 
 function calListGoToday() {
   const now = new Date();
   const cur = window._calDate || now;
+  window._calListSelected = _calIso(now);
   if (cur.getFullYear() !== now.getFullYear() || cur.getMonth() !== now.getMonth()) {
     window._calDate = now;
     renderCalendarScreen();
-    setTimeout(() => selectCalListDay(_calIso(now)), 120);
   } else {
     selectCalListDay(_calIso(now));
   }
@@ -20146,42 +20175,26 @@ function calListGoToday() {
 window.calListGoToday = calListGoToday;
 
 function initCalListBehaviour() {
-  const todayIso = _calIso(new Date());
-  // Land on today when viewing the current month.
-  const todayHead = document.querySelector(`.cal-list-dayhead[data-date="${todayIso}"]`)
-    || Array.from(document.querySelectorAll('.cal-list-dayhead')).find(h => h.dataset.date >= todayIso);
-  if (todayHead) _calScrollToEl(todayHead, 64);
-  // Scroll sync: grid highlight follows the day under the header line, and
-  // the Today pill shows whenever today's header is off-screen.
-  const scroller = _calScroller();
-  if (window._calListScrollHandler && window._calListScrollTarget) {
-    window._calListScrollTarget.removeEventListener('scroll', window._calListScrollHandler);
+  // Paint the selection ring and the Today pill state.
+  const sel = window._calListSelected || _calIso(new Date());
+  document.querySelectorAll('.cal-list-cell').forEach(c => {
+    c.style.outline = c.dataset.date === sel ? '2px solid var(--accent)' : '';
+    c.style.outlineOffset = c.dataset.date === sel ? '-2px' : '';
+  });
+  const fab = document.getElementById('calListTodayFab');
+  if (fab) fab.style.display = sel === _calIso(new Date()) ? 'none' : 'block';
+  // Swipe left/right on the day panel moves a day, like Apple.
+  const body = document.getElementById('calListBody');
+  if (body && !body._swipeWired) {
+    body._swipeWired = true;
+    let sx = 0, sy = 0;
+    body.addEventListener('touchstart', (e) => {
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    }, { passive: true });
+    body.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - sx;
+      const dy = e.changedTouches[0].clientY - sy;
+      if (Math.abs(dx) > 56 && Math.abs(dy) < 48) calListShiftDay(dx < 0 ? 1 : -1);
+    }, { passive: true });
   }
-  let ticking = false;
-  window._calListScrollHandler = () => {
-    if (ticking) return;
-    ticking = true;
-    requestAnimationFrame(() => {
-      ticking = false;
-      const panel = document.getElementById('calendarScreen');
-      if (!panel || !panel.classList.contains('active')) return;
-      const heads = Array.from(document.querySelectorAll('.cal-list-dayhead'));
-      if (!heads.length) return;
-      const current = heads.filter(h => h.getBoundingClientRect().top <= 90).pop() || heads[0];
-      document.querySelectorAll('.cal-list-cell').forEach(c => {
-        const on = c.dataset.date === current.dataset.date;
-        c.style.outline = on ? '2px solid var(--accent)' : '';
-        c.style.outlineOffset = on ? '-2px' : '';
-      });
-      const fab = document.getElementById('calListTodayFab');
-      if (fab) {
-        const th = document.querySelector(`.cal-list-dayhead[data-date="${todayIso}"]`);
-        const visible = th && th.getBoundingClientRect().top > -40 && th.getBoundingClientRect().top < window.innerHeight - 80;
-        const offMonth = !document.querySelector(`.cal-list-cell[data-date="${todayIso}"]`);
-        fab.style.display = (offMonth || !visible) ? 'block' : 'none';
-      }
-    });
-  };
-  window._calListScrollTarget = scroller;
-  scroller.addEventListener('scroll', window._calListScrollHandler, { passive: true });
 }
