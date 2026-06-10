@@ -7,17 +7,17 @@ speed), then follow mode as its own wave.
 
 ## Wave S1 - data + editor
 
-- [ ] setlists.stage_meta JSONB: { breaks: [idx], markers: [{after, text}],
+- [x] setlists.stage_meta JSONB: { breaks: [idx], markers: [{after, text}],
       notes: {song_id: text}, speeds: {song_id}, transpose: {song_id} } -
       one column, no other schema churn
-- [ ] PATCH /api/setlists/:id accepts stage_meta
-- [ ] Editor: hold-drag reorder (pointer events), set breaks with per-set
+- [x] PATCH /api/setlists/:id accepts stage_meta
+- [x] Editor: hold-drag reorder (pointer events), set breaks with per-set
       song count + running time, announcement marker rows, per-song stage
       note editing, Perform button
 
 ## Wave S2 - stage mode
 
-- [ ] Full-screen performance view: huge title, key chip, BPM, inline
+- [x] Full-screen performance view: huge title, key chip, BPM, inline
       chords from ChordPro lyrics, next-up bar, swipe L/R + arrow/pedal
       keys + space for scroll toggle, tap-to-pause, font size controls
       (persisted), wake lock with visibility re-acquire, elapsed set clock
@@ -25,6 +25,19 @@ speed), then follow mode as its own wave.
       count-in BPM pulse, auto-scroll (default speed from song duration vs
       lyric height, remembered per song), transpose stepper on the key chip
       (chord maths with sensible enharmonics, remembered per song)
+
+## Waves S1+S2 review (2026-06-10, commits e15de95..b6d485a)
+
+Verified live on a real 9-song setlist built from Gareth's repertoire
+(Function Bangers Vol 2, now in his account): editor renders Set 1/Set 2
+with per-set running times and a merge link, durations normalised
+against mixed seconds/minutes legacy data (m:ss everywhere), Perform
+opens the black stage view with Valerie's chart, VERSE/CHORUS sections,
+amber inline chords, count-in dot at 108bpm, awake indicator, elapsed
+clock, auto-scroll pill and next-up bar. Transpose +2 produced exactly
+C/Dm/F/E7/Am/G from Bb/Cm/Eb/D7/Gm/F with a reset control. Jump grid
+lists both sets with the current song highlighted. Console clean.
+Touch-only paths (drag feel, swipe, pinch) need Gareth's phone.
 
 ## Wave S3 - follow mode
 
