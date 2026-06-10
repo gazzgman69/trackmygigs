@@ -772,8 +772,11 @@ router.post('/delete-account', async (req, res) => {
       await run('DELETE FROM marketplace_gigs WHERE poster_user_id = $1', [userId]);
       await run('DELETE FROM offers WHERE sender_id = $1 OR recipient_id = $1', [userId]);
       await run('DELETE FROM messages WHERE sender_id = $1', [userId]);
+      const myThreads = await client.query('SELECT id FROM threads WHERE $1 = ANY(participant_ids)', [userId]);
       await run(`UPDATE threads SET participant_ids = array_remove(participant_ids, $1) WHERE $1 = ANY(participant_ids)`, [userId]);
-      await run(`DELETE FROM threads WHERE cardinality(participant_ids) <= 1`);
+      for (const t of myThreads.rows) {
+        await run('DELETE FROM threads WHERE id = $1 AND cardinality(participant_ids) <= 1', [t.id]);
+      }
       await run('DELETE FROM setlists WHERE user_id = $1', [userId]);
       await run('DELETE FROM songs WHERE user_id = $1', [userId]);
       await run('DELETE FROM receipts WHERE user_id = $1', [userId]);
@@ -799,7 +802,7 @@ router.post('/delete-account', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Delete account error:', error);
-    res.status(500).json({ error: 'Failed to delete account' });
+    res.status(500).json({ error: 'Failed to delete account', detail: String((error && error.message) || error) });
   }
 });
 
