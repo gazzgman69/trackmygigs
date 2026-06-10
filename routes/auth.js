@@ -750,10 +750,11 @@ router.post('/delete-account', async (req, res) => {
       await run('DELETE FROM invoice_saved_items WHERE user_id = $1', [userId]);
       await run('DELETE FROM invoice_clients WHERE user_id = $1', [userId]);
       await run('DELETE FROM notification_dismissals WHERE user_id = $1', [userId]);
-      await run('DELETE FROM nudge_feedback WHERE user_id = $1', [userId]);
-      await run('DELETE FROM discovery_lookups WHERE user_id = $1', [userId]);
+      // nudge_feedback.user_id is a legacy INTEGER column; it cannot hold
+      // UUID user ids, so there is nothing of this user's in it to delete.
+      await run('DELETE FROM discovery_lookups WHERE actor_id = $1', [userId]);
       await run('DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1', [userId]);
-      await run('DELETE FROM user_reports WHERE reporter_id = $1 OR reported_id = $1', [userId]);
+      await run('DELETE FROM user_reports WHERE reporter_id = $1 OR target_id = $1', [userId]);
       await run('DELETE FROM marketplace_applications WHERE applicant_user_id = $1', [userId]);
       await run('DELETE FROM marketplace_applications WHERE gig_id IN (SELECT id FROM marketplace_gigs WHERE poster_user_id = $1)', [userId]);
       await run('DELETE FROM marketplace_gigs WHERE poster_user_id = $1', [userId]);
