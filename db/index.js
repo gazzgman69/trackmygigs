@@ -37,7 +37,12 @@ const wantSsl = !isInternalReplitDev && (
 // client retry layer can handle, and statement_timeout stops a stuck query
 // holding a connection hostage.
 const POOL_TUNING = {
-  max: parseInt(process.env.PG_POOL_MAX || '20', 10),
+  // Default 10, not 20: Replit's internal dev Postgres has a small
+  // max_connections budget, and a nodemon restart can briefly leave two
+  // node processes alive. Two pools of 20 exhausted the slots and every
+  // new connect hung at the 10s bound (seen 2026-06-10). Production Neon
+  // can take more via PG_POOL_MAX.
+  max: parseInt(process.env.PG_POOL_MAX || '10', 10),
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
   statement_timeout: 30000,
