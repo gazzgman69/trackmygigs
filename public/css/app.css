@@ -75,9 +75,10 @@ body {
   left: 0;
   right: 0;
   /* Use JS-calculated height that accounts for Safari toolbar.
-     Fallback chain: JS var -> dvh -> vh */
-  height: var(--app-height, 100dvh);
+     Order matters: the LAST understood declaration wins, so dvh (which
+     tracks Safari's collapsing toolbar) must come after the vh fallback. */
   height: var(--app-height, 100vh);
+  height: var(--app-height, 100dvh);
   display: flex;
   flex-direction: column;
   max-width: 390px;

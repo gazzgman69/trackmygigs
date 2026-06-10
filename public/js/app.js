@@ -5,8 +5,13 @@ let currentScreen = 'home';
 // when viewport-fit=cover. Use visualViewport API to get actual visible height.
 function setAppHeight() {
   var vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-  document.documentElement.style.setProperty('--app-height', vh + 'px');
+  // Lengths inside a zoomed body are multiplied by the zoom factor, so the
+  // shell height must be expressed in zoomed units or the bottom nav lands
+  // beyond the real viewport.
+  var z = parseFloat(document.body && document.body.style.zoom) || 1;
+  document.documentElement.style.setProperty('--app-height', (vh / z) + 'px');
 }
+window.setAppHeight = setAppHeight;
 setAppHeight();
 window.addEventListener('resize', setAppHeight);
 if (window.visualViewport) {
@@ -530,8 +535,50 @@ function setupTextScaling() {
     } else {
       document.body.style.zoom = '';
     }
+    if (typeof setAppHeight === 'function') setAppHeight();
   } catch (e) { /* default 1x */ }
 }
+
+// In-app text size picker: the guaranteed path (auto-detection of the
+// phone's setting stays as the default behaviour).
+function openTextSizePicker() {
+  const cur = localStorage.getItem('tmg_text_scale');
+  const existing = document.getElementById('textSizeSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'textSizeSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  const opt = (label, val, sample) => {
+    const sel = (val === null && !cur) || (cur && parseFloat(cur) === val);
+    return `<div onclick="setTextSize(${val === null ? 'null' : val})" style="display:flex;align-items:center;justify-content:space-between;padding:13px 14px;border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'};border-radius:10px;margin-bottom:8px;cursor:pointer;${sel ? 'background:var(--accent-dim);' : 'background:var(--card);'}">
+      <span style="font-size:${sample}px;font-weight:600;color:var(--text);">${label}</span>
+      ${sel ? '<span style="color:var(--accent);font-weight:800;">\u2713</span>' : ''}
+    </div>`;
+  };
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>'
+    + '<div style="font-size:14px;font-weight:700;text-align:center;margin-bottom:4px;">Text size</div>'
+    + '<div style="font-size:11px;color:var(--text-2);text-align:center;margin-bottom:12px;">Scales the whole app. Auto follows your phone\u2019s setting.</div>'
+    + opt('Auto (follow my phone)', None, 14)
+    + opt('Default', 1, 14)
+    + opt('Large', 1.15, 16)
+    + opt('Extra large', 1.3, 18)
+    + '<button onclick="document.getElementById(\'textSizeSheet\').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Close</button>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) sheet.remove(); });
+  document.body.appendChild(sheet);
+}
+
+function setTextSize(val) {
+  if (val === null) localStorage.removeItem('tmg_text_scale');
+  else localStorage.setItem('tmg_text_scale', String(val));
+  setupTextScaling();
+  const sheet = document.getElementById('textSizeSheet');
+  if (sheet) sheet.remove();
+  showToast(val === null ? 'Following your phone\u2019s text size.' : 'Text size updated.');
+}
+window.openTextSizePicker = openTextSizePicker;
+window.setTextSize = setTextSize;
 
 function setupThemeToggle() {
   const themeToggle = document.getElementById('themeToggle');
@@ -5075,6 +5122,13 @@ function buildProfileHTML(content, profile) {
             <span style="color:var(--text);font-size:14px;">Google Sheets</span>
             <span style="color:var(--text-3);font-size:11px;">Loading\u2026</span>
           </div>
+        </div>
+        <div onclick="openTextSizePicker()" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text);font-size:14px;">Text size</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:12px;color:var(--text-2);">${(() => { const v = parseFloat(localStorage.getItem('tmg_text_scale')); return !v ? 'Auto' : v === 1 ? 'Default' : v === 1.15 ? 'Large' : v === 1.3 ? 'Extra large' : v + 'x'; })()}</span>
+            <span style="color:var(--accent);font-size:16px;">\u203A</span>
+          </span>
         </div>
         <div onclick="openMapsPreferencePicker()" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
           <span style="color:var(--text);font-size:14px;">Preferred maps app</span>
