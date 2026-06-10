@@ -4634,7 +4634,7 @@ router.post('/setlists/save-shared', async (req, res) => {
         const fillTempo = (ex.tempo == null && Number.isFinite(Number(s.tempo))) ? Number(s.tempo) : null;
         if (fillLyrics || fillTempo) {
           await db.query(
-            `UPDATE songs SET lyrics = COALESCE(lyrics, $2), tempo = COALESCE(tempo, $3) WHERE id = $1`,
+            `UPDATE songs SET lyrics = COALESCE(NULLIF(lyrics, ''), $2), tempo = COALESCE(tempo, $3) WHERE id = $1`,
             [ex.id, fillLyrics, fillTempo]
           );
         }
