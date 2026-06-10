@@ -508,7 +508,7 @@ Rules:
 - If the input has chord-over-lyric two-line format, convert to inline [Chord]lyric form.
 - Add {title:}, {artist:}, {key:}, {tempo:} directives at the top if known.
 - Preserve original lyric line breaks. Do not add verses that aren't there.
-- NEVER drop a chord. Every chord in the input must appear in the output. When chord-over-lyric alignment is ambiguous, keep the chords in order and place mid-line ones at your best estimate rather than omitting them; mention any uncertain placements in "notes".
+- NEVER drop a chord. First count the chord tokens in the input; your output must contain exactly the same number of chord tokens in the same order. When chord-over-lyric alignment is ambiguous, place the chord at your best estimate within the line rather than omitting it; mention uncertain placements in "notes".
 - If unsure, note it in "notes" rather than guessing.`;
 
     const data = await callHaiku({ system, user: text, json: true, maxTokens: 4000 });
