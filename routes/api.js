@@ -2503,7 +2503,7 @@ router.get('/rebooking-suggestions', async (req, res) => {
       if (!d.snooze_until || new Date(d.snooze_until) > today) suppressed.add(d.key);
     }
     const monthsAgo = (date) => (today - new Date(date)) / (30.44 * 86400000);
-    const ym = (date) => String(date).slice(0, 7);
+    const ym = (date) => new Date(date).toISOString().slice(0, 7);
     const contactOf = (g) => ({
       name: g.client_name || g.gig_leader_name || null,
       email: g.client_email || g.gig_leader_email || null,
