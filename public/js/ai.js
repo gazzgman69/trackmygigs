@@ -226,14 +226,14 @@
     const onApply = (opts && opts.onApply) || null;
     const body = h(`
       <div>
-        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2,#999);">Upload a receipt photo or paste the text. I will extract merchant, amount, VAT, date, and suggest an HMRC category.</p>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--text-2,#999);">Photo of a paper receipt, or the text of a digital one. I will extract merchant, amount, VAT, date, and suggest an HMRC category.</p>
         <div class="ai-row" style="flex-direction:column;align-items:stretch;gap:10px;">
           <label class="ai-btn-secondary" style="text-align:center;cursor:pointer;display:block;">
             <input type="file" id="aiReceiptFile" accept="image/*" style="display:none;">
             Choose image
           </label>
-          <div style="text-align:center;font-size:11px;color:var(--text-3,#666);">or</div>
-          <textarea id="aiReceiptText" class="ai-textarea" placeholder="Paste receipt text here"></textarea>
+          <div style="text-align:center;font-size:11px;color:var(--text-3,#666);">or paste a digital receipt</div>
+          <textarea id="aiReceiptText" class="ai-textarea" placeholder="Copy the text of an emailed receipt (Amazon, fuel app, Uber, PayPal...) and paste it here"></textarea>
         </div>
         <div class="ai-row" style="justify-content:flex-end;">
           <button type="button" class="ai-btn-secondary" onclick="document.getElementById('aiModalRoot').remove()">Cancel</button>

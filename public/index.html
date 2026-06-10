@@ -461,10 +461,10 @@
           <div style="font-size:11px;font-weight:600;color:var(--accent,#f0a500);margin-top:4px">Scan with AI</div>
           <div style="font-size:9px;color:var(--text-3);margin-top:2px">Photo or paste → auto-fill</div>
         </button>
-        <button onclick="showReceiptForm('snap')" class="receipt-add-btn">
+        <button onclick="showReceiptForm('snap');var _rsp=document.getElementById('receiptSnapPhoto');if(_rsp)_rsp.click();" class="receipt-add-btn">
           <div style="font-size:20px">📸</div>
           <div style="font-size:11px;font-weight:600;color:var(--text);margin-top:4px">Snap receipt</div>
-          <div style="font-size:9px;color:var(--text-3);margin-top:2px">Photo → fill in details</div>
+          <div style="font-size:9px;color:var(--text-3);margin-top:2px">Camera opens → fill in details</div>
         </button>
         <button onclick="showReceiptForm('manual')" class="receipt-add-btn">
           <div style="font-size:20px">✏️</div>
