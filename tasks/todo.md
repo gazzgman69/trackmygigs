@@ -61,7 +61,24 @@ prod-only expenses table -> drift guard). PRODUCTION.md runbook written.
       statement), linked from landing + app. Support email on both.
 - [ ] First-run experience: fresh-account walk of every screen, fix empty
       states that assume data.
-- [ ] AI features: Gareth hand-tests this week OR we hide them for launch.
+- [x] AI features: full battery tested 2026-06-10 on Gareth's request (all
+      nine endpoints, multiple scenarios each, Haiku so pennies total).
+      PASS: extract-gig (formal email, WhatsApp shorthand, junk input
+      correctly refused with confidence 0), extract-receipt (fuel ->
+      Travel, music shop -> Equipment, HMRC categories right), setlist
+      (real song ids only, sane ordering reasons, no invented songs even
+      when asked for 4 hours from a 15-song book), invoice chase (polite +
+      firm variants, correct amounts/days overdue), thank-you draft,
+      sanity-check (flagged the real 20 June clash, clean on free days),
+      bio, transcribe gating (402 free, 503 premium-without-key).
+      FIXED during testing: bio trusted stale profile instruments over the
+      musician's typed facts (called a sax player a guitarist) and printed
+      the home postcode into a public bio; both prompt-fixed and retested
+      clean. Gareth's profile instruments corrected to saxophone/keys.
+      KNOWN LIMITATION: normalize-chordpro can drop a chord when two
+      chord-over-lyric lines have identical patterns (7 of 8 tokens after
+      prompt hardening, was 6). If chord sheets become a core workflow,
+      upgrade that one endpoint to Sonnet (one-line change in routes/ai.js).
 
 ## Wave 4 - full regression on PROD (days 9-12)
 
