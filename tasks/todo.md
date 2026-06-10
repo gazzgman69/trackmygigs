@@ -53,3 +53,9 @@ rendering in the browser; 9 feature blocks total.
 - [x] List replaces Month tab, becomes default, view remembered (localStorage)
 - [x] Deploy + browser verify (incl. fix: scroll handler binds to .app-content, the
       app's real scroll container, not window)
+- [x] Correction (Gareth): panel shows ONLY the highlighted day, true Apple flow.
+      Chevrons + swipe move a day, blocked runs attached to every covered day.
+- [x] Correction (Gareth): floating Today pill was fixed to the browser viewport,
+      so it sat outside the app column on desktop and was unreliable on iPhone.
+      Replaced with an inline amber Today chip beside the day name (only when a
+      non-today day is selected). Verified live: chip jumps to today and hides.
