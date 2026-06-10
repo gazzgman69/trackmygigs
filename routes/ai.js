@@ -383,12 +383,14 @@ Return ONLY a JSON object:
   "long300":    string (~300 words, ±25)
 }
 
-Tone: ${style}. Third-person unless the facts clearly indicate otherwise. Lead with the strongest concrete credit or fact. Avoid superlatives. Mention venues, artists worked with, or measurable reach when possible.`;
+Tone: ${style}. Third-person unless the facts clearly indicate otherwise. Lead with the strongest concrete credit or fact. Avoid superlatives. Mention venues, artists worked with, or measurable reach when possible.
+
+If the musician's extra facts conflict with the stored profile (for example different instruments), the extra facts ALWAYS win; the profile may be stale. Never include a postcode in the bio. If location matters, name the town, county or region only.`;
 
     const userPrompt = `Musician profile:
 Name: ${user.display_name || user.name || '(unknown)'}
-Instruments: ${instruments || '(unspecified)'}
-Home area: ${user.home_postcode || '(unspecified)'}
+Instruments (may be stale, facts below override): ${instruments || '(unspecified)'}
+Home area (postcode for region inference ONLY, never print it): ${user.home_postcode || '(unspecified)'}
 Public booking page: ${user.public_slug ? `trackmygigs.app/@${user.public_slug}` : '(none)'}
 
 Extra facts from the musician:
@@ -506,6 +508,7 @@ Rules:
 - If the input has chord-over-lyric two-line format, convert to inline [Chord]lyric form.
 - Add {title:}, {artist:}, {key:}, {tempo:} directives at the top if known.
 - Preserve original lyric line breaks. Do not add verses that aren't there.
+- NEVER drop a chord. Every chord in the input must appear in the output. When chord-over-lyric alignment is ambiguous, keep the chords in order and place mid-line ones at your best estimate rather than omitting them; mention any uncertain placements in "notes".
 - If unsure, note it in "notes" rather than guessing.`;
 
     const data = await callHaiku({ system, user: text, json: true, maxTokens: 4000 });
