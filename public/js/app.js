@@ -20108,6 +20108,18 @@ function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
     <button id="calListTodayFab" onclick="calListGoToday()" style="display:none;position:fixed;bottom:84px;right:16px;background:var(--card);border:1px solid var(--border);color:var(--accent);border-radius:999px;padding:9px 16px;font-size:12px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer;z-index:50;">↓ Today</button>`;
 }
 
+// The app's scroll container is .app-content, not the window.
+function _calScroller() {
+  return document.querySelector('.app-content') || document.scrollingElement;
+}
+
+function _calScrollToEl(el, offset) {
+  const sc = _calScroller();
+  if (!sc || !el) return;
+  const top = el.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop - (offset || 64);
+  sc.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+}
+
 function selectCalListDay(iso) {
   document.querySelectorAll('.cal-list-cell').forEach(c => {
     c.style.outline = c.dataset.date === iso ? '2px solid var(--accent)' : '';
@@ -20116,10 +20128,7 @@ function selectCalListDay(iso) {
   // Scroll to that day's header, or the next day that has anything on.
   const heads = Array.from(document.querySelectorAll('.cal-list-dayhead'));
   const target = heads.find(h => h.dataset.date >= iso) || heads[heads.length - 1];
-  if (target) {
-    const y = target.getBoundingClientRect().top + window.scrollY - 64;
-    window.scrollTo({ top: y, behavior: 'smooth' });
-  }
+  if (target) _calScrollToEl(target);
 }
 window.selectCalListDay = selectCalListDay;
 
@@ -20141,13 +20150,13 @@ function initCalListBehaviour() {
   // Land on today when viewing the current month.
   const todayHead = document.querySelector(`.cal-list-dayhead[data-date="${todayIso}"]`)
     || Array.from(document.querySelectorAll('.cal-list-dayhead')).find(h => h.dataset.date >= todayIso);
-  if (todayHead) {
-    const y = todayHead.getBoundingClientRect().top + window.scrollY - 64;
-    if (y > 100) window.scrollTo({ top: y });
-  }
+  if (todayHead) _calScrollToEl(todayHead, 64);
   // Scroll sync: grid highlight follows the day under the header line, and
   // the Today pill shows whenever today's header is off-screen.
-  if (window._calListScrollHandler) window.removeEventListener('scroll', window._calListScrollHandler);
+  const scroller = _calScroller();
+  if (window._calListScrollHandler && window._calListScrollTarget) {
+    window._calListScrollTarget.removeEventListener('scroll', window._calListScrollHandler);
+  }
   let ticking = false;
   window._calListScrollHandler = () => {
     if (ticking) return;
@@ -20173,5 +20182,6 @@ function initCalListBehaviour() {
       }
     });
   };
-  window.addEventListener('scroll', window._calListScrollHandler, { passive: true });
+  window._calListScrollTarget = scroller;
+  scroller.addEventListener('scroll', window._calListScrollHandler, { passive: true });
 }
