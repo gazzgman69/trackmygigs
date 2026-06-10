@@ -1,6 +1,27 @@
 let currentUser = null;
 let currentScreen = 'home';
 
+// Pre-production diagnostic: surface uncaught JS errors as a visible banner
+// so device-only failures (iOS quirks, stale bundles) report themselves
+// instead of taps silently doing nothing. Remove before launch.
+window.addEventListener('error', function (e) {
+  try {
+    var file = String(e.filename || '').split('/').pop();
+    var msg = (e.message || 'Script error') + (file ? ' @' + file + ':' + e.lineno : '');
+    var el = document.getElementById('tmgErrBanner');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'tmgErrBanner';
+      el.style.cssText = 'position:fixed;left:10px;right:10px;bottom:90px;z-index:2147483647;background:#3a1115;border:1px solid #F85149;color:#ffd7d5;font:12px -apple-system,sans-serif;padding:10px 12px;border-radius:10px;word-break:break-word;';
+      el.onclick = function () { el.remove(); };
+      (document.body || document.documentElement).appendChild(el);
+    }
+    el.textContent = 'App error: ' + msg + ' (tap to dismiss)';
+    clearTimeout(window._tmgErrBannerT);
+    window._tmgErrBannerT = setTimeout(function () { if (el.parentNode) el.remove(); }, 12000);
+  } catch (_) {}
+});
+
 // Fix iOS Safari viewport height: Safari's toolbar overlaps position:fixed elements
 // when viewport-fit=cover. Use visualViewport API to get actual visible height.
 function setAppHeight() {
