@@ -21175,7 +21175,7 @@ function paintSavedItemChips() {
   }
   strip.innerHTML = '<span style="font-size:10px;color:var(--text-3);width:100%;">Your usual items, tap to add:</span>'
     + items.slice(0, 8).map((it, i) =>
-      `<span onclick="quickAddSavedItem(${i})" style="background:var(--surface);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer;">${escapeHtml(it.description)}${it.rate != null ? ' \u00B7 \u00A3' + Math.round(parseFloat(it.rate)) : ''}</span>`).join('')
+      `<span onclick="quickAddSavedItem(${i})" style="background:var(--surface);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer;">${escapeHtml(it.description)}${it.rate != null ? ' \u00B7 \u00A3' + (parseFloat(it.rate) < 10 ? parseFloat(it.rate).toFixed(2) : Math.round(parseFloat(it.rate))) : ''}</span>`).join('')
     + `<span onclick="openSavedItemsManager()" style="border:1px dashed var(--border);color:var(--text-3);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">Manage\u2026</span>`;
 }
 window.paintSavedItemChips = paintSavedItemChips;
