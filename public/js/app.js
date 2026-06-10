@@ -19492,19 +19492,131 @@ window.sendGigPackToThread = sendGigPackToThread;
 
 async function uploadProfilePhoto(input) {
   const file = input.files && input.files[0];
+  input.value = '';
   if (!file) return;
+  try {
+    const bitmap = await createImageBitmap(file);
+    openPhotoCropper(bitmap);
+  } catch (err) {
+    showToast('Could not read that image.');
+  }
+}
+
+// Instagram-style avatar cropper: the photo pans (drag) and zooms (pinch or
+// slider) inside a fixed circular frame; whatever sits in the circle becomes
+// the avatar. State: scale s and top-left offset (tx, ty) in stage pixels.
+const _crop = { bmp: null, s: 1, min: 1, tx: 0, ty: 0, stage: 320 };
+
+function openPhotoCropper(bitmap) {
+  _crop.bmp = bitmap;
+  _crop.stage = Math.min(340, Math.floor(window.innerWidth * 0.82));
+  _crop.min = _crop.stage / Math.min(bitmap.width, bitmap.height);
+  _crop.s = _crop.min;
+  _crop.tx = (_crop.stage - bitmap.width * _crop.s) / 2;
+  _crop.ty = (_crop.stage - bitmap.height * _crop.s) / 2;
+
+  const existing = document.getElementById('photoCropper');
+  if (existing) existing.remove();
+  const wrap = document.createElement('div');
+  wrap.id = 'photoCropper';
+  wrap.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;';
+  wrap.innerHTML = `
+    <div style="font-size:14px;font-weight:700;color:#E6EDF3;">Position your photo</div>
+    <div id="cropStage" style="position:relative;width:${_crop.stage}px;height:${_crop.stage}px;overflow:hidden;border-radius:14px;touch-action:none;cursor:grab;background:#000;">
+      <canvas id="cropCanvas" width="${_crop.stage}" height="${_crop.stage}" style="position:absolute;inset:0;"></canvas>
+      <div style="position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 ${_crop.stage}px rgba(0,0,0,.55);pointer-events:none;"></div>
+      <div style="position:absolute;inset:0;border-radius:50%;border:2px solid rgba(255,255,255,.85);pointer-events:none;"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;width:${_crop.stage}px;">
+      <span style="font-size:12px;color:#8B949E;">\u2212</span>
+      <input id="cropZoom" type="range" min="100" max="400" value="100" style="flex:1;accent-color:var(--accent,#F0A500);">
+      <span style="font-size:16px;color:#8B949E;">+</span>
+    </div>
+    <div style="font-size:11px;color:#8B949E;">Drag to move \u00B7 pinch or slide to zoom</div>
+    <div style="display:flex;gap:10px;width:${_crop.stage}px;">
+      <button onclick="document.getElementById('photoCropper').remove()" style="flex:1;background:transparent;border:1px solid #30363D;color:#8B949E;border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;">Cancel</button>
+      <button onclick="confirmPhotoCrop()" style="flex:1.4;background:var(--accent,#F0A500);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;">Use photo</button>
+    </div>`;
+  document.body.appendChild(wrap);
+  paintCrop();
+
+  const stage = document.getElementById('cropStage');
+  const zoom = document.getElementById('cropZoom');
+  const pointers = new Map();
+  let pinch0 = 0, s0 = _crop.s;
+
+  function clampPan() {
+    const w = _crop.bmp.width * _crop.s, h = _crop.bmp.height * _crop.s;
+    _crop.tx = Math.min(0, Math.max(_crop.stage - w, _crop.tx));
+    _crop.ty = Math.min(0, Math.max(_crop.stage - h, _crop.ty));
+  }
+  function setScale(next, cx, cy) {
+    next = Math.min(_crop.min * 4, Math.max(_crop.min, next));
+    // Keep the point under the gesture centre fixed while zooming.
+    _crop.tx = cx - (cx - _crop.tx) * (next / _crop.s);
+    _crop.ty = cy - (cy - _crop.ty) * (next / _crop.s);
+    _crop.s = next;
+    clampPan();
+    zoom.value = Math.round((_crop.s / _crop.min) * 100);
+    paintCrop();
+  }
+  stage.addEventListener('pointerdown', (e) => {
+    stage.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      const pts = [...pointers.values()];
+      pinch0 = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      s0 = _crop.s;
+    }
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      _crop.tx += e.clientX - prev.x;
+      _crop.ty += e.clientY - prev.y;
+      clampPan();
+      paintCrop();
+    } else if (pointers.size === 2 && pinch0) {
+      const pts = [...pointers.values()];
+      const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const rect = stage.getBoundingClientRect();
+      setScale(s0 * (d / pinch0), (pts[0].x + pts[1].x) / 2 - rect.left, (pts[0].y + pts[1].y) / 2 - rect.top);
+    }
+  });
+  const lift = (e) => pointers.delete(e.pointerId);
+  stage.addEventListener('pointerup', lift);
+  stage.addEventListener('pointercancel', lift);
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = stage.getBoundingClientRect();
+    setScale(_crop.s * (e.deltaY < 0 ? 1.08 : 0.93), e.clientX - rect.left, e.clientY - rect.top);
+  }, { passive: false });
+  zoom.addEventListener('input', () => {
+    setScale(_crop.min * (Number(zoom.value) / 100), _crop.stage / 2, _crop.stage / 2);
+  });
+}
+
+function paintCrop() {
+  const canvas = document.getElementById('cropCanvas');
+  if (!canvas || !_crop.bmp) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, _crop.stage, _crop.stage);
+  ctx.drawImage(_crop.bmp, _crop.tx, _crop.ty, _crop.bmp.width * _crop.s, _crop.bmp.height * _crop.s);
+}
+
+async function confirmPhotoCrop() {
   const status = document.getElementById('editPhotoStatus');
+  const wrap = document.getElementById('photoCropper');
+  if (wrap) wrap.remove();
   if (status) status.textContent = 'Uploading\u2026';
   try {
-    // Downscale on-device so a 12MP camera shot becomes a ~50KB avatar.
-    const bitmap = await createImageBitmap(file);
-    const max = 512;
-    const ratio = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(bitmap.width * ratio);
-    canvas.height = Math.round(bitmap.height * ratio);
-    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    const out512 = document.createElement('canvas');
+    out512.width = 512; out512.height = 512;
+    const sx = -_crop.tx / _crop.s, sy = -_crop.ty / _crop.s, sw = _crop.stage / _crop.s;
+    out512.getContext('2d').drawImage(_crop.bmp, sx, sy, sw, sw, 0, 0, 512, 512);
+    const dataUrl = out512.toDataURL('image/jpeg', 0.85);
     const resp = await fetch('/api/profile-photo', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -19523,8 +19635,9 @@ async function uploadProfilePhoto(input) {
     if (status) status.textContent = '';
     showToast(err.message || 'Could not upload that photo.');
   }
-  input.value = '';
 }
+window.openPhotoCropper = openPhotoCropper;
+window.confirmPhotoCrop = confirmPhotoCrop;
 
 async function removeProfilePhoto() {
   try {
