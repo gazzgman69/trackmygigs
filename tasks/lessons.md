@@ -36,3 +36,14 @@ fixed positioning inside a scrolling PWA is unreliable. Gareth caught it on the
 desktop preview. Rule: controls belong inline in the app's own layout (header
 chips, in-flow buttons). If something must float, anchor it to the app container,
 never the viewport, and check it at both phone and desktop widths.
+
+## 2026-06-10 — Verify legacy table columns before writing cross-table SQL
+The account-deletion purge took five deploy cycles because I assumed
+column names (user_id) on legacy tables that actually use owner_id,
+target_id, actor_id and marketplace_gig_id, and assumed an expenses
+table that only exists on prod. Rules: when a statement touches a table
+I did not create this session, grep its CREATE TABLE first; guard
+multi-table transactions against schema drift (pg_tables check); and
+when debugging a 500 remotely, add the failing-statement detail to the
+response FIRST and keep it until green, never remove diagnostics in the
+same push as a fix.

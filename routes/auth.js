@@ -807,7 +807,7 @@ router.post('/delete-account', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Delete account error:', error);
-    res.status(500).json({ error: 'Failed to delete account', detail: String((error && error.message) || error) });
+    res.status(500).json({ error: 'Failed to delete account' });
   }
 });
 

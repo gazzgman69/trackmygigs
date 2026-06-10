@@ -21,19 +21,31 @@ Open decisions: AI features hand-test vs hide; support email address.
 
 ## Wave 1 - security hardening (days 1-3, code)
 
-- [ ] Prod env checklist doc: DISABLE_DEV_LOGIN=true, fresh RELOAD_SECRET
+- [x] Prod env checklist doc: DISABLE_DEV_LOGIN=true, fresh RELOAD_SECRET
       (current value is written in repo docs), APP_URL, RESEND_API_KEY,
       VAPID keys, Google creds + prod redirect URI, PG_POOL_MAX, Stripe live
       keys + webhook secret. Gareth applies in Replit Secrets for the
       production deployment.
-- [ ] Security headers middleware: HSTS, X-Content-Type-Options, Referrer-
+- [x] Security headers middleware: HSTS, X-Content-Type-Options, Referrer-
       Policy, X-Frame-Options DENY except the ?embed=1 share route.
-- [ ] Rate limiting extended: light in-memory limits on auth/google, public
+- [x] Rate limiting extended: light in-memory limits on auth/google, public
       token pages (/t, /docs, /share, /epk), and a general API ceiling.
-- [ ] Fresh multi-tenancy pass over every route added this session (venues,
+- [x] Fresh multi-tenancy pass over every route added this session (venues,
       polls, splits, documents share, testimonials, radar, followup).
-- [ ] Account deletion endpoint + Settings button (GDPR right to erasure;
+- [x] Account deletion endpoint + Settings button (GDPR right to erasure;
       currently missing). Export already exists.
+
+## Wave 1 review (2026-06-10, commits 2d7db8f..4af3e75)
+
+Headers verified live (HSTS/nosniff/referrer/frame-deny, embed route
+exempt), public-token rate limit trips at 60/min (59 served, 6 throttled
+in a 65-hit test), /health does a real DB round-trip, every route from
+this session re-verified scoped to req.user.id, and account deletion
+passed the full lifecycle: typed-DELETE gate, transactional purge, fresh
+same-email login sees zero data. Five schema mismatches found and fixed
+along the way (contacts.owner_id, user_reports.target_id,
+discovery_lookups.actor_id, marketplace_applications.marketplace_gig_id,
+prod-only expenses table -> drift guard). PRODUCTION.md runbook written.
 
 ## Wave 2 - prod data + pipeline (days 3-5)
 
@@ -41,7 +53,7 @@ Open decisions: AI features hand-test vs hide; support email address.
       prod; confirm Neon backup/PITR story.
 - [ ] Document the release process: push main -> Gareth clicks Republish
       (admin/reload only refreshes the dev workspace).
-- [ ] /health endpoint + free uptime monitor + error visibility.
+- [x] /health endpoint (built in Wave 1) + free uptime monitor + error visibility.
 
 ## Wave 3 - legal + onboarding (days 5-9)
 
