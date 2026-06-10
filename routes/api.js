@@ -2622,6 +2622,143 @@ router.post('/invoices/:id/chased', async (req, res) => {
   }
 });
 
+// ── Post-gig follow-up + testimonials ────────────────────────────────────────
+// Morning-after asks for client-facing gigs. The client submits on a public
+// page; their words land here as PENDING and only reach the EPK when the
+// musician approves. Nothing auto-sends, ever.
+
+router.get('/followup-suggestions', async (req, res) => {
+  try {
+    const gigs = await db.query(
+      `SELECT g.id, g.band_name, g.venue_name, g.date, g.client_name, g.client_email,
+              g.gig_leader_name, g.gig_leader_email
+         FROM gigs g
+        WHERE g.user_id = $1 AND g.status = 'confirmed'
+          AND g.date >= CURRENT_DATE - INTERVAL '7 days' AND g.date < CURRENT_DATE
+          AND (g.client_email IS NOT NULL OR g.gig_leader_email IS NOT NULL)
+          AND g.source NOT LIKE 'gcal:%'
+          AND NOT EXISTS (SELECT 1 FROM rebook_dismissals d
+                           WHERE d.user_id = $1 AND d.key = 'followup|' || g.id)
+          AND NOT EXISTS (SELECT 1 FROM testimonial_requests r
+                           WHERE r.user_id = $1 AND r.gig_id = g.id)
+        ORDER BY g.date DESC LIMIT 3`,
+      [req.user.id]
+    );
+    const pending = await db.query(
+      `SELECT id, quote, name, context, created_at
+         FROM testimonial_submissions WHERE user_id = $1 AND status = 'pending'
+        ORDER BY created_at DESC`,
+      [req.user.id]
+    );
+    const me = await db.query('SELECT review_link FROM users WHERE id = $1', [req.user.id]);
+    res.json({
+      gigs: gigs.rows.map(g => ({
+        id: g.id,
+        title: g.band_name || g.venue_name || 'Gig',
+        date: g.date,
+        contact_name: g.client_name || g.gig_leader_name || null,
+        contact_email: g.client_email || g.gig_leader_email,
+      })),
+      pending: pending.rows,
+      review_link: me.rows[0] ? me.rows[0].review_link : null,
+    });
+  } catch (error) {
+    console.error('Followup suggestions error:', error);
+    res.status(500).json({ error: 'Failed to load' });
+  }
+});
+
+router.post('/followup/:gigId/request', async (req, res) => {
+  try {
+    const gigR = await db.query(
+      'SELECT * FROM gigs WHERE id = $1 AND user_id = $2', [req.params.gigId, req.user.id]
+    );
+    const gig = gigR.rows[0];
+    if (!gig) return res.status(404).json({ error: 'Gig not found' });
+    const token = require('crypto').randomBytes(15).toString('base64url');
+    const when = gig.date ? new Date(gig.date).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : '';
+    const context = [(gig.gig_type || gig.band_name || 'Live music'), when].filter(Boolean).join(', ');
+    await db.query(
+      `INSERT INTO testimonial_requests (user_id, gig_id, token, client_name, context)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [req.user.id, gig.id, token, gig.client_name || gig.gig_leader_name || null, context]
+    );
+    res.json({ success: true, url: '/t/' + token,
+      contact_email: gig.client_email || gig.gig_leader_email || null,
+      contact_name: gig.client_name || gig.gig_leader_name || null });
+  } catch (error) {
+    console.error('Followup request error:', error);
+    res.status(500).json({ error: 'Failed to create request' });
+  }
+});
+
+router.post('/followup/:gigId/skip', async (req, res) => {
+  try {
+    await db.query(
+      `INSERT INTO rebook_dismissals (user_id, key, snooze_until)
+       VALUES ($1, $2, NULL)
+       ON CONFLICT (user_id, key) DO NOTHING`,
+      [req.user.id, 'followup|' + req.params.gigId]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Followup skip error:', error);
+    res.status(500).json({ error: 'Failed to skip' });
+  }
+});
+
+router.post('/testimonials/:id/approve', async (req, res) => {
+  try {
+    const sub = await db.query(
+      `UPDATE testimonial_submissions SET status = 'approved'
+        WHERE id = $1 AND user_id = $2 AND status = 'pending' RETURNING *`,
+      [req.params.id, req.user.id]
+    );
+    if (sub.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const t = sub.rows[0];
+    const author = [t.name, t.context].filter(Boolean).join(' \u00B7 ');
+    await db.query(
+      `UPDATE users SET epk_testimonials =
+         COALESCE(epk_testimonials, '[]'::jsonb) || $2::jsonb
+        WHERE id = $1`,
+      [req.user.id, JSON.stringify([{ quote: t.quote, author }])]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Testimonial approve error:', error);
+    res.status(500).json({ error: 'Failed to approve' });
+  }
+});
+
+router.post('/testimonials/:id/bin', async (req, res) => {
+  try {
+    const del = await db.query(
+      `UPDATE testimonial_submissions SET status = 'binned'
+        WHERE id = $1 AND user_id = $2 RETURNING id`,
+      [req.params.id, req.user.id]
+    );
+    if (del.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Testimonial bin error:', error);
+    res.status(500).json({ error: 'Failed to bin' });
+  }
+});
+
+router.post('/me/review-link', async (req, res) => {
+  try {
+    const url = String(req.body.url || '').trim().slice(0, 500);
+    if (url && !/^https?:\/\//i.test(url)) {
+      return res.status(400).json({ error: 'Paste a full link starting with http' });
+    }
+    await db.query('UPDATE users SET review_link = $1 WHERE id = $2', [url || null, req.user.id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Review link error:', error);
+    res.status(500).json({ error: 'Failed to save' });
+  }
+});
+
 // ── Rebooking radar ──────────────────────────────────────────────────────────
 // Surfaces revenue hiding in the user's own gig history. Pure date
 // arithmetic over their gigs; nothing is ever auto-sent.

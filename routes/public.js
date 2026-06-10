@@ -230,6 +230,81 @@ router.get('/pay/:slug', async (req, res) => {
 // the link knows whose calendar it is; anyone who stumbles across it should
 // see nothing but busy/free dates. If a musician wants to share bio, photo
 // and rates, they send their /epk/:slug link separately.
+// ── Testimonial submission page ──────────────────────────────────────────────
+// /t/:token is sent to a client after a gig. They write a line, it lands in
+// the musician's pending list, and the thank-you screen offers the Google
+// review bounce (with the text pre-copied) when the musician has a review
+// link configured.
+
+router.get('/t/:token', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT tr.*, u.name AS musician_name
+         FROM testimonial_requests tr JOIN users u ON u.id = tr.user_id
+        WHERE tr.token = $1`,
+      [req.params.token]
+    );
+    const reqRow = r.rows[0];
+    if (!reqRow) {
+      return res.status(404).set('Content-Type', 'text/html')
+        .send(pageHtml('Not found', `<div class="empty"><h1>Not found</h1><p class="sub">This link is no longer active.</p></div>`));
+    }
+    const first = (reqRow.musician_name || 'the musician').split(' ')[0];
+    const body = `
+      <div class="empty" style="text-align:left;max-width:460px;margin:40px auto;">
+        <h1 style="font-size:22px;">How did ${esc(first)} do?</h1>
+        <p class="sub" style="margin-top:8px;">A line or two about the night helps other people book with confidence. It goes to ${esc(first)} first, never straight online.</p>
+        <form method="POST" action="/t/${esc(req.params.token)}">
+          <textarea name="quote" required maxlength="600" placeholder="What was the night like?" style="width:100%;box-sizing:border-box;border:1px solid #444;background:#161B22;color:#E6EDF3;border-radius:8px;min-height:110px;margin-top:14px;font-size:14px;padding:12px;font-family:inherit;"></textarea>
+          <input name="name" maxlength="120" placeholder="Your name" value="${esc(reqRow.client_name || '')}" style="width:100%;box-sizing:border-box;border:1px solid #444;background:#161B22;color:#E6EDF3;border-radius:8px;margin-top:10px;font-size:14px;padding:12px;">
+          <div class="sub" style="margin-top:8px;">${esc(reqRow.context || '')}</div>
+          <button type="submit" style="display:block;width:100%;text-align:center;background:#F0A500;color:#000;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:700;margin-top:14px;cursor:pointer;">Send to ${esc(first)}</button>
+        </form>
+      </div>`;
+    res.set('Content-Type', 'text/html').send(pageHtml('How did ' + (first || 'it') + ' do?', body));
+  } catch (error) {
+    console.error('Testimonial page error:', error);
+    res.status(500).send('Something went wrong');
+  }
+});
+
+router.post('/t/:token', express.urlencoded({ extended: false }), async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT tr.*, u.name AS musician_name, u.review_link
+         FROM testimonial_requests tr JOIN users u ON u.id = tr.user_id
+        WHERE tr.token = $1`,
+      [req.params.token]
+    );
+    const reqRow = r.rows[0];
+    if (!reqRow) return res.status(404).send('Not found');
+    const quote = String((req.body && req.body.quote) || '').trim().slice(0, 600);
+    const name = String((req.body && req.body.name) || '').trim().slice(0, 120);
+    if (!quote) return res.redirect('/t/' + req.params.token);
+    await db.query(
+      `INSERT INTO testimonial_submissions (user_id, gig_id, quote, name, context)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [reqRow.user_id, reqRow.gig_id, quote, name || null, reqRow.context || null]
+    );
+    await db.query(`UPDATE testimonial_requests SET status = 'submitted' WHERE id = $1`, [reqRow.id]);
+    const first = (reqRow.musician_name || 'them').split(' ')[0];
+    const googleBlock = reqRow.review_link ? `
+      <p class="sub" style="margin-top:14px;">One more tap and it helps even more people find ${esc(first)}: paste it as a review, your words are already copied.</p>
+      <a href="${esc(reqRow.review_link)}" onclick="try{navigator.clipboard.writeText(${JSON.stringify(quote)})}catch(e){}" target="_blank" rel="noopener" style="display:inline-block;margin-top:10px;background:#4285F4;color:#fff;border-radius:10px;padding:12px 20px;font-weight:700;text-decoration:none;">Open review page \u00B7 just paste &amp; pick stars</a>
+      <script>try{navigator.clipboard.writeText(${JSON.stringify(quote)});}catch(e){}</script>` : '';
+    const body = `
+      <div class="empty" style="max-width:460px;margin:60px auto;">
+        <h1>Thank you! \uD83C\uDFB6</h1>
+        <p class="sub" style="margin-top:8px;">That means a lot. ${esc(first)} reads it first and chooses where it appears.</p>
+        ${googleBlock}
+      </div>`;
+    res.set('Content-Type', 'text/html').send(pageHtml('Thank you', body));
+  } catch (error) {
+    console.error('Testimonial submit error:', error);
+    res.status(500).send('Something went wrong');
+  }
+});
+
 // ── Shared document page ─────────────────────────────────────────────────────
 // /docs/:token shows one document with a download button, no login. The token
 // is unguessable and the owner can revoke it from the wallet at any time.

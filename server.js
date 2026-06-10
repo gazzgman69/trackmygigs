@@ -1893,6 +1893,27 @@ async function runMigrations() {
       status TEXT DEFAULT 'open',
       created_at TIMESTAMPTZ DEFAULT NOW()
     )`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS review_link TEXT`);
+    await db.query(`CREATE TABLE IF NOT EXISTS testimonial_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL,
+      gig_id UUID,
+      token TEXT UNIQUE NOT NULL,
+      client_name TEXT,
+      context TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS testimonial_submissions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL,
+      gig_id UUID,
+      quote TEXT NOT NULL,
+      name TEXT,
+      context TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
     await db.query(`CREATE TABLE IF NOT EXISTS poll_votes (
       poll_id UUID NOT NULL,
       user_id UUID NOT NULL,

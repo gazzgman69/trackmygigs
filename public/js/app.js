@@ -723,11 +723,13 @@ function buildHomeHTML(content, stats) {
   html += buildHomeHero(state, stats);
   html += buildHomeNeedsStrip(stats, state);
   html += '<div id="homeRebookSlot"></div>';
+  html += '<div id="homeFollowupSlot"></div>';
   html += buildHomeActionGrid();
   html += '</div>';
 
   content.innerHTML = html;
   paintHomeRebookCard();
+  paintHomeFollowupCard();
 
   // Busy hero renders a 7-day strip with the same id the legacy hydrate
   // helper expects, so we can reuse it without changes.
@@ -18828,6 +18830,140 @@ async function markInvoiceChased(invoiceId) {
 }
 window.paintInvoiceChaseStrip = paintInvoiceChaseStrip;
 window.markInvoiceChased = markInvoiceChased;
+
+// ── Post-gig follow-up ───────────────────────────────────────────────────────
+
+async function paintHomeFollowupCard() {
+  const slot = document.getElementById('homeFollowupSlot');
+  if (!slot) return;
+  let data;
+  try {
+    const resp = await fetch('/api/followup-suggestions');
+    if (!resp.ok) return;
+    data = await resp.json();
+  } catch (err) { return; }
+  window._followupData = data;
+  const bits = [];
+  (data.gigs || []).slice(0, 2).forEach(g => {
+    const d = new Date(g.date).toLocaleDateString('en-GB', { weekday: 'long' });
+    bits.push(`
+      <div style="margin:0 16px 10px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;">
+        <div style="font-size:13px;font-weight:600;">\uD83C\uDF89 How was ${escapeHtml(g.title)}?</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:2px;">A quick thank-you the day after (${d}) is when people say yes.${g.contact_name ? ' ' + escapeHtml(g.contact_name.split(' ')[0]) + '\u2019s email is on the gig.' : ''}</div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <span onclick="askForTestimonial('${escapeAttr(g.id)}')" style="flex:1.4;background:var(--accent);color:#000;border-radius:10px;padding:9px 0;font-size:12px;font-weight:700;text-align:center;cursor:pointer;">Ask for a testimonial</span>
+          <span onclick="skipFollowup('${escapeAttr(g.id)}')" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text-2);border-radius:10px;padding:9px 0;font-size:12px;font-weight:700;text-align:center;cursor:pointer;">Skip</span>
+        </div>
+      </div>`);
+  });
+  (data.pending || []).slice(0, 2).forEach(t => {
+    bits.push(`
+      <div style="margin:0 16px 10px;background:linear-gradient(135deg,rgba(240,165,0,.1),transparent);border:1px solid rgba(240,165,0,.4);border-radius:12px;padding:12px 14px;">
+        <div style="font-size:12px;font-style:italic;line-height:1.5;">\u201C${escapeHtml(t.quote.length > 140 ? t.quote.slice(0, 140) + '\u2026' : t.quote)}\u201D</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:4px;">${escapeHtml([t.name, t.context].filter(Boolean).join(' \u00B7 '))} \u00B7 <b style="color:var(--accent);">waiting for your approval</b></div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <span onclick="approveTestimonial('${t.id}')" style="flex:1.4;background:var(--accent);color:#000;border-radius:10px;padding:9px 0;font-size:12px;font-weight:700;text-align:center;cursor:pointer;">Approve \u2192 EPK</span>
+          <span onclick="binTestimonial('${t.id}')" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text-2);border-radius:10px;padding:9px 0;font-size:12px;font-weight:700;text-align:center;cursor:pointer;">Bin</span>
+        </div>
+      </div>`);
+  });
+  slot.innerHTML = bits.join('');
+}
+
+async function askForTestimonial(gigId) {
+  let out;
+  try {
+    const resp = await fetch('/api/followup/' + encodeURIComponent(gigId) + '/request', { method: 'POST' });
+    out = await resp.json();
+    if (!resp.ok) throw new Error(out.error || 'failed');
+  } catch (err) {
+    showToast(err.message || 'Could not create the link.');
+    return;
+  }
+  const link = window.location.origin + out.url;
+  const first = (out.contact_name || '').split(' ')[0];
+  const me = (window._currentUser && window._currentUser.name) || '';
+  const subject = encodeURIComponent('Thank you!');
+  const bodyTxt = encodeURIComponent('Hi' + (first ? ' ' + first : '') + ',\n\nThank you again for having us, we had a brilliant night. If you have two minutes, a line about how it went would mean a lot:\n\n' + link + '\n\nThanks,\n' + me);
+  if (out.contact_email) {
+    window.location.href = 'mailto:' + out.contact_email + '?subject=' + subject + '&body=' + bodyTxt;
+  } else if (navigator.clipboard) {
+    await navigator.clipboard.writeText(link);
+    showToast('Link copied. Send it to them however you like.');
+  }
+  const data = window._followupData || {};
+  if (!data.review_link) setTimeout(openReviewLinkChase, 1200);
+  paintHomeFollowupCard();
+}
+
+async function skipFollowup(gigId) {
+  try { await fetch('/api/followup/' + encodeURIComponent(gigId) + '/skip', { method: 'POST' }); }
+  catch (err) { /* card refresh below tells the truth */ }
+  paintHomeFollowupCard();
+}
+
+async function approveTestimonial(id) {
+  try {
+    const resp = await fetch('/api/testimonials/' + id + '/approve', { method: 'POST' });
+    if (!resp.ok) throw new Error();
+    showToast('On your EPK. Nice one.');
+  } catch (err) { showToast('Could not approve that.'); }
+  paintHomeFollowupCard();
+}
+
+async function binTestimonial(id) {
+  try { await fetch('/api/testimonials/' + id + '/bin', { method: 'POST' }); }
+  catch (err) { /* refresh shows the truth */ }
+  paintHomeFollowupCard();
+}
+
+function openReviewLinkChase() {
+  const existing = document.getElementById('reviewChaseSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'reviewChaseSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+    + '<div style="font-size:14px;font-weight:700;text-align:center;">\u2B50 Happy clients could be posting this straight to Google</div>'
+    + '<div style="font-size:12px;color:var(--text-2);text-align:center;margin:6px 0 12px;line-height:1.5;">Your testimonial page works, but the Google step is off until you add your review link. Two minutes, once, and every future client gets bounced to Google with their words pre-copied.</div>'
+    + '<a href="https://business.google.com/reviews" target="_blank" rel="noopener" style="display:block;text-align:center;background:#4285F4;color:#fff;border-radius:10px;padding:13px;font-size:13px;font-weight:700;text-decoration:none;margin-bottom:8px;">Get my link (opens Google Business reviews)</a>'
+    + '<a href="https://business.google.com/create" target="_blank" rel="noopener" style="display:block;text-align:center;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;text-decoration:none;margin-bottom:8px;">I don\u2019t have a Business Profile \u2192 create one</a>'
+    + '<button onclick="pasteReviewLink()" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:8px;">Paste a link I already have</button>'
+    + '<div style="font-size:10px;color:var(--text-3);text-align:center;line-height:1.6;margin-bottom:8px;">Creating a profile takes about 10 minutes, then Google verifies you over a few days (often a short video). Your review link appears once that\u2019s done; pop back and paste it. A Facebook page review link works too. This card keeps appearing until a link is saved.</div>'
+    + '<button onclick="document.getElementById(\'reviewChaseSheet\').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Later</button>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) sheet.remove(); });
+  document.body.appendChild(sheet);
+}
+
+async function pasteReviewLink() {
+  const url = prompt('Paste your Google (or Facebook) review link:');
+  if (!url) return;
+  try {
+    const resp = await fetch('/api/me/review-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url.trim() }),
+    });
+    const out = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(out.error || 'failed');
+    const sheet = document.getElementById('reviewChaseSheet');
+    if (sheet) sheet.remove();
+    if (window._followupData) window._followupData.review_link = url.trim();
+    showToast('Saved. Clients now get the paste-to-Google step.');
+  } catch (err) {
+    showToast(err.message || 'Could not save that link.');
+  }
+}
+
+window.paintHomeFollowupCard = paintHomeFollowupCard;
+window.askForTestimonial = askForTestimonial;
+window.skipFollowup = skipFollowup;
+window.approveTestimonial = approveTestimonial;
+window.binTestimonial = binTestimonial;
+window.openReviewLinkChase = openReviewLinkChase;
+window.pasteReviewLink = pasteReviewLink;
 
 // ── Rebooking radar ──────────────────────────────────────────────────────────
 
