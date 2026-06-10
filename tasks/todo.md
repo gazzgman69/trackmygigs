@@ -1,56 +1,35 @@
-# Findings clear-down (2026-06-10)
+# Landing page refresh + premium purchase check (2026-06-10)
 
-Working tasks/FINDINGS.md to zero, signed off by Gareth ("work through all of these").
-Three waves, one push + deploy + verify per wave.
+## Phase 1 — Purchase flow
 
-## Wave A — Sync trust
+- [ ] Fix Stripe checkout: omit trial_period_days when 0 (Stripe rejects 0, so anyone who
+      already used a trial can never check out — found live with Gareth's account)
+- [ ] Verify live: fresh checkout URL returned for a returning-trial user; logged-out 401
+      bounce to /app?intent=premium still works; intent handler kicks off checkout post-login
 
-- [x] (F3) Resurrection: tombstone table for deleted google_event_ids; gig delete verifies the
-      Google delete with retry and records the tombstone either way; pull skips tombstoned events
-- [x] (F4) Connect-flow import: per-event checkbox review in the modal (default ticked)
-- [x] (F6) sync-now: report skipped (read-only imports, deleted) separately from failed, with
-      readable reasons; failures sheet UI updated to match
-- [x] (F7) Single push endpoint: fix the false-failure response
+## Phase 2 — Content refresh (public/landing.html, keep the visual identity)
 
-## Wave B — Identity + flags
+- [ ] Phone mock: update dock + cards to today's Home (5-tab nav, hero card, Needs You)
+- [ ] New feature sections for everything built since April:
+      dep network (offers, two-step confirm, cascade premium), urgent-gig marketplace
+      (first-come vs pick, maps), Find Musicians directory, chat (gig/contact/setlist
+      sharing, group threads, read receipts), EPK (gallery, video, audio, testimonials),
+      public availability share + embed + next-gig widget, setlists/ChordPro/print,
+      Google Calendar + Sheets two-way sync, push reminders, receipts photos +
+      accountant zip, invoice line items + saved items + pay links
+- [ ] Refresh stale copy in existing "What if" rows; keep mileage/tax rows (still true)
+- [ ] Pricing truth-check: free list vs premium list vs actual app gates
+- [ ] FAQ pass for accuracy
+- [ ] DECISION (Gareth): invented stats (10k+ gigs, 500+ musicians) and fictional
+      testimonials — keep, soften, or swap for honest capability stats?
+- [ ] DECISION (Gareth): landing lists "EPK page" as FREE but the app gates EPK behind
+      premium (and the stated principle is premium covers EPK) — which is right?
 
-- [x] (F5) startChatWith/openChatThread closes other open panel-overlays so the thread is visible
-- [x] (F8) Premium: subscription_tier is canonical; migrate users.premium=TRUE into it;
-      dev-set-premium and any other writers set both
-- [x] (F9) Contacts: backfill linked_user_id <-> contact_user_id both ways; writers set both
-- [x] (F10) sheets status: surface needs_reconnect honestly (same signal the calendar banner uses)
+## Phase 3 — Verify
 
-## Wave C — UX batch
+- [ ] Browser pass: sections, pricing toggle, checkout CTA both auth states, console clean
+- [ ] Deploy + grep + tick
 
-- [x] (F11) Marketplace detail: venue address + Open in Maps (reuse openDirections)
-- [x] (F12) Two-step accept: offers.confirm_mode, status 'provisional', sender Confirm/Release,
-      diary stamp + contacts only on confirm; send-dep toggle; both Offers tabs updated
-- [x] (F13) Swipe-left (touch) or long-press a message bubble -> action sheet: Copy / Delete (own)
-- [x] (F14) Saved invoice items: invoice_saved_items table, auto-save on invoice create,
-      autocomplete + rate autofill in itemise rows, small manager sheet
-- [x] (F15) Boot splash in index.html, removed on first render
-- [x] (F16) Marketplace empty state: distinguish "none exist" vs "filtered out"; Show-all button
-- [x] (F17) My Network double header removed
-- [x] (F18) Directory avatar onerror falls back to initials
-- [x] (F19) Quick-log: "next <weekday>" means the week after; "this <weekday>"/bare = upcoming
-- [x] (F20) Quick-log save: 12s timeout, inline error, sheet stays open
-- [x] (F21) Receipts claimable figure: fix or relabel after reading the calculation
-- [x] (F22) Delete the three [SEC-TEST] expenses from Gareth's account
-- [x] (F24) Discover: ensure every mode bounds candidates before the per-row subqueries
+## Review
 
-## Ship ritual
-
-Per wave: node --check, batched commit, push, reload, curl + browser verification, tick here.
-
-## Review (2026-06-10)
-
-All findings cleared in three waves (commits b3c10a1..e13f51e), each deployed and
-verified live. Two findings were withdrawn after honest retests (resurrection was a
-tester-side duplicate; push false-error was a post-OAuth transient). Bonus catch:
-the Stripe webhook had the same premium-flag bug as dev-set-premium, so real paying
-customers would not have unlocked premium features. Verified live: provisional ->
-confirm stamps the diary, release does not; saved items autocomplete with rates;
-sync-now reports 0 failed; marketplace maps link; panel stacking fixed; boot splash;
-zero console errors. Deploy gotcha hit once: static files updated while the node
-process kept old routes — reload twice and verify a NEW route responds, not just
-/api/stats (lesson recorded).
+(to be completed)

@@ -115,10 +115,12 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
       // the webhook.
       customer: user.stripe_customer_id || undefined,
       customer_email: user.stripe_customer_id ? undefined : user.email,
-      // Trial period is 14 days for first-time subscribers, 0 days for
-      // anyone whose users.trial_consumed_at flag is already set.
+      // Trial period is 14 days for first-time subscribers. Stripe rejects
+      // trial_period_days: 0 outright ("minimum is 1"), so for returning
+      // trialists the key is omitted entirely and they pay from day 1 —
+      // previously this threw and blocked their checkout completely.
       subscription_data: {
-        trial_period_days: trialDays,
+        ...(trialDays > 0 ? { trial_period_days: trialDays } : {}),
         metadata: { tmg_user_id: String(user.id) },
       },
       // Session-level metadata too so the checkout.session.completed handler
