@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Gig Pack</title>
+<style>
+:root{--bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;--text:#E6EDF3;--text-2:#8B949E;--text-3:#6E7681;--accent:#F0A500;--accent-dim:rgba(240,165,0,.15);--success:#3FB950;--danger:#F85149;--info:#58A6FF;--dep:#A78BFA;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;padding-bottom:60px;}
+.note{background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);margin:10px;padding:10px 12px;border-radius:10px;font-size:12px;color:var(--text-2);}
+.note strong{color:var(--accent);}
+header{padding:14px 16px 2px;}
+.back{font-size:13px;color:var(--accent);margin-bottom:8px;}
+h1{font-size:20px;}
+.sub{font-size:12px;color:var(--text-2);margin-top:2px;}
+.timeline{margin:14px 16px 6px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:4px 14px;}
+.trow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);}
+.trow:last-child{border-bottom:none;}
+.trow .tm{font-size:15px;font-weight:800;width:52px;flex-shrink:0;}
+.trow .lbl{font-size:13px;font-weight:600;}
+.trow .d{font-size:11px;color:var(--text-2);margin-top:1px;}
+.trow.hot .tm{color:var(--accent);}
+.trow.leave .tm{color:var(--info);}
+.sec{padding:12px 16px 4px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;margin:6px 16px;padding:12px 14px;}
+.kv{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px;}
+.kv:last-child{border-bottom:none;}
+.kv .k{color:var(--text-2);font-size:12px;}
+.kv .v{font-weight:600;text-align:right;}
+.kv .v a{color:var(--info);text-decoration:none;}
+.headsup{font-size:11px;color:var(--text-2);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.5;}
+.headsup b{color:var(--text);}
+.share{display:block;text-align:center;background:var(--accent);color:#000;border-radius:12px;margin:14px 16px 6px;padding:14px;font-size:14px;font-weight:700;}
+.sharehint{font-size:10px;color:var(--text-3);text-align:center;margin:0 16px;}
+.chatpreview{margin:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;}
+.cp-label{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}
+.bubble{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px 12px;max-width:88%;}
+.bubble .bt{font-size:12px;font-weight:700;color:var(--accent);}
+.bubble .line{font-size:12px;margin-top:4px;color:var(--text);}
+.bubble .line span{color:var(--text-2);}
+.bubble .open{font-size:11px;color:var(--info);font-weight:600;margin-top:6px;}
+</style>
+</head>
+<body>
+<div class="note"><strong>MOCKUP — not wired.</strong> The Gig Pack: one glanceable day sheet per gig, opened from the gig detail or the calendar row. Assembles fields the app already has (times, venue, contact, dress code, setlist, leave-by, venue heads-up) plus three new optional fields: soundcheck time, on-stage time, parking note. "Share to band chat" drops a live card into the thread so nobody asks what time load-in is.</div>
+
+<header>
+  <div class="back">&lsaquo; Back to gig</div>
+  <h1>Gig Pack · The Vents</h1>
+  <div class="sub">Saturday 20 June · Stratton Court Barn, Bicester</div>
+</header>
+
+<div class="timeline">
+  <div class="trow leave"><span class="tm">16:30</span><div><div class="lbl">Leave home</div><div class="d">27 mi · allow 60 min drive + 30 min load</div></div></div>
+  <div class="trow"><span class="tm">17:30</span><div><div class="lbl">Load-in</div><div class="d">Ground level, double doors stage left</div></div></div>
+  <div class="trow"><span class="tm">18:30</span><div><div class="lbl">Soundcheck</div><div class="d">Sound guy: Dave</div></div></div>
+  <div class="trow hot"><span class="tm">20:00</span><div><div class="lbl">On stage · Set 1</div><div class="d">60 min · setlist: Function Bangers Vol 2</div></div></div>
+  <div class="trow hot"><span class="tm">21:30</span><div><div class="lbl">Set 2</div><div class="d">60 min · finish 22:30</div></div></div>
+</div>
+
+<div class="sec">Essentials</div>
+<div class="card">
+  <div class="kv"><span class="k">Venue contact</span><span class="v">Sarah · <a>07700 900123</a></span></div>
+  <div class="kv"><span class="k">Address</span><span class="v"><a>Open in Maps &rsaquo;</a></span></div>
+  <div class="kv"><span class="k">Parking</span><span class="v">On-site, behind the barn</span></div>
+  <div class="kv"><span class="k">Dress code</span><span class="v">All black</span></div>
+  <div class="kv"><span class="k">Fee</span><span class="v" style="color:var(--success);">£480 · invoice sent</span></div>
+  <div class="kv"><span class="k">Setlist</span><span class="v"><a>Function Bangers Vol 2 &rsaquo;</a></span></div>
+  <div class="headsup"><b>Venue heads-up:</b> Sound limiter at 95dB · Power: check on arrival (disputed) · From musicians who've played here.</div>
+</div>
+
+<a class="share">Share pack to band chat</a>
+<div class="sharehint">Sends a card to the gig thread. If the times change, the card updates itself.</div>
+
+<div class="chatpreview">
+  <div class="cp-label">What the band sees in chat</div>
+  <div class="bubble">
+    <div class="bt">&#128203; Gig Pack · Sat 20 June</div>
+    <div class="line">The Vents · Stratton Court Barn <span>· all black</span></div>
+    <div class="line"><span>Load-in</span> 17:30 · <span>soundcheck</span> 18:30 · <span>on</span> 20:00</div>
+    <div class="line"><span>Parking behind the barn · limiter 95dB</span></div>
+    <div class="open">Open full pack &rsaquo;</div>
+  </div>
+</div>
+</body>
+</html>

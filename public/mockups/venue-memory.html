@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Venue Memory</title>
+<style>
+:root{--bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;--text:#E6EDF3;--text-2:#8B949E;--text-3:#6E7681;--accent:#F0A500;--accent-dim:rgba(240,165,0,.15);--success:#3FB950;--danger:#F85149;--info:#58A6FF;--dep:#A78BFA;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;padding-bottom:60px;}
+.note{background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);margin:10px;padding:10px 12px;border-radius:10px;font-size:12px;color:var(--text-2);}
+.note strong{color:var(--accent);}
+header{padding:14px 16px 2px;}
+.back{font-size:13px;color:var(--accent);margin-bottom:8px;}
+h1{font-size:22px;}
+.addr{font-size:12px;color:var(--text-2);margin-top:2px;}
+.maps{display:inline-block;margin-top:8px;font-size:12px;color:var(--info);font-weight:600;}
+.statrow{display:flex;gap:8px;padding:12px 16px 4px;}
+.stat{flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;text-align:center;}
+.stat b{display:block;font-size:17px;}
+.stat span{font-size:10px;color:var(--text-2);}
+.sec{padding:14px 16px 4px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;margin:6px 16px;padding:12px 14px;}
+.gigrow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;}
+.gigrow:last-child{border-bottom:none;}
+.gigrow .d{color:var(--text-2);font-size:11px;}
+.fee{color:var(--success);font-weight:700;}
+.privnote{font-size:13px;line-height:1.5;color:var(--text);}
+.privtag{font-size:9px;color:var(--text-3);border:1px solid var(--border);border-radius:6px;padding:1px 6px;margin-left:6px;font-weight:700;text-transform:uppercase;}
+.editlink{font-size:11px;color:var(--accent);font-weight:600;margin-top:8px;display:inline-block;}
+.fact{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);}
+.fact:last-child{border-bottom:none;}
+.fact .ico{font-size:16px;width:24px;text-align:center;flex-shrink:0;}
+.fact .body{flex:1;}
+.fact .t{font-size:13px;font-weight:600;}
+.fact .conf{font-size:10px;color:var(--text-3);margin-top:2px;}
+.fact .disputed{color:var(--danger);}
+.thumbs{display:flex;gap:6px;flex-shrink:0;}
+.thumbs span{font-size:13px;border:1px solid var(--border);border-radius:8px;padding:3px 8px;color:var(--text-2);}
+.addfact{display:block;text-align:center;background:var(--surface);border:1px dashed var(--border);border-radius:10px;margin:8px 16px;padding:11px;font-size:12px;color:var(--accent);font-weight:600;}
+.gate{font-size:10px;color:var(--text-3);text-align:center;margin:4px 16px 0;}
+.checkin{background:linear-gradient(135deg,rgba(88,166,255,.14),transparent);border:1px solid rgba(88,166,255,.4);border-radius:12px;margin:6px 16px;padding:12px 14px;}
+.checkin .q{font-size:13px;font-weight:600;}
+.checkin .sub{font-size:11px;color:var(--text-2);margin-top:2px;}
+.checkin .btns{display:flex;gap:8px;margin-top:10px;}
+.checkin .btns span{flex:1;text-align:center;border-radius:8px;padding:8px;font-size:12px;font-weight:700;}
+.yes{background:var(--success);color:#000;}
+.no{background:var(--card);border:1px solid var(--border);color:var(--text-2);}
+</style>
+</head>
+<body>
+<div class="note"><strong>MOCKUP — not wired.</strong> Venue page, opened from any gig at this venue or from a new Venues list. Two layers: YOUR history and private notes (only you), plus a community heads-up of structured facts. Writes are gated: only musicians with a logged gig here can add or confirm. Nothing reputational allowed in the shared layer.</div>
+
+<header>
+  <div class="back">&lsaquo; Back</div>
+  <h1>Stratton Court Barn</h1>
+  <div class="addr">Stratton Audley, Bicester OX27 9AT</div>
+  <a class="maps">Open in Maps &rsaquo;</a>
+</header>
+
+<div class="statrow">
+  <div class="stat"><b>4</b><span>gigs played</span></div>
+  <div class="stat"><b style="color:var(--success);">£1,076</b><span>earned here</span></div>
+  <div class="stat"><b>27 mi</b><span>from home</span></div>
+</div>
+
+<div class="sec">Community heads-up</div>
+<div class="card">
+  <div class="fact"><span class="ico">&#128266;</span><div class="body"><div class="t">Sound limiter · 95dB</div><div class="conf">Confirmed by 3 musicians · last confirmed Mar 2026</div></div><div class="thumbs"><span>&#128077;</span><span>&#128078;</span></div></div>
+  <div class="fact"><span class="ico">&#128663;</span><div class="body"><div class="t">Parking · on-site, behind the barn</div><div class="conf">Confirmed by 2 musicians · Jan 2026</div></div><div class="thumbs"><span>&#128077;</span><span>&#128078;</span></div></div>
+  <div class="fact"><span class="ico">&#128230;</span><div class="body"><div class="t">Load-in · ground level, double doors stage left</div><div class="conf">Confirmed by 4 musicians · Feb 2026</div></div><div class="thumbs"><span>&#128077;</span><span>&#128078;</span></div></div>
+  <div class="fact"><span class="ico">&#9889;</span><div class="body"><div class="t">Power · plenty of 13A by the stage</div><div class="conf disputed">Disputed · 1 confirm, 1 flag · check on arrival</div></div><div class="thumbs"><span>&#128077;</span><span>&#128078;</span></div></div>
+</div>
+<a class="addfact">+ Add a heads-up (limiter, parking, load-in, power, PA, stage)</a>
+<div class="gate">You can add or confirm because you've played here. Facts are logistics only, no venue reviews.</div>
+
+<div class="checkin">
+  <div class="q">You played here Saturday. Limiter still at 95dB?</div>
+  <div class="sub">One tap keeps the heads-up fresh for everyone. Asked once, only after a gig here.</div>
+  <div class="btns"><span class="yes">Yes, still there</span><span class="no">It's changed / gone</span></div>
+</div>
+
+<div class="sec">My notes <span class="privtag">Private</span></div>
+<div class="card">
+  <div class="privnote">Sound guy is Dave, sorted us early both times. Use the goods lift for keys, stairs are a nightmare. They feed the band if you ask in advance. Promoter pays cash on the night.</div>
+  <a class="editlink">Edit notes</a>
+</div>
+
+<div class="sec">My gigs here</div>
+<div class="card">
+  <div class="gigrow"><div><div>[QA] The Vents</div><div class="d">2 May 2026 · 20:00–22:00</div></div><span class="fee">£269</span></div>
+  <div class="gigrow"><div><div>The Vents</div><div class="d">14 Feb 2026 · 19:30–22:30</div></div><span class="fee">£320</span></div>
+  <div class="gigrow"><div><div>Club Kudo function</div><div class="d">8 Nov 2025 · 20:00–23:00</div></div><span class="fee">£287</span></div>
+  <div class="gigrow"><div><div>Wedding · Hughes</div><div class="d">21 Jun 2025 · 18:00–23:00</div></div><span class="fee">£200</span></div>
+</div>
+</body>
+</html>

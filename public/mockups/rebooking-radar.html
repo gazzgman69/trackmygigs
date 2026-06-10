@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Rebooking Radar</title>
+<style>
+:root{--bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;--text:#E6EDF3;--text-2:#8B949E;--text-3:#6E7681;--accent:#F0A500;--accent-dim:rgba(240,165,0,.15);--success:#3FB950;--danger:#F85149;--info:#58A6FF;--dep:#A78BFA;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;padding-bottom:60px;}
+.note{background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);margin:10px;padding:10px 12px;border-radius:10px;font-size:12px;color:var(--text-2);}
+.note strong{color:var(--accent);}
+header{padding:14px 16px 6px;}
+h1{font-size:22px;}
+.sub{font-size:12px;color:var(--text-2);margin-top:2px;line-height:1.5;}
+.radar{margin:10px 16px;background:linear-gradient(135deg,rgba(63,185,80,.12),transparent);border:1px solid rgba(63,185,80,.4);border-radius:14px;padding:14px;}
+.radar.wed{background:linear-gradient(135deg,rgba(167,139,250,.12),transparent);border-color:rgba(167,139,250,.4);}
+.tag{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;border-radius:6px;padding:2px 7px;display:inline-block;}
+.tag.rb{color:var(--success);background:rgba(63,185,80,.14);border:1px solid rgba(63,185,80,.4);}
+.tag.an{color:var(--dep);background:rgba(167,139,250,.14);border:1px solid rgba(167,139,250,.4);}
+.rt{font-size:15px;font-weight:700;margin-top:8px;}
+.rd{font-size:12px;color:var(--text-2);margin-top:4px;line-height:1.55;}
+.rd b{color:var(--text);}
+.fee{color:var(--success);font-weight:700;}
+.btns{display:flex;gap:8px;margin-top:12px;}
+.btns span{border-radius:10px;padding:10px 0;font-size:12px;font-weight:700;text-align:center;}
+.b1{flex:1.4;background:var(--accent);color:#000;}
+.b2{flex:1;background:var(--card);border:1px solid var(--border);color:var(--text-2);}
+.snz{font-size:10px;color:var(--text-3);text-align:center;margin-top:8px;}
+.homewrap{margin:18px 16px 6px;}
+.cp-label{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}
+.homecard{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;}
+.homecard .ico{font-size:20px;}
+.homecard .t{font-size:13px;font-weight:600;}
+.homecard .s{font-size:11px;color:var(--text-2);margin-top:1px;}
+.homecard .n{margin-left:auto;background:var(--success);color:#000;font-size:11px;font-weight:800;border-radius:10px;padding:2px 8px;}
+.rules{margin:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;}
+.rules .h{font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}
+.rules li{font-size:12px;color:var(--text-2);margin:6px 0 6px 16px;line-height:1.5;}
+.rules b{color:var(--text);}
+</style>
+</head>
+<body>
+<div class="note"><strong>MOCKUP — not wired.</strong> Rebooking Radar: the app watches your own gig history and surfaces revenue you can re-earn. No AI involved, pure date arithmetic. Cards appear ~10 months after a gig (so you ask before they book someone else), live in a small "Worth a follow-up" section, and never auto-send anything. Message buttons open a pre-addressed chat or email YOU write.</div>
+
+<header>
+  <h1>Worth a follow-up</h1>
+  <div class="sub">Gigs from your history that tend to come around again. Dismiss any you don't want; snoozed cards come back in a month.</div>
+</header>
+
+<div class="radar">
+  <span class="tag rb">Rebooking</span>
+  <div class="rt">The Heyford · last played 20 June 2025</div>
+  <div class="rd">You played here <b>this time last year</b> for <span class="fee">£320</span>. Venues book summer slots early, now is a good time to ask about this year.</div>
+  <div class="btns"><span class="b1">Message venue</span><span class="b2">Dismiss</span></div>
+  <div class="snz">Snooze 1 month</div>
+</div>
+
+<div class="radar wed">
+  <span class="tag an">Anniversary</span>
+  <div class="rt">Hughes wedding · 21 June 2025</div>
+  <div class="rd">Their <b>first anniversary</b> is next month. Some couples book the wedding band for the party, a short note costs nothing.</div>
+  <div class="btns"><span class="b1">Message Anthony</span><span class="b2">Dismiss</span></div>
+  <div class="snz">Snooze 1 month</div>
+</div>
+
+<div class="radar">
+  <span class="tag rb">Regular spot</span>
+  <div class="rt">Club Kudo · Stratton Court Barn</div>
+  <div class="rd">You've played here <b>4 times, roughly every 3 months</b>, averaging <span class="fee">£269</span>. It's been 4 months since the last one.</div>
+  <div class="btns"><span class="b1">Message venue</span><span class="b2">Dismiss</span></div>
+  <div class="snz">Snooze 1 month</div>
+</div>
+
+<div class="homewrap">
+  <div class="cp-label">How it surfaces on Home (no new tab, no nagging)</div>
+  <div class="homecard"><span class="ico">&#128257;</span><div><div class="t">Worth a follow-up</div><div class="s">3 past gigs look rebookable · ~£858 if they land</div></div><span class="n">3</span></div>
+</div>
+
+<div class="rules">
+  <div class="h">The rules it follows</div>
+  <li><b>10-month trigger</b> for one-off venue gigs, so you beat the rebooking window.</li>
+  <li><b>11-month trigger</b> for weddings, framed as an anniversary note.</li>
+  <li><b>Gap trigger</b> for regulars: flags when the usual rhythm is overdue.</li>
+  <li>Needs a contact or venue to message; otherwise the card shows "add a contact" first.</li>
+  <li>Dismissed cards never return for that gig. Everything is manual send, nothing automatic.</li>
+</div>
+</body>
+</html>
