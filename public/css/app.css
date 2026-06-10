@@ -132,7 +132,10 @@ body {
 }
 
 .greeting {
-  font-size: var(--font-size-base);
+  /* Fixed px on purpose: the rest of the UI is px-sized, so letting this
+     one line follow iOS Dynamic Type made it balloon past every screen
+     title on phones with a larger system text size. */
+  font-size: 16px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
