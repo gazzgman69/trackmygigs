@@ -9737,6 +9737,7 @@ async function openGigDetail(gigId) {
 
   // Lineup section renders sync from the gig row.
   renderGigLineupSection(gig);
+  renderGigSplitsSection(gig);
 
   // Show mileage: use stored value first, then fetch in background if needed
   const mileageEl = document.getElementById('gigDetailMileage');
@@ -9990,7 +9991,7 @@ async function addLineupMember(gigId) {
   const { lineup } = _getCachedGigLineup(gigId);
   lineup.push({ name: trimmed, role: role.trim() || null, status: 'pending' });
   const gig = await _patchGigLineup(gigId, lineup);
-  if (gig) renderGigLineupSection(gig);
+  if (gig) { renderGigLineupSection(gig); renderGigSplitsSection(gig); }
 }
 window.addLineupMember = addLineupMember;
 
@@ -10001,7 +10002,7 @@ async function cycleLineupStatus(gigId, index) {
   const current = order.indexOf(lineup[index].status);
   lineup[index].status = order[(current + 1) % order.length];
   const gig = await _patchGigLineup(gigId, lineup);
-  if (gig) renderGigLineupSection(gig);
+  if (gig) { renderGigLineupSection(gig); renderGigSplitsSection(gig); }
 }
 window.cycleLineupStatus = cycleLineupStatus;
 
@@ -10010,7 +10011,7 @@ async function removeLineupMember(gigId, index) {
   if (index < 0 || index >= lineup.length) return;
   lineup.splice(index, 1);
   const gig = await _patchGigLineup(gigId, lineup);
-  if (gig) renderGigLineupSection(gig);
+  if (gig) { renderGigLineupSection(gig); renderGigSplitsSection(gig); }
 }
 window.removeLineupMember = removeLineupMember;
 
