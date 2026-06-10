@@ -789,7 +789,7 @@ router.post('/delete-account', async (req, res) => {
       await run('DELETE FROM calendar_syncs WHERE user_id = $1', [userId]);
       await run('DELETE FROM blocked_dates WHERE user_id = $1', [userId]);
       await run('DELETE FROM invoices WHERE user_id = $1', [userId]);
-      await run('DELETE FROM contacts WHERE user_id = $1', [userId]);
+      await run('DELETE FROM contacts WHERE owner_id = $1', [userId]);
       await run('UPDATE contacts SET linked_user_id = NULL WHERE linked_user_id = $1', [userId]);
       await run('UPDATE contacts SET contact_user_id = NULL WHERE contact_user_id = $1', [userId]);
       await run('DELETE FROM gigs WHERE user_id = $1', [userId]);
