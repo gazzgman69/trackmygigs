@@ -4326,6 +4326,49 @@ router.patch('/gigs/:id/setlist', async (req, res) => {
 // match the mockup's Premium badge; the free UI shows a teaser instead.
 const LINEUP_STATUSES = new Set(['pending', 'confirmed', 'declined']);
 
+// Fee splitter rides on the lineup (same premium gate). The whole split
+// object is replaced in one call: { costs, mode, leader_cut, members:
+// [{name, amount, paid}] }. Amounts are validated to be non-negative
+// numbers; the client does the arithmetic, the server just refuses junk.
+router.patch('/gigs/:id/splits', async (req, res) => {
+  try {
+    const tierR = await db.query('SELECT subscription_tier FROM users WHERE id = $1', [req.user.id]);
+    if ((tierR.rows[0] || {}).subscription_tier !== 'premium') {
+      return res.status(403).json({ error: 'premium_required', message: 'The fee splitter is a premium feature.' });
+    }
+    const s = req.body.splits;
+    if (s === null) {
+      const cleared = await db.query(
+        `UPDATE gigs SET fee_splits = NULL WHERE id = $1 AND user_id = $2 RETURNING *`,
+        [req.params.id, req.user.id]
+      );
+      if (cleared.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
+      return res.json(cleared.rows[0]);
+    }
+    if (!s || typeof s !== 'object') return res.status(400).json({ error: 'splits must be an object' });
+    const num = (v) => { const n = parseFloat(v); return isNaN(n) || n < 0 ? 0 : Math.round(n * 100) / 100; };
+    const clean = {
+      costs: num(s.costs),
+      mode: ['equal', 'leader', 'custom'].includes(s.mode) ? s.mode : 'equal',
+      leader_cut: num(s.leader_cut),
+      members: (Array.isArray(s.members) ? s.members : []).slice(0, 20).map(m => ({
+        name: String((m && m.name) || '').trim().slice(0, 120),
+        amount: num(m && m.amount),
+        paid: !!(m && m.paid),
+      })).filter(m => m.name),
+    };
+    const result = await db.query(
+      `UPDATE gigs SET fee_splits = $1::jsonb WHERE id = $2 AND user_id = $3 RETURNING *`,
+      [JSON.stringify(clean), req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update gig splits error:', error);
+    res.status(500).json({ error: 'Failed to update splits' });
+  }
+});
+
 router.patch('/gigs/:id/lineup', async (req, res) => {
   try {
     const tierR = await db.query('SELECT subscription_tier FROM users WHERE id = $1', [req.user.id]);

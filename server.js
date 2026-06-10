@@ -1880,6 +1880,7 @@ async function runMigrations() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS chased_at TIMESTAMPTZ`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS fee_splits JSONB`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_documents_share_token ON user_documents (share_token) WHERE share_token IS NOT NULL`);
     await db.query(`CREATE TABLE IF NOT EXISTS rebook_dismissals (
       user_id UUID NOT NULL,

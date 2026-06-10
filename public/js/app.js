@@ -9680,6 +9680,14 @@ async function openGigDetail(gigId) {
       </div>
       <div id="gigLineupBody"></div>
     </div>
+    <!-- Fee splitter (Premium, rides on lineup) -->
+    <div style="padding:16px 20px;border-top:1px solid var(--border);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Who gets what</div>
+        <span style="font-size:9px;font-weight:700;color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:2px 6px;text-transform:uppercase;">Premium</span>
+      </div>
+      <div id="gigSplitsBody"></div>
+    </div>
     <!-- Setlist -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
@@ -9783,6 +9791,132 @@ const LINEUP_STATUS_META = {
   pending: { label: 'Pending', color: 'var(--warning)', bg: 'var(--warning-dim)' },
   declined: { label: 'Declined', color: 'var(--danger)', bg: 'rgba(248,81,73,.12)' }
 };
+
+function renderGigSplitsSection(gig) {
+  const el = document.getElementById('gigSplitsBody');
+  if (!el) return;
+  const lineup = Array.isArray(gig.lineup) ? gig.lineup.filter(m => m && m.name) : [];
+  const fee = parseFloat(gig.fee) > 0 ? parseFloat(gig.fee) : 0;
+  if (!lineup.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-3);">Add a lineup above and the splitter appears: fee in, costs off the top, everyone\u2019s share and who\u2019s been paid.</div>';
+    return;
+  }
+  const s = (gig.fee_splits && typeof gig.fee_splits === 'object') ? gig.fee_splits : { costs: 0, mode: 'equal', leader_cut: 0, members: [] };
+  const mode = s.mode || 'equal';
+  const costs = parseFloat(s.costs) || 0;
+  const leaderCut = parseFloat(s.leader_cut) || 0;
+  const pot = Math.max(0, fee - costs);
+  const saved = {};
+  (s.members || []).forEach(m => { saved[m.name] = m; });
+  // Compute amounts per mode. Member 0 is treated as the leader (the gig
+  // owner adds themselves first in practice).
+  const n = lineup.length;
+  const members = lineup.map((m, i) => {
+    const prev = saved[m.name] || {};
+    let amount;
+    if (mode === 'custom') {
+      amount = prev.amount != null ? parseFloat(prev.amount) : Math.floor((pot / n) * 100) / 100;
+    } else if (mode === 'leader') {
+      const rest = Math.max(0, pot - leaderCut);
+      amount = i === 0 ? leaderCut + rest / n : rest / n;
+    } else {
+      amount = pot / n;
+    }
+    return { name: m.name, role: m.role || '', amount: Math.round(amount * 100) / 100, paid: !!prev.paid };
+  });
+  const sum = members.reduce((a, m) => a + m.amount, 0);
+  const off = Math.abs(sum - pot) > 0.05;
+  const modeBtn = (id, label) => `<span onclick="setSplitMode('${escapeAttr(gig.id)}','${id}')" style="flex:1;text-align:center;border:1px solid ${mode === id ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:7px;font-size:12px;cursor:pointer;${mode === id ? 'background:var(--accent);color:#000;font-weight:700;' : 'color:var(--text-2);'}">${label}</span>`;
+  el.innerHTML = `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Gig fee</span><b>\u00A3${Math.round(fee)}</b></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Costs off the top</span><input id="splitCosts" type="number" min="0" value="${costs || ''}" placeholder="0" onchange="saveGigSplits('${escapeAttr(gig.id)}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:6px 8px;width:84px;text-align:right;"></div>
+      ${mode === 'leader' ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Your cut first (\u00A3)</span><input id="splitLeaderCut" type="number" min="0" value="${leaderCut || ''}" placeholder="0" onchange="saveGigSplits('${escapeAttr(gig.id)}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:6px 8px;width:84px;text-align:right;"></div>` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Pot to split between ${n}</span><b style="color:var(--success);font-size:15px;">\u00A3${Math.round(pot)}</b></div>
+      <div style="display:flex;gap:6px;margin-top:6px;">${modeBtn('equal', 'Equal')}${modeBtn('leader', 'Leader cut')}${modeBtn('custom', 'Custom')}</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:4px 14px;margin-top:8px;">
+      ${members.map((m, i) => `
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 0;${i < members.length - 1 ? 'border-bottom:1px solid var(--border);' : ''}">
+          <div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;">${escapeHtml(m.name)}${i === 0 ? ' <span style="font-size:9px;color:var(--text-3);">leader</span>' : ''}</div>${m.role ? `<div style="font-size:10px;color:var(--text-3);">${escapeHtml(m.role)}</div>` : ''}</div>
+          ${mode === 'custom'
+            ? `<input type="number" min="0" data-split-name="${escapeHtml(m.name)}" value="${m.amount}" onchange="saveGigSplits('${escapeAttr(gig.id)}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:6px 8px;width:74px;text-align:right;">`
+            : `<b style="font-size:14px;">\u00A3${m.amount.toFixed(m.amount % 1 ? 2 : 0)}</b>`}
+          <span onclick="toggleSplitPaid('${escapeAttr(gig.id)}','${escapeAttr(m.name)}')" style="font-size:10px;font-weight:700;border-radius:8px;padding:5px 10px;cursor:pointer;flex-shrink:0;${m.paid ? 'background:var(--success);color:#000;' : 'background:var(--surface);border:1px solid var(--border);color:var(--text-2);'}">${m.paid ? 'Paid \u2713' : 'Mark paid'}</span>
+        </div>`).join('')}
+      ${off && mode === 'custom' ? `<div style="font-size:11px;color:var(--danger);padding:8px 0;">Splits add up to \u00A3${sum.toFixed(2)}, pot is \u00A3${pot.toFixed(2)}.</div>` : ''}
+      ${!fee ? '<div style="font-size:11px;color:var(--text-3);padding:8px 0;">Set the gig fee to make the numbers real.</div>' : ''}
+    </div>`;
+}
+
+function _collectSplits(gig) {
+  const mode = (gig.fee_splits && gig.fee_splits.mode) || 'equal';
+  const costsEl = document.getElementById('splitCosts');
+  const cutEl = document.getElementById('splitLeaderCut');
+  const lineup = Array.isArray(gig.lineup) ? gig.lineup.filter(m => m && m.name) : [];
+  const saved = {};
+  ((gig.fee_splits && gig.fee_splits.members) || []).forEach(m => { saved[m.name] = m; });
+  const members = lineup.map(m => {
+    const customEl = document.querySelector(`[data-split-name="${CSS.escape(m.name)}"]`);
+    const prev = saved[m.name] || {};
+    return {
+      name: m.name,
+      amount: customEl ? parseFloat(customEl.value) || 0 : (prev.amount || 0),
+      paid: !!prev.paid,
+    };
+  });
+  return {
+    costs: costsEl ? parseFloat(costsEl.value) || 0 : ((gig.fee_splits && gig.fee_splits.costs) || 0),
+    mode,
+    leader_cut: cutEl ? parseFloat(cutEl.value) || 0 : ((gig.fee_splits && gig.fee_splits.leader_cut) || 0),
+    members,
+  };
+}
+
+async function _patchSplits(gigId, splits) {
+  const resp = await fetch('/api/gigs/' + encodeURIComponent(gigId) + '/splits', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ splits }),
+  });
+  if (resp.status === 403) { showToast('The fee splitter is a premium feature.'); return null; }
+  if (!resp.ok) { showToast('Could not save the split.'); return null; }
+  const updated = await resp.json();
+  const idx = (window._cachedGigs || []).findIndex(g => g && g.id === updated.id);
+  if (idx >= 0) window._cachedGigs[idx] = updated;
+  return updated;
+}
+
+async function saveGigSplits(gigId) {
+  const gig = (window._cachedGigs || []).find(g => g && g.id === gigId);
+  if (!gig) return;
+  const updated = await _patchSplits(gigId, _collectSplits(gig));
+  if (updated) renderGigSplitsSection(updated);
+}
+
+async function setSplitMode(gigId, mode) {
+  const gig = (window._cachedGigs || []).find(g => g && g.id === gigId);
+  if (!gig) return;
+  const splits = _collectSplits(gig);
+  splits.mode = mode;
+  const updated = await _patchSplits(gigId, splits);
+  if (updated) renderGigSplitsSection(updated);
+}
+
+async function toggleSplitPaid(gigId, name) {
+  const gig = (window._cachedGigs || []).find(g => g && g.id === gigId);
+  if (!gig) return;
+  const splits = _collectSplits(gig);
+  const m = splits.members.find(x => x.name === name);
+  if (m) m.paid = !m.paid;
+  const updated = await _patchSplits(gigId, splits);
+  if (updated) renderGigSplitsSection(updated);
+}
+
+window.renderGigSplitsSection = renderGigSplitsSection;
+window.saveGigSplits = saveGigSplits;
+window.setSplitMode = setSplitMode;
+window.toggleSplitPaid = toggleSplitPaid;
 
 function renderGigLineupSection(gig) {
   const bodyEl = document.getElementById('gigLineupBody');
