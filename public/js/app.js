@@ -10923,18 +10923,6 @@ function buildDirectoryProfileEditor(profile) {
       <textarea id="editBio" rows="3" maxlength="280" placeholder="One or two lines about you. Shown on your directory card." oninput="const c=document.getElementById('editBioCount'); if(c){c.textContent=this.value.length+'/280'; c.style.color=this.value.length>280?'var(--danger)':'var(--text-3)';}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;min-height:60px;font-family:inherit;">${escapeHtml(bioText)}</textarea>
     </div>
     <div style="margin-bottom:14px;">
-      <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Profile photo</label>
-      <div style="display:flex;align-items:center;gap:12px;">
-        <div id="editPhotoPreview" style="width:56px;height:56px;border-radius:50%;background:var(--card) center/cover no-repeat;border:1px solid var(--border);flex-shrink:0;${photoUrl ? `background-image:url('${escapeHtml(photoUrl)}');` : ''}"></div>
-        <button type="button" onclick="document.getElementById('editPhotoFile').click()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:10px 16px;font-size:13px;font-weight:700;cursor:pointer;">Upload photo</button>
-        ${photoUrl ? `<button type="button" onclick="removeProfilePhoto()" style="background:none;border:none;color:var(--text-3);font-size:12px;cursor:pointer;text-decoration:underline;">Remove</button>` : ''}
-        <span id="editPhotoStatus" style="font-size:11px;color:var(--text-2);"></span>
-      </div>
-      <input id="editPhotoFile" type="file" accept="image/*" onchange="uploadProfilePhoto(this)" style="display:none;">
-      <input id="editPhotoUrl" type="hidden" value="${escapeHtml(photoUrl)}" />
-      <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Shown on your directory card and your EPK (unless you set a separate EPK photo).</div>
-    </div>
-    <div style="margin-bottom:14px;">
       <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Genres &amp; tags</label>
       <div id="editGenresGrid" style="display:flex;flex-wrap:wrap;gap:6px;">${chipHTML}</div>
       <div style="font-size:10px;color:var(--text-3);margin-top:6px;">Tap up to 8 that describe your sound. Shown on your directory card.</div>
@@ -11000,6 +10988,17 @@ function editProfile() {
       <button onclick="saveProfile()" style="background:none;border:none;color:var(--accent);font-size:14px;cursor:pointer;font-weight:600;">Save</button>
     </div>
     <div style="padding:0 16px;">
+      <div style="margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Profile photo</label>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div id="editPhotoPreview" style="width:56px;height:56px;border-radius:50%;background:var(--card) center/cover no-repeat;border:1px solid var(--border);flex-shrink:0;${profile.photo_url ? `background-image:url('${escapeHtml(profile.photo_url)}');` : ''}"></div>
+          <button type="button" onclick="document.getElementById('editPhotoFile').click()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:10px 16px;font-size:13px;font-weight:700;cursor:pointer;">Upload photo</button>
+          ${profile.photo_url ? `<button type="button" onclick="removeProfilePhoto()" style="background:none;border:none;color:var(--text-3);font-size:12px;cursor:pointer;text-decoration:underline;">Remove</button>` : ''}
+          <span id="editPhotoStatus" style="font-size:11px;color:var(--text-2);"></span>
+        </div>
+        <input id="editPhotoFile" type="file" accept="image/*" onchange="uploadProfilePhoto(this)" style="display:none;">
+        <input id="editPhotoUrl" type="hidden" value="${escapeHtml(profile.photo_url || '')}" />
+      </div>
       <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Your name</label>
         <input id="editDisplayName" type="text" value="${escapeHtml(profile.display_name || '')}" placeholder="e.g. Gareth Gwyn" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
