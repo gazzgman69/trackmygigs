@@ -16574,7 +16574,7 @@ function addInvoiceItemRow(desc, qty, rate) {
     manage.type = 'button';
     manage.id = 'invItemManageLink';
     manage.textContent = 'Saved items…';
-    manage.style.cssText = 'background:none;border:none;color:var(--text-3);font-size:11px;cursor:pointer;padding:2px 0 2px 12px;';
+    manage.style.cssText = 'background:none;border:none;color:var(--accent);font-size:11px;font-weight:600;cursor:pointer;padding:2px 0 2px 12px;';
     manage.onclick = openSavedItemsManager;
     rowsEl.appendChild(manage);
   }
@@ -21153,9 +21153,52 @@ async function loadSavedInvoiceItems() {
     dl.innerHTML = window._invSavedItems
       .map(it => `<option value="${escapeAttr(it.description)}">${it.rate != null ? '£' + parseFloat(it.rate).toFixed(2) : ''}</option>`)
       .join('');
+    paintSavedItemChips();
   } catch (_) {}
 }
 window.loadSavedInvoiceItems = loadSavedInvoiceItems;
+
+// One-tap chips for the items you bill again and again, painted above the
+// line rows so they are impossible to miss. Tapping adds a prefilled line
+// at the saved rate (filling an empty first row instead of stacking).
+function paintSavedItemChips() {
+  const rowsEl = document.getElementById('invItemRows');
+  if (!rowsEl) return;
+  let strip = document.getElementById('invSavedChips');
+  const items = window._invSavedItems || [];
+  if (!items.length) { if (strip) strip.remove(); return; }
+  if (!strip) {
+    strip = document.createElement('div');
+    strip.id = 'invSavedChips';
+    strip.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;';
+    rowsEl.parentElement.insertBefore(strip, rowsEl);
+  }
+  strip.innerHTML = '<span style="font-size:10px;color:var(--text-3);width:100%;">Your usual items, tap to add:</span>'
+    + items.slice(0, 8).map((it, i) =>
+      `<span onclick="quickAddSavedItem(${i})" style="background:var(--surface);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer;">${escapeHtml(it.description)}${it.rate != null ? ' \u00B7 \u00A3' + Math.round(parseFloat(it.rate)) : ''}</span>`).join('')
+    + `<span onclick="openSavedItemsManager()" style="border:1px dashed var(--border);color:var(--text-3);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">Manage\u2026</span>`;
+}
+window.paintSavedItemChips = paintSavedItemChips;
+
+function quickAddSavedItem(index) {
+  const it = (window._invSavedItems || [])[index];
+  if (!it) return;
+  // Fill the first completely empty row before adding a new one.
+  const rows = document.querySelectorAll('#invItemRows .inv-item-row');
+  for (const row of rows) {
+    const d = row.querySelector('.inv-item-desc');
+    const r = row.querySelector('.inv-item-rate');
+    if (d && !d.value.trim() && r && !r.value) {
+      d.value = it.description;
+      if (it.rate != null) r.value = parseFloat(it.rate).toFixed(2);
+      recalcInvoiceItems();
+      return;
+    }
+  }
+  addInvoiceItemRow(it.description, 1, it.rate != null ? parseFloat(it.rate).toFixed(2) : '');
+  recalcInvoiceItems();
+}
+window.quickAddSavedItem = quickAddSavedItem;
 
 function autofillSavedItemRate(descInput) {
   const items = window._invSavedItems || [];
