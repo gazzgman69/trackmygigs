@@ -314,7 +314,15 @@
 
   function emptyBrowse() {
     const freeCopy = 'No free gigs posted right now. Check back later, or post your own.';
-    const paidCopy = 'No open urgent gigs match your filters. Widen your instruments or lower the fee floor.';
+    // June 2026 UX batch: tell "nothing posted" apart from "filters hid it",
+    // and give a one-tap way out of the filtered dead end.
+    const nothingAtAll = state.totalOpen === 0;
+    const paidCopy = nothingAtAll
+      ? 'No urgent gigs posted right now. Be the first to post one.'
+      : 'No open urgent gigs match your filters. Widen your instruments or lower the fee floor.';
+    const showAllBtn = (state.tab === 'paid' && !nothingAtAll)
+      ? `<button onclick="window._mktShowAll()" style="margin-top:12px;background:var(--accent);color:#000;border:none;border-radius:18px;padding:9px 18px;font-size:12px;font-weight:700;cursor:pointer;">Show all open gigs</button>`
+      : '';
     const copy = state.tab === 'free' ? freeCopy : paidCopy;
     const sub = state.tab === 'free'
       ? `<div style="font-size:11px;color:var(--text-3);margin-top:10px;">Free gigs are opt-in: turn on "Notify me about free gigs" in Profile to get pinged when one is posted.</div>`
@@ -323,8 +331,18 @@
       <div style="font-size:32px;margin-bottom:8px;">📯</div>
       <div style="color:var(--text);font-size:14px;font-weight:600;margin-bottom:6px;">${esc(copy)}</div>
       ${sub}
+      ${showAllBtn}
     </div>`;
   }
+
+  window._mktShowAll = function () {
+    state.instruments = [];
+    state.minFeePence = null;
+    state.q = '';
+    state.dateRange = 'any';
+    state.showOutside = true;
+    loadBrowse();
+  };
 
   function renderFilterBar() {
     // Count how many filters differ from defaults so the collapsed pill can
@@ -583,11 +601,18 @@
     const instrBlock = Array.isArray(gig.instruments) && gig.instruments.length
       ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">${gig.instruments.map(i=>`<span style="padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;font-size:11px;color:var(--text);">${esc(i)}</span>`).join('')}</div>` : '';
 
+    // June 2026 (Gareth): tappable maps link on marketplace gigs, same
+    // affordance as the user's own gig detail.
+    const mapsDest = gig.venue_address || [gig.venue_name, gig.venue_postcode].filter(Boolean).join(' ');
+    const mapsLink = mapsDest && typeof window.openDirections === 'function'
+      ? `<div onclick="window.openDirections('${escAttr(mapsDest).replace(/'/g, '&#39;')}')" style="font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;margin-top:4px;">📍 Open in Maps ›</div>`
+      : '';
     const whereBlock = gig.venue_name ? `<div style="margin-top:14px;">
       <div style="font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Venue</div>
       <div style="font-size:14px;color:var(--text);">${esc(gig.venue_name)}</div>
       ${gig.venue_address?`<div style="font-size:12px;color:var(--text-2);">${esc(gig.venue_address)}</div>`:''}
       ${gig.venue_postcode?`<div style="font-size:12px;color:var(--text-2);">${esc(gig.venue_postcode)}${gig.distance_miles!=null?' · '+esc(fmtDistance(gig.distance_miles))+' from you':''}</div>`:''}
+      ${mapsLink}
     </div>` : '';
 
     const whenBlock = `<div style="margin-top:14px;">
@@ -1314,6 +1339,7 @@
     try {
       const r = await api('/api/marketplace?' + params.toString());
       const list = (r && r.gigs) || [];
+      if (r && typeof r.total_open === 'number') state.totalOpen = r.total_open;
       if (state.tab === 'paid') state.paid = list;
       else state.free = list;
     } catch (e) {

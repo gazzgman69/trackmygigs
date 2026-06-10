@@ -19,6 +19,18 @@
   <title>TrackMyGigs</title>
 </head>
 <body>
+  <!-- Boot splash (June 2026): Replit cold starts left a black screen until
+       /auth/me returned, which read as "broken". Shown instantly, removed by
+       app.js once the first screen renders; self-removes after 25s as a
+       failsafe so it can never permanently cover the app. -->
+  <div id="bootSplash" style="position:fixed;inset:0;background:#0D1117;z-index:99998;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;">
+    <div style="font-size:44px;">🎷</div>
+    <div style="font-size:18px;font-weight:700;color:#E6EDF3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">TrackMyGigs</div>
+    <div style="width:28px;height:28px;border:3px solid #30363D;border-top-color:#F0A500;border-radius:50%;animation:bootspin 0.9s linear infinite;"></div>
+    <div style="font-size:11px;color:#8B949E;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">Waking the band up…</div>
+    <style>@keyframes bootspin{to{transform:rotate(360deg)}}</style>
+    <script>setTimeout(function(){var s=document.getElementById('bootSplash');if(s&&s.parentNode)s.parentNode.removeChild(s);},25000);</script>
+  </div>
   <div class="app-container">
     <!-- Auth Screen -->
     <div id="authScreen" class="screen">

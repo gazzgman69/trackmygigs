@@ -138,6 +138,7 @@ async function initAuth() {
 }
 
 function showAuthScreen() {
+  if (typeof hideBootSplash === 'function') hideBootSplash();
   document.getElementById('authScreen').classList.add('active');
   document.getElementById('appScreen').classList.remove('active');
 }

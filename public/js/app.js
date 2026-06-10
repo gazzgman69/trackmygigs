@@ -643,7 +643,13 @@ async function fetchStatsWithCache(forceRefresh) {
   return p;
 }
 
+function hideBootSplash() {
+  const s = document.getElementById('bootSplash');
+  if (s && s.parentNode) s.parentNode.removeChild(s);
+}
+
 async function renderHomeScreen() {
+  hideBootSplash();
   const content = document.getElementById('homeScreen');
   const currentUserId = window._currentUser?.id || null;
   const cacheMatchesUser = window._cachedStatsUser && window._cachedStatsUser === currentUserId;
@@ -1172,7 +1178,11 @@ function parseQuickGig(text) {
       else if (/fri/.test(w)) idx = 5;
       else if (/sat/.test(w)) idx = 6;
       else if (/sun/.test(w)) idx = 0;
-      out.date = toIso(nextWeekday(idx, false));
+      // "next Friday" means the week AFTER the upcoming one (the upcoming
+      // instance is "this Friday" / bare "Friday"). The live preview makes
+      // any disagreement visible before saving.
+      const upcoming = nextWeekday(idx, false);
+      out.date = toIso(new Date(upcoming.getTime() + 7 * 86400000));
       rest = rest.replace(new RegExp('next\\s+' + w, 'i'), ' ');
     }
   }
@@ -1302,11 +1312,22 @@ function openQuickLogSheet() {
         source: 'quick-log',
         status: 'confirmed',
       };
-      const res = await fetch('/api/gigs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      // 12s timeout (June 2026): on a cold Replit the POST could hang and
+      // the button sat on "Saving…" forever. Abort, keep the sheet open,
+      // and let the user retry with their text intact.
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 12000);
+      let res;
+      try {
+        res = await fetch('/api/gigs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: ctl.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
       if (!res.ok) throw new Error('Save failed (HTTP ' + res.status + ')');
       if (typeof invalidateGigsCache === 'function') invalidateGigsCache();
       window._cachedStats = null;
@@ -1314,7 +1335,10 @@ function openQuickLogSheet() {
       if (typeof showToast === 'function') showToast('Gig saved');
       if (typeof renderHomeScreen === 'function') renderHomeScreen();
     } catch (err) {
-      if (typeof showToast === 'function') showToast('Save failed: ' + (err.message || 'unknown error'));
+      const msg = err && err.name === 'AbortError'
+        ? 'Server is waking up — give it a second and tap Save again.'
+        : 'Save failed: ' + (err.message || 'unknown error');
+      if (typeof showToast === 'function') showToast(msg);
       submitBtn.disabled = false;
       submitBtn.textContent = 'Save gig';
     }
@@ -11128,9 +11152,7 @@ async function openNetworkPanel() {
   if (!window._netTab) window._netTab = 'find';
 
   body.innerHTML = `
-    <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-      <button onclick="closePanel('panel-network')" style="background:none;border:none;color:var(--accent);font-size:16px;cursor:pointer;">&#8249;</button>
-      <div style="font-size:16px;font-weight:700;color:var(--text);">My Network</div>
+    <div style="padding:12px 20px 0;display:flex;justify-content:flex-end;">
       <button onclick="openPanel('panel-add-contact')" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
     </div>
     <div class="net-tabs">
@@ -17311,6 +17333,21 @@ const HMRC_DEDUCTIBLE_CATEGORIES = new Set([
   'Training & CPD',
 ]);
 
+// Tolerant claimable check (June 2026). Older receipts created via the API
+// carry short category names ("Travel") that never exactly matched the
+// canonical list ("Travel & vehicle"), so the claimable figure showed £0
+// against a wall of travel receipts. Prefix matching either way fixes the
+// legacy rows; 'Other' and empty still never count.
+function isClaimableCategory(category) {
+  const c = String(category || '').trim().toLowerCase();
+  if (!c || c === 'other') return false;
+  for (const full of HMRC_DEDUCTIBLE_CATEGORIES) {
+    const f = full.toLowerCase();
+    if (f === c || f.startsWith(c) || c.startsWith(f)) return true;
+  }
+  return false;
+}
+
 async function loadReceipts() {
   try {
     const res = await fetch('/api/expenses');
@@ -17324,7 +17361,7 @@ async function loadReceipts() {
     // tagged with a deductible HMRC category.
     const total = expenses.reduce((s, e) => s + parseFloat(e.amount || 0), 0);
     const claimable = expenses
-      .filter(e => HMRC_DEDUCTIBLE_CATEGORIES.has((e.category || '').trim()))
+      .filter(e => isClaimableCategory(e.category))
       .reduce((s, e) => s + parseFloat(e.amount || 0), 0);
     document.getElementById('receiptTotalExpenses').textContent = '£' + total.toFixed(0);
     document.getElementById('receiptClaimable').textContent = '£' + claimable.toFixed(0);
