@@ -1082,32 +1082,32 @@ function buildHomeActionGrid() {
   return `
     <div style="margin:0 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
       <div onclick="openQuickLogSheet()" style="background:linear-gradient(160deg,rgba(240,165,0,.18) 0%,rgba(240,165,0,.06) 100%);border:1px solid rgba(240,165,0,.35);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
-        <span style="font-size:22px;margin-bottom:6px;display:block;">➕</span>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M12 5v14M5 12h14"/></svg>
         <div style="font-size:11px;font-weight:700;color:var(--text);">Add gig</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Quick or wizard</div>
       </div>
       <div onclick="openStandaloneInvoice()" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
-        <span style="font-size:22px;margin-bottom:6px;display:block;">📄</span>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
         <div style="font-size:11px;font-weight:700;color:var(--text);">New invoice</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">From gig or blank</div>
       </div>
       <div onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
-        <span style="font-size:22px;margin-bottom:6px;display:block;">🤝</span>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         <div style="font-size:11px;font-weight:700;color:var(--text);">Find dep</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Marketplace</div>
       </div>
       <div onclick="openPanel('panel-chat-inbox'); renderChatInbox();" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
-        <span style="font-size:22px;margin-bottom:6px;display:block;">💬</span>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
         <div style="font-size:11px;font-weight:700;color:var(--text);">Inbox</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Chats &amp; offers</div>
       </div>
       <div onclick="showScreen('calendar')" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
-        <span style="font-size:22px;margin-bottom:6px;display:block;">📅</span>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
         <div style="font-size:11px;font-weight:700;color:var(--text);">Calendar</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Block / unblock</div>
       </div>
       <div onclick="openHomeMoreSheet()" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
-        <span style="font-size:22px;margin-bottom:6px;display:block;">⋯</span>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><circle cx="5" cy="12" r="1.6" fill="var(--accent)" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="var(--accent)" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="var(--accent)" stroke="none"/></svg>
         <div style="font-size:11px;font-weight:700;color:var(--text);">More</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Repertoire, EPK…</div>
       </div>
