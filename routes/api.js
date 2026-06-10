@@ -4620,14 +4620,25 @@ router.post('/setlists/save-shared', async (req, res) => {
       // Reuse an existing song on title+artist match so repeat saves don't
       // fill the library with duplicates.
       const existing = await db.query(
-        `SELECT id FROM songs
+        `SELECT id, lyrics, tempo FROM songs
           WHERE user_id = $1 AND LOWER(title) = LOWER($2)
             AND COALESCE(LOWER(artist), '') = COALESCE(LOWER($3), '')
           LIMIT 1`,
         [req.user.id, title, artist]
       );
       if (existing.rows.length > 0) {
-        songIds.push(existing.rows[0].id);
+        const ex = existing.rows[0];
+        // Backfill chart and tempo only where the receiver has none. Their
+        // own version of a song always wins over an incoming snapshot.
+        const fillLyrics = (!ex.lyrics && s.lyrics) ? String(s.lyrics).slice(0, 8 * 1024) : null;
+        const fillTempo = (ex.tempo == null && Number.isFinite(Number(s.tempo))) ? Number(s.tempo) : null;
+        if (fillLyrics || fillTempo) {
+          await db.query(
+            `UPDATE songs SET lyrics = COALESCE(lyrics, $2), tempo = COALESCE(tempo, $3) WHERE id = $1`,
+            [ex.id, fillLyrics, fillTempo]
+          );
+        }
+        songIds.push(ex.id);
         continue;
       }
       const created = await db.query(
