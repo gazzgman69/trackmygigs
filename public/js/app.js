@@ -18857,9 +18857,10 @@ async function paintHomeFollowupCard() {
       </div>`);
   });
   (data.pending || []).slice(0, 2).forEach(t => {
+    const truncated = t.quote.length > 140;
     bits.push(`
       <div style="margin:0 16px 10px;background:linear-gradient(135deg,rgba(240,165,0,.1),transparent);border:1px solid rgba(240,165,0,.4);border-radius:12px;padding:12px 14px;">
-        <div style="font-size:12px;font-style:italic;line-height:1.5;">\u201C${escapeHtml(t.quote.length > 140 ? t.quote.slice(0, 140) + '\u2026' : t.quote)}\u201D</div>
+        <div onclick="openTestimonialReview('${t.id}')" style="font-size:12px;font-style:italic;line-height:1.5;cursor:pointer;">\u201C${escapeHtml(truncated ? t.quote.slice(0, 140) + '\u2026' : t.quote)}\u201D${truncated ? ' <span style="color:var(--accent);font-style:normal;font-weight:700;font-size:11px;">Read all \u203A</span>' : ''}</div>
         <div style="font-size:11px;color:var(--text-2);margin-top:4px;">${escapeHtml([t.name, t.context].filter(Boolean).join(' \u00B7 '))} \u00B7 <b style="color:var(--accent);">waiting for your approval</b></div>
         <div style="display:flex;gap:8px;margin-top:10px;">
           <span onclick="approveTestimonial('${t.id}')" style="flex:1.4;background:var(--accent);color:#000;border-radius:10px;padding:9px 0;font-size:12px;font-weight:700;text-align:center;cursor:pointer;">Approve \u2192 EPK</span>
@@ -18957,6 +18958,27 @@ async function pasteReviewLink() {
   }
 }
 
+function openTestimonialReview(id) {
+  const t = ((window._followupData || {}).pending || []).find(x => x.id === id);
+  if (!t) return;
+  const existing = document.getElementById('testimonialReviewSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'testimonialReviewSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;max-height:80vh;overflow-y:auto;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+    + '<div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;text-align:center;margin-bottom:10px;">The full message</div>'
+    + '<div style="font-size:14px;font-style:italic;line-height:1.65;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;">\u201C' + escapeHtml(t.quote) + '\u201D</div>'
+    + '<div style="font-size:12px;color:var(--text-2);margin:10px 2px 14px;">' + escapeHtml([t.name, t.context].filter(Boolean).join(' \u00B7 ')) + (t.created_at ? ' \u00B7 sent ' + new Date(t.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '') + '</div>'
+    + '<button onclick="document.getElementById(\'testimonialReviewSheet\').remove();approveTestimonial(\'' + t.id + '\')" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">Approve \u2192 EPK</button>'
+    + '<button onclick="document.getElementById(\'testimonialReviewSheet\').remove();binTestimonial(\'' + t.id + '\')" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text-2);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:8px;">Bin it</button>'
+    + '<button onclick="document.getElementById(\'testimonialReviewSheet\').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Decide later</button>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) sheet.remove(); });
+  document.body.appendChild(sheet);
+}
+window.openTestimonialReview = openTestimonialReview;
 window.paintHomeFollowupCard = paintHomeFollowupCard;
 window.askForTestimonial = askForTestimonial;
 window.skipFollowup = skipFollowup;
