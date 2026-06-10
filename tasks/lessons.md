@@ -47,3 +47,11 @@ multi-table transactions against schema drift (pg_tables check); and
 when debugging a 500 remotely, add the failing-statement detail to the
 response FIRST and keep it until green, never remove diagnostics in the
 same push as a fix.
+
+## 2026-06-10 — Generated code must be smoke-run, not just syntax-checked
+The Text size sheet shipped with Python's None inside JavaScript (a
+cross-language slip from writing JS via python heredocs). node --check
+passed because it is valid-looking syntax; the crash only appeared on
+tap. Rule: after generating UI code, exercise the actual interaction
+once in the browser before calling it done, especially any code path a
+syntax check cannot reach.
