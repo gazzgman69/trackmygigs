@@ -768,7 +768,7 @@ router.post('/delete-account', async (req, res) => {
       await run('DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1', [userId]);
       await run('DELETE FROM user_reports WHERE reporter_id = $1 OR target_id = $1', [userId]);
       await run('DELETE FROM marketplace_applications WHERE applicant_user_id = $1', [userId]);
-      await run('DELETE FROM marketplace_applications WHERE gig_id IN (SELECT id FROM marketplace_gigs WHERE poster_user_id = $1)', [userId]);
+      await run('DELETE FROM marketplace_applications WHERE marketplace_gig_id IN (SELECT id FROM marketplace_gigs WHERE poster_user_id = $1)', [userId]);
       await run('DELETE FROM marketplace_gigs WHERE poster_user_id = $1', [userId]);
       await run('DELETE FROM offers WHERE sender_id = $1 OR recipient_id = $1', [userId]);
       await run('DELETE FROM messages WHERE sender_id = $1', [userId]);
@@ -799,7 +799,7 @@ router.post('/delete-account', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Delete account error:', error);
-    res.status(500).json({ error: 'Failed to delete account', detail: String((error && error.message) || error) });
+    res.status(500).json({ error: 'Failed to delete account' });
   }
 });
 
