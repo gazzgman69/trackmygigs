@@ -104,12 +104,13 @@ prod-only expenses table -> drift guard). PRODUCTION.md runbook written.
       (admin/reload only refreshes the dev workspace).
 - [x] /health endpoint (built in Wave 1) + free uptime monitor + error visibility.
 
-## Accessibility note (decided 2026-06-10 with Gareth's phone testing)
+## Accessibility (shipped 2026-06-10, Gareth: "I want it in now")
 
-Dynamic Type half-support retired: ~36 scalable CSS rules vs a px-fixed
-UI meant larger system text inflated random fragments only. Locked to
-1x for launch. POST-LAUNCH ROADMAP ITEM: real text-size support done
-across the whole app in one pass.
+Whole-app text scaling SHIPPED, superseding the brief retirement: the
+system text-size preference zooms the entire UI uniformly (commit
+04a2ccd), clamped 0.85-1.35, rem anchored at 16px so nothing
+double-scales. Preview override ?textscale=N persists until
+?textscale=reset. Verified at 1.3x and reset on a 390px viewport.
 
 ## Wave 3 - legal + onboarding (days 5-9)
 
