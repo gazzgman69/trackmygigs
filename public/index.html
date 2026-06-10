@@ -429,6 +429,10 @@
         <div id="depMusicianResults" style="margin-bottom:16px"></div>
       </div>
       <div class="form-group"><div class="form-label">Message (optional)</div><textarea class="form-input" id="depMessage" rows="3" placeholder="Hi! Are you available for this gig? Let me know ASAP." style="resize:none"></textarea></div>
+      <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;cursor:pointer;margin-top:4px;">
+        <input type="checkbox" id="depConfirmMode" style="width:16px;height:16px;accent-color:#A78BFA;margin-top:2px;flex-shrink:0;">
+        <span style="font-size:12px;color:var(--text);line-height:1.4;"><strong>Let me confirm each yes.</strong><br><span style="color:var(--text-3);font-size:11px;">A yes is held until you confirm it, so you can check profiles first. Leave off for first-yes-wins speed.</span></span>
+      </label>
       <button class="btn-pill" id="sendDepBtn" style="margin-top:12px">Send dep offer</button>
     </div>
   </div>

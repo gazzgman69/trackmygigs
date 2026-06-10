@@ -1274,6 +1274,22 @@ async function runMigrations() {
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS origin_offer_id UUID`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS origin_marketplace_id INTEGER`);
 
+    // Two-step accept (June 2026, Gareth). confirm_mode offers park an
+    // accept as 'provisional' until the sender confirms or releases it.
+    await db.query(`ALTER TABLE offers ADD COLUMN IF NOT EXISTS confirm_mode BOOLEAN DEFAULT FALSE`);
+
+    // Saved invoice items (June 2026, Gareth). Mirrors invoice_clients:
+    // every line item used on an invoice is remembered with its last rate
+    // so the itemise rows can autocomplete it next time.
+    await db.query(`CREATE TABLE IF NOT EXISTS invoice_saved_items (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL,
+      description TEXT NOT NULL,
+      rate NUMERIC(10,2),
+      last_used_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE (user_id, description)
+    )`);
+
     // Premium flag reconciliation (June 2026). Stripe + dev-set-premium wrote
     // users.premium while every gate reads users.subscription_tier; the two
     // drifted. Writers now set both; this backfills anyone stranded with a

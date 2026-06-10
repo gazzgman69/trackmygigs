@@ -1028,6 +1028,24 @@ router.post('/invoices', async (req, res) => {
       ]
     );
 
+    // Saved line items (June 2026, Gareth): remember each itemised row with
+    // its last rate so the composer can autocomplete it next time. Non-fatal.
+    if (lineItemsValue) {
+      try {
+        for (const it of lineItemsValue) {
+          await db.query(
+            `INSERT INTO invoice_saved_items (user_id, description, rate, last_used_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (user_id, description)
+             DO UPDATE SET rate = EXCLUDED.rate, last_used_at = NOW()`,
+            [req.user.id, it.description, it.rate]
+          );
+        }
+      } catch (itemErr) {
+        console.warn('[invoices] saved-items upsert failed (non-fatal):', itemErr.message);
+      }
+    }
+
     // Upsert into the saved client directory so the next invoice can
     // auto-suggest the name and auto-fill the address. Non-fatal: if this
     // fails we still return the invoice so the user's flow isn't blocked.
@@ -1142,27 +1160,12 @@ router.post('/offers/:id/snooze', async (req, res) => {
   }
 });
 
-router.patch('/offers/:id', async (req, res) => {
+// Accept side-effects shared by the direct accept path and the two-step
+// confirm path: swap contact details and stamp the gig into the dep's
+// diary. Best-effort: never roll back the status flip.
+async function runOfferAcceptSideEffects(offerRow) {
   try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    const result = await db.query(
-      'UPDATE offers SET status = $1, responded_at = NOW() WHERE id = $2 AND recipient_id = $3 RETURNING *',
-      [status, id, req.user.id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Offer not found' });
-    }
-
-    // 2026-04-28 dep-network batch: when a dep accepts an offer, mirror the
-    // Pick / FCFS auto-save behaviour so the band leader and dep both end up
-    // in each other's contacts. Best-effort: a failure here must never roll
-    // back the offer status flip, so it runs after the UPDATE has committed.
-    if (status === 'accepted') {
-      try {
-        const offerRow = result.rows[0];
+        
         const ctxRow = await db.query(
           `SELECT g.*, u.name AS sender_name, u.display_name AS sender_display_name,
                   u.email AS sender_email, u.phone AS sender_phone
@@ -1200,14 +1203,86 @@ router.patch('/offers/:id', async (req, res) => {
           }, { source: 'dep-accept', offerId: offerRow.id });
         }
       } catch (contactErr) {
-        console.warn('[PATCH /offers/:id] accept side-effects failed:', contactErr);
-      }
+    console.warn('[offer accept side-effects] failed:', contactErr);
+  }
+}
+
+router.patch('/offers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Two-step accept (June 2026, Gareth): confirm_mode offers park an
+    // accept as 'provisional'; the diary stamp + contact swap wait for the
+    // sender's confirm.
+    let effectiveStatus = status;
+    if (status === 'accepted') {
+      const pre = await db.query(
+        'SELECT confirm_mode FROM offers WHERE id = $1 AND recipient_id = $2',
+        [id, req.user.id]
+      );
+      if (pre.rows.length === 0) return res.status(404).json({ error: 'Offer not found' });
+      if (pre.rows[0].confirm_mode) effectiveStatus = 'provisional';
+    }
+
+    const result = await db.query(
+      'UPDATE offers SET status = $1, responded_at = NOW() WHERE id = $2 AND recipient_id = $3 RETURNING *',
+      [effectiveStatus, id, req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Offer not found' });
+    }
+
+    if (effectiveStatus === 'accepted') {
+      await runOfferAcceptSideEffects(result.rows[0]);
     }
 
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Update offer error:', error);
     res.status(500).json({ error: 'Failed to update offer' });
+  }
+});
+
+// Two-step accept: the sender locks in a provisional yes. Only now does the
+// dep get the diary stamp + contact swap, mirroring a direct accept.
+router.post('/offers/:id/confirm', async (req, res) => {
+  try {
+    const result = await db.query(
+      `UPDATE offers SET status = 'accepted', responded_at = NOW()
+        WHERE id = $1 AND sender_id = $2 AND status = 'provisional'
+        RETURNING *`,
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No provisional offer to confirm' });
+    }
+    await runOfferAcceptSideEffects(result.rows[0]);
+    res.json({ ok: true, offer: result.rows[0] });
+  } catch (error) {
+    console.error('Confirm offer error:', error);
+    res.status(500).json({ error: 'Failed to confirm offer' });
+  }
+});
+
+// Two-step accept: the sender releases a provisional yes (went with someone
+// else, plans changed). Terminal for this recipient; no diary stamp happens.
+router.post('/offers/:id/release', async (req, res) => {
+  try {
+    const result = await db.query(
+      `UPDATE offers SET status = 'released', responded_at = NOW()
+        WHERE id = $1 AND sender_id = $2 AND status = 'provisional'
+        RETURNING *`,
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No provisional offer to release' });
+    }
+    res.json({ ok: true, offer: result.rows[0] });
+  } catch (error) {
+    console.error('Release offer error:', error);
+    res.status(500).json({ error: 'Failed to release offer' });
   }
 });
 
@@ -2340,7 +2415,7 @@ router.delete('/blocked-dates/:id', async (req, res) => {
 
 router.post('/dep-offers', async (req, res) => {
   try {
-    const { gig_id, role, message, mode, contact_ids } = req.body;
+    const { gig_id, role, message, mode, contact_ids, confirm_mode } = req.body;
     if (!gig_id) return res.status(400).json({ error: 'Gig is required' });
 
     // Load the gig's venue lat/lng once so we can filter recipients by the
@@ -2508,10 +2583,10 @@ router.post('/dep-offers', async (req, res) => {
       }
 
       await db.query(
-        `INSERT INTO offers (sender_id, recipient_id, gig_id, offer_type, status, fee)
+        `INSERT INTO offers (sender_id, recipient_id, gig_id, offer_type, status, fee, confirm_mode)
          VALUES ($1, $2, $3, 'dep', 'pending',
-                 (SELECT fee FROM gigs WHERE id = $3 AND user_id = $1))`,
-        [req.user.id, recipientId, gig_id]
+                 (SELECT fee FROM gigs WHERE id = $3 AND user_id = $1), $4)`,
+        [req.user.id, recipientId, gig_id, !!confirm_mode]
       );
       sent++;
     }
@@ -4601,6 +4676,36 @@ router.delete('/invoice-clients/:id', async (req, res) => {
 });
 
 // ── Printable export pages (Save as PDF via browser) ──────────────────────────
+// ── Saved invoice items (June 2026, Gareth) ─────────────────────────────────
+
+router.get('/invoice-items', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT id, description, rate FROM invoice_saved_items
+        WHERE user_id = $1 ORDER BY last_used_at DESC LIMIT 50`,
+      [req.user.id]
+    );
+    res.json({ items: r.rows });
+  } catch (error) {
+    console.error('Get invoice items error:', error);
+    res.status(500).json({ error: 'Failed to fetch saved items' });
+  }
+});
+
+router.delete('/invoice-items/:id', async (req, res) => {
+  try {
+    const r = await db.query(
+      'DELETE FROM invoice_saved_items WHERE id = $1 AND user_id = $2 RETURNING id',
+      [req.params.id, req.user.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Delete invoice item error:', error);
+    res.status(500).json({ error: 'Failed to delete saved item' });
+  }
+});
+
 // Zero-dependency PDF: we return a clean printable HTML page and the user hits
 // their browser Print > Save as PDF. Auto-triggers window.print() on load.
 // Scoped under /api/print so authMiddleware protects them.

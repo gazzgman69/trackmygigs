@@ -4229,7 +4229,7 @@ function buildOffersHTML(content, offers) {
     if (local && Number(local) > nowMs) return true;
     return false;
   };
-  const pending = offers.filter(o => o.status === 'pending' && !isSnoozed(o));
+  const pending = offers.filter(o => (o.status === 'pending' || o.status === 'provisional') && !isSnoozed(o));
   const acceptedN = offers.filter(o => o.status === 'accepted').length;
   const declinedN = offers.filter(o => o.status === 'declined' || o.status === 'expired').length;
 
@@ -4375,11 +4375,16 @@ function buildOffersHTML(content, offers) {
             <div style="font-size:11px;color:${urgent ? 'var(--danger)' : 'var(--warning)'};margin-top:2px;opacity:.8;">${daysLeft > 1 ? daysLeft + ' days remaining' : hoursLeft + 'h remaining'}</div>
           </div>
         </div>` : ''}
+        ${offer.status === 'provisional' ? `
+        <div style="background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.4);border-radius:var(--rs);padding:10px 12px;display:flex;align-items:center;gap:8px;">
+          <span style="font-size:14px;">\u23F3</span>
+          <div style="font-size:12px;font-weight:600;color:#A78BFA;">You said yes \u2014 waiting for ${escapeHtml(senderName)} to confirm.</div>
+        </div>` : `
         <div class="o-acts" style="display:flex;gap:8px;">
           <button onclick="acceptOffer('${offer.id}')" class="o-acc" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">&#x2713; Accept</button>
           <button onclick="declineOffer('${offer.id}')" class="o-dec" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">&#x2715; Decline</button>
           <button onclick="messageAboutOffer('${offer.gig_id}','${offer.sender_id}')" title="Message about this gig" aria-label="Message" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:14px;font-weight:600;cursor:pointer;flex-shrink:0;">&#x1F4AC;</button>
-        </div>
+        </div>`}
       </div>`;
     });
   }
@@ -4440,8 +4445,8 @@ function renderSentOffers(listEl, offers) {
 
   // Surface pending offers first, then the rest in reverse-chronological order
   // which is what the backend already returns.
-  const pending = offers.filter(o => o.status === 'pending');
-  const other = offers.filter(o => o.status !== 'pending');
+  const pending = offers.filter(o => o.status === 'pending' || o.status === 'provisional');
+  const other = offers.filter(o => o.status !== 'pending' && o.status !== 'provisional');
   const ordered = [...pending, ...other];
 
   const statusStyle = (status) => {
@@ -4450,6 +4455,8 @@ function renderSentOffers(listEl, offers) {
       case 'declined': return { label: 'Declined', color: 'var(--danger)', bg: 'var(--danger-dim)' };
       case 'expired':  return { label: 'Expired',  color: 'var(--text-3)', bg: 'var(--surface)' };
       case 'cancelled':return { label: 'Cancelled',color: 'var(--text-3)', bg: 'var(--surface)' };
+      case 'provisional': return { label: 'Said yes \u2014 confirm?', color: '#A78BFA', bg: 'rgba(167,139,250,.12)' };
+      case 'released': return { label: 'Released', color: 'var(--text-3)', bg: 'var(--surface)' };
       case 'pending':
       default:         return { label: 'Pending',  color: 'var(--warning)', bg: 'var(--warning-dim)' };
     }
@@ -4486,6 +4493,11 @@ function renderSentOffers(listEl, offers) {
           </div>
           <span style="font-size:11px;font-weight:700;color:${st.color};background:${st.bg};border-radius:10px;padding:4px 10px;">${st.label}</span>
         </div>
+        ${offer.status === 'provisional' ? `
+        <div style="display:flex;gap:8px;">
+          <button onclick="confirmProvisionalOffer('${offer.id}')" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">\u2713 Confirm ${escapeHtml(recipientName.split(' ')[0])}</button>
+          <button onclick="releaseProvisionalOffer('${offer.id}')" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">Release</button>
+        </div>` : ''}
         ${offer.status === 'pending' ? (() => {
           // Nudge cap: 1 send + up to 2 nudges per offer. Show the nudge
           // button alongside Cancel request with a live "N left" label so
@@ -13444,8 +13456,16 @@ async function acceptOffer(offerId) {
       body: JSON.stringify({ status: 'accepted' }),
     });
     if (!res.ok) throw new Error('Failed to accept');
+    const updated = await res.json().catch(() => ({}));
     recordNudgeFeedback('offer', 'accepted', offerId);
     await refreshOffersAndBadge();
+
+    // Two-step accept: a confirm-mode offer parks as provisional. Tell the
+    // user honestly instead of showing the booked confirmation panel.
+    if (updated && updated.status === 'provisional') {
+      try { showToast('You said yes. The gig is locked in once they confirm.'); } catch (_) {}
+      return;
+    }
 
     // For dep offers: show the dep-accepted confirmation panel with gig pack
     if (offerType === 'dep' && typeof showDepAccepted === 'function') {
@@ -15330,7 +15350,7 @@ function renderChatThread(thread, messages, participants) {
       const pending = msg.pending === true;
       const attsHTML = atts.map(a => renderMessageAttachment(a, true, msg.id)).join('');
       messagesHTML += `
-        <div style="display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;${pending ? 'opacity:0.55;' : ''}" data-msg-id="${escapeAttr(msg.id || msg.tempId || '')}">
+        <div style="display:flex;flex-direction:row-reverse;gap:8px;margin-bottom:12px;${pending ? 'opacity:0.55;' : ''}" data-msg-id="${escapeAttr(msg.id || msg.tempId || '')}" data-own="1">
           <div style="width:30px;height:30px;border-radius:15px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">${userInitial}</div>
           <div style="max-width:85%;">
             <div style="background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:14px 0 14px 14px;padding:10px 14px;">
@@ -15355,7 +15375,7 @@ function renderChatThread(thread, messages, participants) {
     } else {
       const attsHTML = atts.map(a => renderMessageAttachment(a, false, msg.id)).join('');
       messagesHTML += `
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <div style="display:flex;gap:8px;margin-bottom:12px;" data-msg-id="${escapeAttr(msg.id || '')}" data-own="0">
           <div style="width:30px;height:30px;border-radius:15px;background:var(--info-dim);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--info);flex-shrink:0;">${senderInitial}</div>
           <div style="max-width:85%;">
             <div style="font-size:11px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(msg.sender_name || 'Unknown')} \u00B7 ${time}</div>
@@ -15390,6 +15410,9 @@ function renderChatThread(thread, messages, participants) {
   // Scroll to bottom
   const area = document.getElementById('chatMessagesArea');
   if (area) area.scrollTop = area.scrollHeight;
+
+  // Swipe-left or long-press a bubble for quick actions (June 2026, Gareth).
+  wireMessageGestures();
 
   // S12-06: start a background poller so new messages from other participants
   // show up without the user having to reopen the thread. Intentionally light:
@@ -16149,6 +16172,7 @@ function toggleInvoiceItemise() {
   window._invItemiseOn = !window._invItemiseOn;
   if (window._invItemiseOn) {
     rowsEl.style.display = '';
+    loadSavedInvoiceItems();
     toggleBtn.textContent = '\u2212 Back to a single amount';
     if (!rowsEl.querySelector('.inv-item-row')) {
       // Seed from whatever is already typed so nothing is lost.
@@ -16177,7 +16201,7 @@ function addInvoiceItemRow(desc, qty, rate) {
   row.className = 'inv-item-row';
   row.style.cssText = 'display:grid;grid-template-columns:1fr 52px 76px 26px;gap:6px;margin-bottom:6px;align-items:center;';
   row.innerHTML = `
-    <input type="text" class="form-input inv-item-desc" placeholder="Description" value="${escapeAttr(desc || '')}" oninput="recalcInvoiceItems()" style="margin:0;">
+    <input type="text" class="form-input inv-item-desc" placeholder="Description" value="${escapeAttr(desc || '')}" list="invItemSuggest" oninput="recalcInvoiceItems()" onchange="autofillSavedItemRate(this)" style="margin:0;">
     <input type="number" class="form-input inv-item-qty" placeholder="Qty" min="0" step="0.5" value="${qty != null && qty !== '' ? escapeAttr(qty) : '1'}" oninput="recalcInvoiceItems()" style="margin:0;padding-left:8px;padding-right:4px;">
     <input type="number" class="form-input inv-item-rate" placeholder="Rate \u00A3" min="0" step="0.01" value="${rate != null && rate !== '' ? escapeAttr(rate) : ''}" oninput="recalcInvoiceItems()" style="margin:0;padding-left:8px;padding-right:4px;">
     <button type="button" onclick="this.parentElement.remove();recalcInvoiceItems();" aria-label="Remove line" style="background:none;border:none;color:var(--text-3);font-size:15px;cursor:pointer;padding:0;">\u2715</button>`;
@@ -16189,6 +16213,20 @@ function addInvoiceItemRow(desc, qty, rate) {
   newAdd.style.cssText = 'background:none;border:none;color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;padding:2px 0;';
   newAdd.onclick = () => addInvoiceItemRow('', 1, '');
   rowsEl.appendChild(newAdd);
+  if (!document.getElementById('invItemManageLink')) {
+    const manage = document.createElement('button');
+    manage.type = 'button';
+    manage.id = 'invItemManageLink';
+    manage.textContent = 'Saved items…';
+    manage.style.cssText = 'background:none;border:none;color:var(--text-3);font-size:11px;cursor:pointer;padding:2px 0 2px 12px;';
+    manage.onclick = openSavedItemsManager;
+    rowsEl.appendChild(manage);
+  }
+  if (!document.getElementById('invItemSuggest')) {
+    const dl = document.createElement('datalist');
+    dl.id = 'invItemSuggest';
+    document.body.appendChild(dl);
+  }
 }
 window.addInvoiceItemRow = addInvoiceItemRow;
 
@@ -16679,7 +16717,7 @@ async function submitDepOffer() {
     const res = await fetch('/api/dep-offers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gig_id: gigId, role, message, mode, contact_ids: contactIds }),
+      body: JSON.stringify({ gig_id: gigId, role, message, mode, contact_ids: contactIds, confirm_mode: !!document.getElementById('depConfirmMode')?.checked }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
@@ -19581,3 +19619,227 @@ window.openPremiumPicker = function openPremiumPicker() {
     </div>`;
   document.body.appendChild(overlay);
 };
+
+
+// Two-step accept (June 2026, Gareth): sender locks in or releases a
+// provisional yes from the Sent tab.
+async function confirmProvisionalOffer(offerId) {
+  try {
+    const res = await fetch(`/api/offers/${offerId}/confirm`, { method: 'POST' });
+    if (!res.ok) throw new Error('confirm failed');
+    showToast('Confirmed. They have the gig in their diary now.');
+    if (typeof loadSentOffers === 'function' && document.getElementById('sentOffersList')) {
+      loadSentOffers();
+    }
+  } catch (err) {
+    console.error('Confirm offer error:', err);
+    showToast('Could not confirm. Try again.');
+  }
+}
+window.confirmProvisionalOffer = confirmProvisionalOffer;
+
+async function releaseProvisionalOffer(offerId) {
+  const ok = window.confirmModal
+    ? await window.confirmModal('Release this yes? They will be told the gig went another way.')
+    : confirm('Release this yes?');
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/offers/${offerId}/release`, { method: 'POST' });
+    if (!res.ok) throw new Error('release failed');
+    showToast('Released.');
+    if (typeof loadSentOffers === 'function' && document.getElementById('sentOffersList')) {
+      loadSentOffers();
+    }
+  } catch (err) {
+    console.error('Release offer error:', err);
+    showToast('Could not release. Try again.');
+  }
+}
+window.releaseProvisionalOffer = releaseProvisionalOffer;
+
+
+// ── Message quick actions: swipe-left / long-press (June 2026, Gareth) ──────
+function wireMessageGestures() {
+  const area = document.getElementById('chatMessagesArea');
+  if (!area || area._gesturesWired) return;
+  area._gesturesWired = true;
+  let startX = 0, startY = 0, row = null, longTimer = null, moved = false, fired = false;
+  const clear = () => { if (longTimer) { clearTimeout(longTimer); longTimer = null; } row = null; fired = false; };
+  area.addEventListener('pointerdown', (e) => {
+    row = e.target.closest('[data-msg-id]');
+    if (!row || !row.dataset.msgId) { row = null; return; }
+    moved = false; fired = false; startX = e.clientX; startY = e.clientY;
+    const id = row.dataset.msgId;
+    longTimer = setTimeout(() => {
+      if (!moved && !fired) { fired = true; openMessageActionsSheet(id); }
+    }, 550);
+  });
+  area.addEventListener('pointermove', (e) => {
+    if (!row) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) moved = true;
+    if (!fired && Math.abs(dy) < 40 && dx < -56) {
+      fired = true;
+      const id = row.dataset.msgId;
+      if (longTimer) { clearTimeout(longTimer); longTimer = null; }
+      openMessageActionsSheet(id);
+    }
+  });
+  ['pointerup', 'pointercancel'].forEach(ev => area.addEventListener(ev, clear));
+}
+
+function openMessageActionsSheet(msgId) {
+  if (!msgId) return;
+  const msgs = (window._chatThreadCache && window._chatThreadCache.messages) || [];
+  const msg = msgs.find(m => m && (m.id === msgId || m.tempId === msgId));
+  if (!msg) return;
+  const me = window.currentUser || (typeof currentUser !== 'undefined' ? currentUser : null);
+  const isOwn = me && msg.sender_id === me.id && !msg.pending;
+  const hasText = !!(msg.content && String(msg.content).trim());
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'msgActionsSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;padding-bottom:8px;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;"></div>
+      ${hasText ? `<button onclick="copyMessageText('${escapeAttr(msgId)}')" style="width:100%;text-align:left;background:transparent;border:none;color:var(--text);font-size:15px;padding:14px 20px;cursor:pointer;border-bottom:1px solid var(--border);">\u{1F4CB} Copy text</button>` : ''}
+      ${isOwn ? `<button onclick="deleteOwnMessage('${escapeAttr(msgId)}')" style="width:100%;text-align:left;background:transparent;border:none;color:var(--danger);font-size:15px;padding:14px 20px;cursor:pointer;border-bottom:1px solid var(--border);">\u{1F5D1} Delete message</button>` : ''}
+      <button onclick="closeMessageActionsSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;">Cancel</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeMessageActionsSheet(); });
+  document.body.appendChild(wrap);
+}
+window.openMessageActionsSheet = openMessageActionsSheet;
+
+function closeMessageActionsSheet() {
+  const el = document.getElementById('msgActionsSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeMessageActionsSheet = closeMessageActionsSheet;
+
+async function copyMessageText(msgId) {
+  closeMessageActionsSheet();
+  const msgs = (window._chatThreadCache && window._chatThreadCache.messages) || [];
+  const msg = msgs.find(m => m && (m.id === msgId || m.tempId === msgId));
+  if (!msg || !msg.content) return;
+  try {
+    await navigator.clipboard.writeText(msg.content);
+    try { toast('Copied'); } catch (_) {}
+  } catch (_) {
+    prompt('Copy this message:', msg.content);
+  }
+}
+window.copyMessageText = copyMessageText;
+
+async function deleteOwnMessage(msgId) {
+  closeMessageActionsSheet();
+  const ok = window.confirmModal
+    ? await window.confirmModal('Delete this message for everyone?')
+    : confirm('Delete this message?');
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/chat/threads/${_currentThreadId}/messages/${msgId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('delete failed');
+    if (window._chatThreadCache && Array.isArray(window._chatThreadCache.messages)) {
+      window._chatThreadCache.messages = window._chatThreadCache.messages.filter(m => m && m.id !== msgId);
+      renderChatThread(window._chatThreadCache.thread, window._chatThreadCache.messages);
+    }
+    try { toast('Message deleted'); } catch (_) {}
+  } catch (err) {
+    console.error('Delete message error:', err);
+    try { toast('Could not delete that message.'); } catch (_) {}
+  }
+}
+window.deleteOwnMessage = deleteOwnMessage;
+
+
+// ── Saved invoice items (June 2026, Gareth) ─────────────────────────────────
+//
+// Every itemised row used on a sent/draft invoice is remembered server-side
+// with its last rate. The itemise inputs autocomplete from them and picking
+// a known description autofills the rate.
+
+async function loadSavedInvoiceItems() {
+  try {
+    const res = await fetch('/api/invoice-items');
+    if (!res.ok) return;
+    const data = await res.json();
+    window._invSavedItems = Array.isArray(data.items) ? data.items : [];
+    let dl = document.getElementById('invItemSuggest');
+    if (!dl) {
+      dl = document.createElement('datalist');
+      dl.id = 'invItemSuggest';
+      document.body.appendChild(dl);
+    }
+    dl.innerHTML = window._invSavedItems
+      .map(it => `<option value="${escapeAttr(it.description)}">${it.rate != null ? '£' + parseFloat(it.rate).toFixed(2) : ''}</option>`)
+      .join('');
+  } catch (_) {}
+}
+window.loadSavedInvoiceItems = loadSavedInvoiceItems;
+
+function autofillSavedItemRate(descInput) {
+  const items = window._invSavedItems || [];
+  const hit = items.find(it => (it.description || '').toLowerCase() === (descInput.value || '').trim().toLowerCase());
+  if (!hit || hit.rate == null) return;
+  const row = descInput.closest('.inv-item-row');
+  const rateInput = row && row.querySelector('.inv-item-rate');
+  if (rateInput && !rateInput.value) {
+    rateInput.value = parseFloat(hit.rate).toFixed(2);
+    recalcInvoiceItems();
+  }
+}
+window.autofillSavedItemRate = autofillSavedItemRate;
+
+async function openSavedItemsManager() {
+  await loadSavedInvoiceItems();
+  const items = window._invSavedItems || [];
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-overlay';
+  wrap.id = 'savedItemsSheet';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  wrap.innerHTML = `
+    <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:70vh;display:flex;flex-direction:column;">
+      <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;flex-shrink:0;">Saved invoice items</div>
+      <div id="savedItemsList" style="flex:1;overflow-y:auto;">
+        ${items.length === 0
+          ? '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">Nothing saved yet. Items you put on invoices are remembered here with their last price.</div>'
+          : items.map(it => `
+          <div style="display:flex;align-items:center;gap:10px;padding:11px 20px;border-bottom:1px solid var(--border);" data-saved-item="${escapeAttr(it.id)}">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(it.description)}</div>
+              ${it.rate != null ? `<div style="font-size:11px;color:var(--text-2);">£${parseFloat(it.rate).toFixed(2)}</div>` : ''}
+            </div>
+            <button onclick="deleteSavedInvoiceItem('${escapeAttr(it.id)}', this)" style="background:none;border:none;color:var(--danger);font-size:15px;cursor:pointer;padding:4px;" aria-label="Delete">✕</button>
+          </div>`).join('')}
+      </div>
+      <button onclick="closeSavedItemsManager()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;flex-shrink:0;border-top:1px solid var(--border);">Done</button>
+    </div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeSavedItemsManager(); });
+  document.body.appendChild(wrap);
+}
+window.openSavedItemsManager = openSavedItemsManager;
+
+function closeSavedItemsManager() {
+  const el = document.getElementById('savedItemsSheet');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+window.closeSavedItemsManager = closeSavedItemsManager;
+
+async function deleteSavedInvoiceItem(id, btn) {
+  try {
+    const res = await fetch(`/api/invoice-items/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('delete failed');
+    const row = btn && btn.closest('[data-saved-item]');
+    if (row && row.parentNode) row.parentNode.removeChild(row);
+    window._invSavedItems = (window._invSavedItems || []).filter(it => it.id !== id);
+    loadSavedInvoiceItems();
+  } catch (err) {
+    console.error('Delete saved item error:', err);
+    try { toast('Could not delete that item.'); } catch (_) {}
+  }
+}
+window.deleteSavedInvoiceItem = deleteSavedInvoiceItem;
