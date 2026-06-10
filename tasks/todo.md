@@ -4,18 +4,18 @@ Mockups first for the four new screens, then build in waves.
 
 ## Mockup round (pending Gareth sign-off)
 
-- [ ] Documents wallet mockup: store PLI/PAT/insurance docs (BYTEA, like
+- [x] Documents wallet mockup: store PLI/PAT/insurance docs (BYTEA, like
       receipt photos), expiry dates with Home reminder chip, one-tap share
       link a venue can open without logging in
-- [ ] Band availability poll mockup: pick dates, share into a chat thread,
+- [x] Band availability poll mockup: pick dates, share into a chat thread,
       participants tap yes/no per date, live tally; poll state lives
       server-side (not a snapshot) so votes update
-- [ ] Gig fee splitter mockup: fee minus costs, equal or custom split with
+- [x] Gig fee splitter mockup: fee minus costs, equal or custom split with
       optional leader cut, mark-paid per member; rides on lineup (premium)
-- [ ] Post-gig follow-up mockup: morning-after prompt on past gigs with a
+- [x] Post-gig follow-up mockup: morning-after prompt on past gigs with a
       client contact; testimonial ask via public link; submissions land as
       pending and feed EPK testimonials after approval
-- [ ] Inline proposals (no new screens): weather on gig card + pack within
+- [x] Inline proposals (no new screens): weather on gig card + pack within
       48h (Open-Meteo via server proxy, venue lat/lng already stored); kit
       checklist templates on the existing prep checklist (save as template
       by gig type, one-tap apply); unpaid invoice chase = overdue list in
@@ -24,11 +24,28 @@ Mockups first for the four new screens, then build in waves.
 
 ## Build waves (after sign-off)
 
-- [ ] Wave A: documents wallet (+ expiry chip)
-- [ ] Wave B: weather + kit templates + invoice chase (small batch)
-- [ ] Wave C: fee splitter (premium, on lineup)
-- [ ] Wave D: availability poll (chat attachment kind with live state)
-- [ ] Wave E: post-gig follow-up + public testimonial submit + EPK approval
+- [x] Wave A: documents wallet share links (wallet itself already existed:
+      table, CRUD, expiry badges and 30/7-day reminders were live; added
+      share_token, /docs/:token public page + file, Send/Revoke on cards.
+      Verified: page+file public, revoke 404s, re-share mints fresh token)
+- [x] Wave B: weather (Open-Meteo proxy, venue coords or postcode, gig
+      window summary on detail + pack; live test returned Drizzle 16C 40%),
+      kit templates (save/apply/delete on the prep checklist), invoice
+      chase strip (overdue sent invoices, prefilled mailto, chased stamp)
+- [x] Wave C: fee splitter (PATCH /gigs/:id/splits behind the lineup
+      premium gate; equal/leader-cut/custom + paid ticks; demo2 403,
+      Gareth's leader-cut maths verified rendering: 269-29-60 -> 120/60/60)
+- [x] Wave D: availability poll (polls + poll_votes, live-hydrating chat
+      card, Can/Can't pips, owner pencil-in when all can; cross-user votes
+      verified, anon 401, off-poll date 400)
+- [x] Wave E: follow-up (morning-after cards for client gigs, /t/:token
+      public submit, pending approval to epk_testimonials, thank-you page
+      pre-copies the quote and bounces to users.review_link, chase sheet
+      with GBP deep links + honest verification wording). Full lifecycle
+      verified live incl. suggestion disappearing after ask and approve
+      appending to the EPK; all QA fiction cleaned from the real account.
+      Fix during verify: public pages use the full act name (his account
+      is "The Vents", first-word logic read as "How did The do?").
 
 # Musician-life wave (2026-06-10, mockups approved "go ahead")
 
