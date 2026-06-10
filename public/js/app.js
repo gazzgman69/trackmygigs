@@ -4135,10 +4135,12 @@ function buildInvoicesHTML(content, invoices) {
       <div style="display:flex;gap:6px;padding:0 16px 8px;overflow-x:auto;">
         ${chipsHtml}
       </div>
+      <div id="invChaseStrip" style="padding:0 16px;"></div>
       <div id="invoicesList" style="padding:0 16px;"></div>`;
 
     content.innerHTML = html;
     renderInvoicesList(initialFilter);
+    paintInvoiceChaseStrip();
 }
 
 // S11-06: Render the invoice list filtered by status. Called by both the initial
@@ -9596,6 +9598,7 @@ async function openGigDetail(gigId) {
   // Wire up the Edit button in the panel header
   const editBtn = document.getElementById('gigDetailEditBtn');
   if (editBtn) editBtn.onclick = () => openEditGig(gig.id);
+  setTimeout(() => loadGigWeather(gig.id, 'gigDetailWeather'), 0);
 
   body.innerHTML = `
     <div style="background:var(--surface);padding:16px 20px 20px;">
@@ -9607,6 +9610,7 @@ async function openGigDetail(gigId) {
       ${gig.venue_name ? `<div onclick="openVenueMemory('${escapeAttr(gig.venue_name)}')" style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:6px;cursor:pointer;">\uD83D\uDCD2 Venue history &amp; heads-ups \u203A</div>` : ''}
       <div style="font-size:14px;color:var(--text-2);">\uD83D\uDCB7 ${gig.fee ? '\u00A3' + parseFloat(gig.fee).toFixed(0) : 'No fee set'} <span class="badge badge-${statusBadgeClass(gig.status)}" style="margin-left:6px;">${statusLabel(gig.status)}</span></div>
       <div id="gigDetailMileage" style="margin-top:8px;"></div>
+      <div id="gigDetailWeather" style="display:none;margin-top:8px;font-size:12px;color:var(--text-2);"></div>
       <!-- Completeness tracker -->
       <div style="margin-top:12px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
@@ -9688,7 +9692,7 @@ async function openGigDetail(gigId) {
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Prep checklist</div>
-        <span onclick="addChecklistItem('${gig.id}')" style="font-size:11px;color:var(--accent);cursor:pointer;">+ Add</span>
+        <span><span onclick="openChecklistTemplates('${gig.id}')" style="font-size:11px;color:var(--accent);cursor:pointer;margin-right:12px;">Templates</span><span onclick="addChecklistItem('${gig.id}')" style="font-size:11px;color:var(--accent);cursor:pointer;">+ Add</span></span>
       </div>
       <div id="checklistItems" style="background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
         ${buildChecklistHTML(gig)}
@@ -18178,6 +18182,7 @@ async function openGigPack(gigId) {
   window._gigPackGig = gig;
   renderGigPack(gig);
   openPanel('panel-gig-pack');
+  loadGigWeather(gig.id, 'gigPackWeather');
   // Venue heads-up loads after first paint so the pack opens instantly.
   if (gig.venue_name) {
     fetch('/api/venues/detail?name=' + encodeURIComponent(gig.venue_name))
@@ -18245,6 +18250,7 @@ function renderGigPack(gig) {
       <div style="font-size:12px;color:var(--text-2);margin-top:2px;">${escapeHtml(dateLine)}</div>
     </div>
     <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;margin:12px 16px 6px;padding:2px 14px;">${timeline}</div>
+    <div id="gigPackWeather" style="display:none;margin:0 16px;padding:9px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px;color:var(--text-2);"></div>
 
     <div style="padding:12px 16px 4px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;">Essentials</div>
     <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;margin:6px 16px;padding:4px 14px;">
@@ -18351,6 +18357,158 @@ async function sendGigPackToThread(threadId) {
     showToast('Could not share. Try again.');
   }
 }
+
+// ── Gig-day weather ──────────────────────────────────────────────────────────
+
+async function loadGigWeather(gigId, slotId) {
+  try {
+    const resp = await fetch('/api/gigs/' + encodeURIComponent(gigId) + '/weather');
+    if (!resp.ok) return;
+    const w = await resp.json();
+    const slot = document.getElementById(slotId);
+    if (!slot || !w.available) return;
+    const wet = w.precip_pct >= 40;
+    slot.innerHTML = (wet ? '\uD83C\uDF27\uFE0F ' : '\u26C5 ')
+      + '<b style="color:var(--text);">' + escapeHtml(w.label) + '</b> \u00B7 ' + w.temp_c + '\u00B0C'
+      + (w.precip_pct > 0 ? ' \u00B7 ' + w.precip_pct + '% chance of rain' : '')
+      + ' <span style="color:var(--text-3);">(' + w.window + ')</span>'
+      + (wet ? ' \u00B7 <b style="color:var(--accent);">cover the load-in</b>' : '');
+    slot.style.display = 'block';
+  } catch (err) { /* weather is decoration, never an error state */ }
+}
+window.loadGigWeather = loadGigWeather;
+
+// ── Kit checklist templates ──────────────────────────────────────────────────
+
+async function openChecklistTemplates(gigId) {
+  let templates = [];
+  try {
+    const resp = await fetch('/api/checklist-templates');
+    if (resp.ok) templates = (await resp.json()).templates || [];
+  } catch (err) { /* empty list path */ }
+  const existing = document.getElementById('kitTemplateSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'kitTemplateSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  const rows = templates.map(t => `
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid var(--border);">
+      <div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;">${escapeHtml(t.name)}</div><div style="font-size:10px;color:var(--text-3);">${(t.items || []).length} item${(t.items || []).length === 1 ? '' : 's'}</div></div>
+      <span onclick="applyChecklistTemplate('${escapeAttr(gigId)}','${t.id}')" style="background:var(--accent);color:#000;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;">Apply</span>
+      <span onclick="deleteChecklistTemplate('${t.id}','${escapeAttr(gigId)}')" style="font-size:12px;color:var(--text-3);cursor:pointer;padding:4px 6px;">\u2715</span>
+    </div>`).join('');
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;max-height:70vh;overflow-y:auto;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+    + '<div style="font-size:14px;font-weight:700;text-align:center;margin-bottom:8px;">Kit checklists</div>'
+    + (rows || '<div style="font-size:12px;color:var(--text-3);text-align:center;padding:12px;">No templates yet. Build a checklist on a gig, then save it here once, e.g. "Function rig".</div>')
+    + '<button onclick="saveChecklistAsTemplate(\'' + escapeAttr(gigId) + '\')" style="width:100%;background:var(--surface);border:1px dashed var(--border);color:var(--accent);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;margin-top:12px;">Save this gig\'s list as a template</button>'
+    + '<button onclick="document.getElementById(\'kitTemplateSheet\').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;margin-top:4px;">Close</button>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) sheet.remove(); });
+  document.body.appendChild(sheet);
+  window._kitTemplates = templates;
+}
+
+async function applyChecklistTemplate(gigId, templateId) {
+  const t = (window._kitTemplates || []).find(x => x.id === templateId);
+  const gig = (window._cachedGigs || []).find(g => g && g.id === gigId);
+  if (!t || !gig) return;
+  const items = getGigChecklist(gig);
+  const have = new Set(items.map(i => i.text.toLowerCase()));
+  (t.items || []).forEach(i => {
+    if (i.text && !have.has(i.text.toLowerCase())) items.push({ text: i.text, done: false });
+  });
+  gig.checklist = items;
+  const container = document.getElementById('checklistItems');
+  if (container) container.innerHTML = buildChecklistHTML(gig);
+  await saveChecklist(gigId, items);
+  const sheet = document.getElementById('kitTemplateSheet');
+  if (sheet) sheet.remove();
+  showToast('Added "' + t.name + '" to this gig.');
+}
+
+async function saveChecklistAsTemplate(gigId) {
+  const gig = (window._cachedGigs || []).find(g => g && g.id === gigId);
+  const items = gig ? getGigChecklist(gig) : [];
+  if (!items.length) { showToast('Add some items to the checklist first.'); return; }
+  const name = prompt('Name this checklist (e.g. Function rig):');
+  if (!name || !name.trim()) return;
+  try {
+    const resp = await fetch('/api/checklist-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name.trim(), items }),
+    });
+    if (!resp.ok) throw new Error();
+    showToast('Saved. Apply it on any gig from now on.');
+    openChecklistTemplates(gigId);
+  } catch (err) {
+    showToast('Could not save the template.');
+  }
+}
+
+async function deleteChecklistTemplate(templateId, gigId) {
+  try {
+    await fetch('/api/checklist-templates/' + templateId, { method: 'DELETE' });
+    openChecklistTemplates(gigId);
+  } catch (err) { /* sheet refresh shows the truth either way */ }
+}
+window.openChecklistTemplates = openChecklistTemplates;
+window.applyChecklistTemplate = applyChecklistTemplate;
+window.saveChecklistAsTemplate = saveChecklistAsTemplate;
+window.deleteChecklistTemplate = deleteChecklistTemplate;
+
+// ── Invoice chase ────────────────────────────────────────────────────────────
+
+function paintInvoiceChaseStrip() {
+  const slot = document.getElementById('invChaseStrip');
+  if (!slot) return;
+  const invoices = window._invoicesFullList || [];
+  const now = Date.now();
+  const overdue = invoices.filter(inv => {
+    if (inv.status !== 'sent' && inv.status !== 'overdue') return false;
+    const due = inv.due_date ? new Date(inv.due_date).getTime() : null;
+    const sent = inv.sent_at ? new Date(inv.sent_at).getTime() : new Date(inv.created_at).getTime();
+    return (due && due < now) || (!due && now - sent > 14 * 86400000);
+  });
+  if (!overdue.length) { slot.innerHTML = ''; return; }
+  const me = (window._currentUser && window._currentUser.name) || '';
+  const rows = overdue.slice(0, 8).map(inv => {
+    const ref = inv.invoice_number || ('INV-' + String(inv.id).slice(0, 6));
+    const days = Math.floor((now - new Date(inv.due_date || inv.sent_at || inv.created_at).getTime()) / 86400000);
+    const chased = inv.chased_at ? Math.floor((now - new Date(inv.chased_at).getTime()) / 86400000) : null;
+    const subject = encodeURIComponent('Gentle nudge: invoice ' + ref);
+    const bodyTxt = encodeURIComponent('Hi' + (inv.band_name ? ' ' + inv.band_name : '') + ',\n\nJust a friendly nudge on invoice ' + ref + ' for \u00A3' + Math.round(parseFloat(inv.amount)) + '. Grateful if you could take a look when you get a minute.\n\nThanks,\n' + me);
+    const chase = inv.recipient_email
+      ? `<a href="mailto:${escapeAttr(inv.recipient_email)}?subject=${subject}&body=${bodyTxt}" onclick="markInvoiceChased('${inv.id}')" style="background:var(--accent);color:#000;border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;text-decoration:none;flex-shrink:0;">Chase by email</a>`
+      : `<span onclick="openInvoiceDetail('${inv.id}')" style="background:var(--surface);border:1px solid var(--border);color:var(--text-2);border-radius:8px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0;">No email \u00B7 open</span>`;
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);">
+        <div style="flex:1;min-width:0;" onclick="openInvoiceDetail('${inv.id}')">
+          <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;">${escapeHtml(inv.band_name || ref)} \u00B7 \u00A3${Math.round(parseFloat(inv.amount))}</div>
+          <div style="font-size:10px;color:var(--text-3);">${days > 0 ? days + ' day' + (days === 1 ? '' : 's') + ' overdue' : 'due now'}${chased !== null ? ' \u00B7 chased ' + (chased === 0 ? 'today' : chased + 'd ago') : ''}</div>
+        </div>
+        ${chase}
+      </div>`;
+  }).join('');
+  slot.innerHTML = `
+    <div style="margin:0 0 14px;background:linear-gradient(135deg,rgba(248,81,73,.1),transparent);border:1px solid rgba(248,81,73,.4);border-radius:12px;padding:10px 14px;">
+      <div style="font-size:11px;font-weight:700;color:var(--danger);text-transform:uppercase;letter-spacing:.8px;">Money owed \u00B7 ${overdue.length} invoice${overdue.length === 1 ? '' : 's'}</div>
+      ${rows}
+      <div style="font-size:10px;color:var(--text-3);margin-top:8px;">Chase opens a pre-written email; nothing sends without you.</div>
+    </div>`;
+}
+
+async function markInvoiceChased(invoiceId) {
+  try {
+    await fetch('/api/invoices/' + invoiceId + '/chased', { method: 'POST' });
+    const inv = (window._invoicesFullList || []).find(i => i.id === invoiceId);
+    if (inv) inv.chased_at = new Date().toISOString();
+    setTimeout(paintInvoiceChaseStrip, 400);
+  } catch (err) { /* stamp is best effort */ }
+}
+window.paintInvoiceChaseStrip = paintInvoiceChaseStrip;
+window.markInvoiceChased = markInvoiceChased;
 
 // ── Rebooking radar ──────────────────────────────────────────────────────────
 

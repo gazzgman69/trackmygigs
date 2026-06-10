@@ -1872,6 +1872,14 @@ async function runMigrations() {
     // suggestion (the key embeds the source gig month, so dismissing this
     // year's nudge does not suppress next year's).
     await db.query(`ALTER TABLE user_documents ADD COLUMN IF NOT EXISTS share_token TEXT`);
+    await db.query(`CREATE TABLE IF NOT EXISTS checklist_templates (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL,
+      name TEXT NOT NULL,
+      items JSONB NOT NULL DEFAULT '[]',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS chased_at TIMESTAMPTZ`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_documents_share_token ON user_documents (share_token) WHERE share_token IS NOT NULL`);
     await db.query(`CREATE TABLE IF NOT EXISTS rebook_dismissals (
       user_id UUID NOT NULL,

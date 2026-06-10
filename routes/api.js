@@ -2478,6 +2478,150 @@ router.delete('/venues/facts/:id', async (req, res) => {
   }
 });
 
+// ── Gig-day weather ──────────────────────────────────────────────────────────
+// Open-Meteo forecast for gigs within the next ~48 hours, summarised around
+// the gig's own window (load-in to finish). Free service, no key, cached
+// per gig for 30 minutes so a fidgety client can't hammer it.
+
+const _gigWeatherCache = new Map();
+const WEATHER_LABELS = [
+  [[0], 'Clear'], [[1, 2], 'Mostly clear'], [[3], 'Overcast'],
+  [[45, 48], 'Foggy'], [[51, 53, 55, 56, 57], 'Drizzle'],
+  [[61, 63, 65, 66, 67], 'Rain'], [[71, 73, 75, 77, 85, 86], 'Snow'],
+  [[80, 81, 82], 'Showers'], [[95, 96, 99], 'Thunderstorms'],
+];
+function weatherLabel(code) {
+  for (const [codes, label] of WEATHER_LABELS) if (codes.includes(code)) return label;
+  return 'Mixed';
+}
+
+router.get('/gigs/:id/weather', async (req, res) => {
+  try {
+    const gigRes = await db.query(
+      'SELECT * FROM gigs WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]
+    );
+    const gig = gigRes.rows[0];
+    if (!gig || !gig.date) return res.status(404).json({ error: 'Not found' });
+    const dateStr = new Date(gig.date).toISOString().slice(0, 10);
+    const hoursAway = (new Date(dateStr + 'T12:00:00') - new Date()) / 3600000;
+    if (hoursAway < -12 || hoursAway > 60) return res.json({ available: false, reason: 'outside_window' });
+
+    let lat = parseFloat(gig.venue_lat);
+    let lng = parseFloat(gig.venue_lng);
+    if ((!lat || !lng) && gig.venue_postcode) {
+      const n = normalisePostcode(gig.venue_postcode);
+      const loc = n ? await lookupPostcode(n) : null;
+      if (loc) { lat = loc.lat; lng = loc.lng; }
+    }
+    if (!lat || !lng) return res.json({ available: false, reason: 'no_location' });
+
+    const cached = _gigWeatherCache.get(gig.id);
+    if (cached && Date.now() - cached.at < 30 * 60000) return res.json(cached.data);
+
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lng
+      + '&hourly=temperature_2m,precipitation_probability,weather_code'
+      + '&timezone=Europe%2FLondon&start_date=' + dateStr + '&end_date=' + dateStr;
+    const resp = await fetch(url);
+    if (!resp.ok) return res.json({ available: false, reason: 'forecast_unavailable' });
+    const out = await resp.json();
+    const hours = (out.hourly && out.hourly.time) || [];
+    const startHour = parseInt(String(gig.load_in_time || gig.soundcheck_time || gig.start_time || '18:00').slice(0, 2), 10);
+    const endHour = Math.min(23, parseInt(String(gig.end_time || '23:00').slice(0, 2), 10) + 1);
+    let temp = null, maxPrecip = 0, worstCode = 0;
+    hours.forEach((t, i) => {
+      const h = parseInt(t.slice(11, 13), 10);
+      if (h < startHour || h > endHour) return;
+      if (temp === null) temp = out.hourly.temperature_2m[i];
+      const p = out.hourly.precipitation_probability ? out.hourly.precipitation_probability[i] : 0;
+      if (p >= maxPrecip) { maxPrecip = p; }
+      const c = out.hourly.weather_code ? out.hourly.weather_code[i] : 0;
+      if (c > worstCode) worstCode = c;
+    });
+    if (temp === null) return res.json({ available: false, reason: 'no_hours' });
+    const data = {
+      available: true,
+      label: weatherLabel(worstCode),
+      temp_c: Math.round(temp),
+      precip_pct: maxPrecip,
+      window: String(startHour).padStart(2, '0') + ':00\u2013' + String(endHour).padStart(2, '0') + ':00',
+    };
+    _gigWeatherCache.set(gig.id, { at: Date.now(), data });
+    res.json(data);
+  } catch (error) {
+    console.error('Gig weather error:', error);
+    res.json({ available: false, reason: 'error' });
+  }
+});
+
+// ── Kit checklist templates ──────────────────────────────────────────────────
+
+router.get('/checklist-templates', async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT id, name, items, created_at FROM checklist_templates WHERE user_id = $1 ORDER BY name',
+      [req.user.id]
+    );
+    res.json({ templates: result.rows });
+  } catch (error) {
+    console.error('Get checklist templates error:', error);
+    res.status(500).json({ error: 'Failed to fetch templates' });
+  }
+});
+
+router.post('/checklist-templates', async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim().slice(0, 80);
+    const items = Array.isArray(req.body.items)
+      ? req.body.items
+          .map(i => ({ text: String((i && i.text) || '').trim().slice(0, 200), done: false }))
+          .filter(i => i.text)
+          .slice(0, 60)
+      : [];
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    if (!items.length) return res.status(400).json({ error: 'Add at least one item first' });
+    const result = await db.query(
+      `INSERT INTO checklist_templates (user_id, name, items)
+       VALUES ($1, $2, $3::jsonb) RETURNING id, name, items`,
+      [req.user.id, name, JSON.stringify(items)]
+    );
+    res.json({ success: true, template: result.rows[0] });
+  } catch (error) {
+    console.error('Create checklist template error:', error);
+    res.status(500).json({ error: 'Failed to save template' });
+  }
+});
+
+router.delete('/checklist-templates/:id', async (req, res) => {
+  try {
+    const del = await db.query(
+      'DELETE FROM checklist_templates WHERE id = $1 AND user_id = $2 RETURNING id',
+      [req.params.id, req.user.id]
+    );
+    if (del.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete checklist template error:', error);
+    res.status(500).json({ error: 'Failed to delete' });
+  }
+});
+
+// ── Invoice chase stamp ──────────────────────────────────────────────────────
+
+router.post('/invoices/:id/chased', async (req, res) => {
+  try {
+    const result = await db.query(
+      `UPDATE invoices SET chased_at = NOW()
+        WHERE id = $1 AND user_id = $2 RETURNING id, chased_at`,
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, chased_at: result.rows[0].chased_at });
+  } catch (error) {
+    console.error('Invoice chased error:', error);
+    res.status(500).json({ error: 'Failed to stamp chase' });
+  }
+});
+
 // ── Rebooking radar ──────────────────────────────────────────────────────────
 // Surfaces revenue hiding in the user's own gig history. Pure date
 // arithmetic over their gigs; nothing is ever auto-sent.
