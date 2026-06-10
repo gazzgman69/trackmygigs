@@ -2280,6 +2280,203 @@ router.get('/blocked-dates', async (req, res) => {
   }
 });
 
+// ── Venue memory ─────────────────────────────────────────────────────────────
+// Private notes + community heads-up facts per venue. The community layer is
+// write-gated: you can only add or vote on facts for venues you have a logged
+// gig at, and facts need an outward postcode so same-named venues in
+// different towns never share data. Kinds are a fixed logistics menu;
+// nothing reputational is accepted.
+
+const VENUE_FACT_KINDS = ['limiter', 'parking', 'loadin', 'power', 'pa', 'stage'];
+
+function venueNameKey(name) {
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Outward code (e.g. OX27) from the gig's postcode column or, failing that,
+// a full postcode spotted inside the address line.
+function venueOutward(gig) {
+  const fromPc = String(gig.venue_postcode || '').toUpperCase().match(/^([A-Z]{1,2}\d[A-Z\d]?)/);
+  if (fromPc) return fromPc[1];
+  const fromAddr = String(gig.venue_address || '').toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}\b/);
+  return fromAddr ? fromAddr[1] : null;
+}
+
+// The user's gigs at a venue name + the community key those gigs support.
+async function venueContextFor(userId, rawName) {
+  const nameKey = venueNameKey(rawName);
+  if (!nameKey) return null;
+  const gigsRes = await db.query(
+    `SELECT * FROM gigs
+      WHERE user_id = $1 AND LOWER(TRIM(venue_name)) = $2
+        AND (status IS NULL OR status != 'cancelled')
+      ORDER BY date DESC`,
+    [userId, nameKey]
+  );
+  let outward = null;
+  for (const g of gigsRes.rows) {
+    outward = venueOutward(g);
+    if (outward) break;
+  }
+  return { nameKey, gigs: gigsRes.rows, outward, communityKey: outward ? nameKey + '|' + outward : null };
+}
+
+async function venueFactsFor(communityKey, userId) {
+  const factsRes = await db.query(
+    `SELECT f.id, f.kind, f.value, f.created_by, f.updated_at,
+            COALESCE(SUM(CASE WHEN v.vote = 1 THEN 1 ELSE 0 END), 0)::int AS confirms,
+            COALESCE(SUM(CASE WHEN v.vote = -1 THEN 1 ELSE 0 END), 0)::int AS flags,
+            MAX(CASE WHEN v.vote = 1 THEN v.created_at END) AS last_confirm_at,
+            MAX(CASE WHEN v.user_id = $2 THEN v.vote END) AS my_vote
+       FROM venue_facts f
+       LEFT JOIN venue_fact_votes v ON v.fact_id = f.id
+      WHERE f.venue_key = $1
+      GROUP BY f.id
+      ORDER BY f.kind, f.updated_at DESC`,
+    [communityKey, userId]
+  );
+  return factsRes.rows.map(f => ({
+    id: f.id,
+    kind: f.kind,
+    value: f.value,
+    mine: f.created_by === userId,
+    // The contributor counts as the first confirmation.
+    confirms: f.confirms + 1,
+    flags: f.flags,
+    disputed: f.flags > 0 && f.flags >= f.confirms + 1,
+    last_confirmed_at: f.last_confirm_at || f.updated_at,
+    my_vote: f.my_vote || 0,
+  }));
+}
+
+router.get('/venues/detail', async (req, res) => {
+  try {
+    const ctx = await venueContextFor(req.user.id, req.query.name);
+    if (!ctx) return res.status(400).json({ error: 'name is required' });
+    const gigs = ctx.gigs;
+    let total = 0;
+    let miles = null;
+    for (const g of gigs) {
+      if (g.status === 'confirmed' && parseFloat(g.fee) > 0) total += parseFloat(g.fee);
+      if (miles === null && parseFloat(g.mileage_miles) > 0) miles = Math.round(parseFloat(g.mileage_miles));
+    }
+    const latestWithAddress = gigs.find(g => g.venue_address);
+    const noteRes = await db.query(
+      'SELECT notes FROM venue_notes WHERE user_id = $1 AND venue_key = $2',
+      [req.user.id, ctx.nameKey]
+    );
+    const facts = ctx.communityKey ? await venueFactsFor(ctx.communityKey, req.user.id) : [];
+    res.json({
+      name: gigs[0] ? gigs[0].venue_name : req.query.name,
+      address: latestWithAddress ? latestWithAddress.venue_address : null,
+      stats: { count: gigs.length, total_confirmed: Math.round(total), miles },
+      gigs: gigs.map(g => ({
+        id: g.id, band_name: g.band_name, date: g.date,
+        start_time: g.start_time, end_time: g.end_time,
+        fee: g.fee, status: g.status,
+      })),
+      notes: noteRes.rows[0] ? noteRes.rows[0].notes : '',
+      facts,
+      can_contribute: gigs.length > 0 && !!ctx.communityKey,
+      needs_postcode: gigs.length > 0 && !ctx.communityKey,
+    });
+  } catch (error) {
+    console.error('Venue detail error:', error);
+    res.status(500).json({ error: 'Failed to load venue' });
+  }
+});
+
+router.post('/venues/notes', async (req, res) => {
+  try {
+    const nameKey = venueNameKey(req.body.venue_name);
+    if (!nameKey) return res.status(400).json({ error: 'venue_name is required' });
+    const notes = String(req.body.notes || '').slice(0, 4000);
+    await db.query(
+      `INSERT INTO venue_notes (user_id, venue_key, notes, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, venue_key) DO UPDATE SET notes = $3, updated_at = NOW()`,
+      [req.user.id, nameKey, notes]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Venue notes error:', error);
+    res.status(500).json({ error: 'Failed to save notes' });
+  }
+});
+
+router.post('/venues/facts', async (req, res) => {
+  try {
+    const { venue_name, kind, value } = req.body || {};
+    if (!VENUE_FACT_KINDS.includes(kind)) return res.status(400).json({ error: 'Unknown fact kind' });
+    const cleanValue = String(value || '').trim().replace(/\s+/g, ' ');
+    if (cleanValue.length < 2 || cleanValue.length > 120) {
+      return res.status(400).json({ error: 'Keep it between 2 and 120 characters' });
+    }
+    const ctx = await venueContextFor(req.user.id, venue_name);
+    if (!ctx || ctx.gigs.length === 0) {
+      return res.status(403).json({ error: 'You can only add heads-ups for venues you have played' });
+    }
+    if (!ctx.communityKey) {
+      return res.status(400).json({ error: 'Add a postcode to your gig at this venue first' });
+    }
+    const upsert = await db.query(
+      `INSERT INTO venue_facts (venue_key, venue_name, kind, value, created_by)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (venue_key, kind, created_by)
+       DO UPDATE SET value = $4, updated_at = NOW()
+       RETURNING id`,
+      [ctx.communityKey, ctx.gigs[0].venue_name, kind, cleanValue, req.user.id]
+    );
+    // An edited fact is a fresh claim; stale votes shouldn't carry over.
+    await db.query('DELETE FROM venue_fact_votes WHERE fact_id = $1', [upsert.rows[0].id]);
+    res.json({ success: true, id: upsert.rows[0].id });
+  } catch (error) {
+    console.error('Venue fact error:', error);
+    res.status(500).json({ error: 'Failed to save heads-up' });
+  }
+});
+
+router.post('/venues/facts/:id/vote', async (req, res) => {
+  try {
+    const vote = Number(req.body.vote);
+    if (vote !== 1 && vote !== -1) return res.status(400).json({ error: 'vote must be 1 or -1' });
+    const factRes = await db.query('SELECT * FROM venue_facts WHERE id = $1', [req.params.id]);
+    const fact = factRes.rows[0];
+    if (!fact) return res.status(404).json({ error: 'Not found' });
+    if (fact.created_by === req.user.id) return res.status(400).json({ error: 'Your own heads-up already counts as confirmed' });
+    const [nameKey, outward] = String(fact.venue_key).split('|');
+    const ctx = await venueContextFor(req.user.id, nameKey);
+    if (!ctx || ctx.gigs.length === 0 || ctx.outward !== outward) {
+      return res.status(403).json({ error: 'You can only confirm heads-ups for venues you have played' });
+    }
+    await db.query(
+      `INSERT INTO venue_fact_votes (fact_id, user_id, vote)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (fact_id, user_id) DO UPDATE SET vote = $3, created_at = NOW()`,
+      [fact.id, req.user.id, vote]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Venue fact vote error:', error);
+    res.status(500).json({ error: 'Failed to vote' });
+  }
+});
+
+router.delete('/venues/facts/:id', async (req, res) => {
+  try {
+    const del = await db.query(
+      'DELETE FROM venue_facts WHERE id = $1 AND created_by = $2 RETURNING id',
+      [req.params.id, req.user.id]
+    );
+    if (del.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    await db.query('DELETE FROM venue_fact_votes WHERE fact_id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Venue fact delete error:', error);
+    res.status(500).json({ error: 'Failed to delete' });
+  }
+});
+
 router.post('/blocked-dates', async (req, res) => {
   try {
     const { mode, date, from, to, reason, days, source_event_id } = req.body;

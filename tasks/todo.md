@@ -1,3 +1,47 @@
+# Musician-life wave (2026-06-10, mockups approved "go ahead")
+
+Build order agreed: venue memory -> gig pack -> rebooking radar.
+
+## Wave 1 — Venue memory
+
+- [ ] Tables: venue_notes (private, per user+venue), venue_facts (community,
+      structured kinds: limiter/parking/loadin/power/pa/stage, keyed
+      name+outward postcode), venue_fact_votes (confirm/flag, one per user)
+- [ ] Write gate: only users with a logged gig at the venue can add/vote;
+      community facts need a postcode in the venue address (prevents
+      cross-town "The Crown" collisions); value length capped; one fact per
+      kind per user (upsert own). Nothing reputational: kinds are fixed.
+- [ ] API: GET /api/venues/detail (stats, gigs, notes, facts+votes,
+      canContribute), PUT notes, POST fact, POST fact vote
+- [ ] UI: venue panel (stats row, community heads-up with confirmed-by +
+      thumbs, freshness banner after a recent gig there, private notes,
+      gigs-here list), entry link on gig detail
+- [ ] Deploy + verify live (facts gated, votes, notes persist)
+
+## Wave 2 — Gig pack
+
+- [ ] Migration: gigs.load_in_time, soundcheck_time, stage_time TIME,
+      parking_notes TEXT; PATCH whitelist extended
+- [ ] Pack panel from gig detail: timeline (leave-by -> load-in -> soundcheck
+      -> on stage -> finish), essentials (contact, maps, parking, dress code,
+      fee+invoice state, setlist), venue heads-up line, inline edit of the
+      new fields
+- [ ] Share to band chat as a snapshot card (house pattern; snapshot, not
+      live-updating - difference from mockup noted to Gareth)
+- [ ] Deploy + verify live
+
+## Wave 3 — Rebooking radar
+
+- [ ] rebook_dismissals table (dismiss forever / snooze a month)
+- [ ] GET /api/rebooking-suggestions: one-off venue gigs 10-12 months old
+      with no later booking; wedding-looking gigs ~11 months old framed as
+      anniversary; regular venues overdue vs their usual gap. Pure SQL/date
+      arithmetic, no AI.
+- [ ] Home card "Worth a follow-up" (count + estimated value) -> panel of
+      cards with Message / Dismiss / Snooze; Message routes to chat when a
+      contact matches, otherwise shows the gig's client details
+- [ ] Deploy + verify live
+
 # Google pin three-choice tap (2026-06-10, approved "yeh build it")
 
 Tapping a From-Google row offers Import as gig / Mark day as busy / Ignore,

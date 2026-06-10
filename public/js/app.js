@@ -9564,6 +9564,7 @@ async function openGigDetail(gigId) {
       <div style="font-size:14px;color:var(--text-2);margin-bottom:6px;">\uD83D\uDCC5 ${formatDateLong(gig.date)}</div>
       ${gig.start_time ? `<div style="font-size:14px;color:var(--text-2);margin-bottom:6px;">\uD83D\uDD56 ${formatTime(gig.start_time)}${gig.end_time ? '\u2013' + formatTime(gig.end_time) : ''}${gig.load_in_time ? ' \u00B7 Load-in: ' + formatTime(gig.load_in_time) : ''}</div>` : ''}
       ${gig.venue_address ? `<div onclick="openDirections('${escapeHtml(gig.venue_address).replace(/'/g, '&#39;')}')" style="font-size:14px;color:var(--text-2);margin-bottom:6px;cursor:pointer;"><span style="color:var(--accent);">\uD83D\uDCCD</span> ${escapeHtml(gig.venue_address)} <span style="color:var(--accent);font-size:12px;font-weight:600;margin-left:4px;">Open in Maps \u203A</span></div>` : ''}
+      ${gig.venue_name ? `<div onclick="openVenueMemory('${escapeAttr(gig.venue_name)}')" style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:6px;cursor:pointer;">\uD83D\uDCD2 Venue history &amp; heads-ups \u203A</div>` : ''}
       <div style="font-size:14px;color:var(--text-2);">\uD83D\uDCB7 ${gig.fee ? '\u00A3' + parseFloat(gig.fee).toFixed(0) : 'No fee set'} <span class="badge badge-${statusBadgeClass(gig.status)}" style="margin-left:6px;">${statusLabel(gig.status)}</span></div>
       <div id="gigDetailMileage" style="margin-top:8px;"></div>
       <!-- Completeness tracker -->
@@ -17880,6 +17881,243 @@ function escapeAttr(str) {
   if (!str) return '';
   return String(str).replace(/'/g, "\\'");
 }
+
+// ── Venue memory ─────────────────────────────────────────────────────────────
+
+const VENUE_FACT_META = {
+  limiter: ['\uD83D\uDD0A', 'Sound limiter'],
+  parking: ['\uD83D\uDE97', 'Parking'],
+  loadin: ['\uD83D\uDCE6', 'Load-in'],
+  power: ['\u26A1', 'Power'],
+  pa: ['\uD83D\uDD08', 'In-house PA'],
+  stage: ['\uD83C\uDFA4', 'Stage'],
+};
+
+async function openVenueMemory(venueName) {
+  const body = document.getElementById('venueMemoryBody');
+  const title = document.getElementById('venuePanelTitle');
+  if (!body) return;
+  if (title) title.textContent = venueName;
+  body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text-2);">Loading venue&hellip;</div>';
+  openPanel('panel-venue');
+  try {
+    const resp = await fetch('/api/venues/detail?name=' + encodeURIComponent(venueName));
+    if (!resp.ok) throw new Error('load failed');
+    const data = await resp.json();
+    window._venueMemoryData = data;
+    renderVenueMemory(data);
+  } catch (err) {
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text-2);">Could not load this venue. Try again.</div>';
+  }
+}
+
+function renderVenueMemory(data) {
+  const body = document.getElementById('venueMemoryBody');
+  if (!body) return;
+  const fmtMoney = (n) => '\u00A3' + Number(n || 0).toLocaleString();
+  const factRow = (f) => {
+    const meta = VENUE_FACT_META[f.kind] || ['\u2139\uFE0F', f.kind];
+    const when = f.last_confirmed_at ? new Date(f.last_confirmed_at).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) : '';
+    const confLine = f.disputed
+      ? `<span style="color:var(--danger);">Disputed &middot; ${f.confirms} confirm${f.confirms === 1 ? '' : 's'}, ${f.flags} flag${f.flags === 1 ? '' : 's'} &middot; check on arrival</span>`
+      : `Confirmed by ${f.confirms} musician${f.confirms === 1 ? '' : 's'}${when ? ' &middot; ' + when : ''}`;
+    const right = f.mine
+      ? `<span style="font-size:10px;color:var(--text-3);border:1px solid var(--border);border-radius:8px;padding:3px 8px;">Yours</span><span onclick="deleteVenueFact('${f.id}')" style="font-size:11px;color:var(--danger);cursor:pointer;margin-left:8px;">Delete</span>`
+      : `<span onclick="voteVenueFact('${f.id}',1)" style="font-size:13px;border:1px solid ${f.my_vote === 1 ? 'var(--success)' : 'var(--border)'};border-radius:8px;padding:3px 8px;cursor:pointer;">\uD83D\uDC4D</span><span onclick="voteVenueFact('${f.id}',-1)" style="font-size:13px;border:1px solid ${f.my_vote === -1 ? 'var(--danger)' : 'var(--border)'};border-radius:8px;padding:3px 8px;cursor:pointer;margin-left:6px;">\uD83D\uDC4E</span>`;
+    return `
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);">
+        <span style="font-size:16px;width:24px;text-align:center;flex-shrink:0;">${meta[0]}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);">${meta[1]} &middot; ${escapeHtml(f.value)}</div>
+          <div style="font-size:10px;color:var(--text-3);margin-top:2px;">${confLine}</div>
+        </div>
+        <div style="flex-shrink:0;display:flex;align-items:center;">${right}</div>
+      </div>`;
+  };
+
+  const gigRow = (g) => {
+    const d = new Date(g.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const t = g.start_time ? ' &middot; ' + String(g.start_time).slice(0, 5) + (g.end_time ? '\u2013' + String(g.end_time).slice(0, 5) : '') : '';
+    const fee = parseFloat(g.fee) > 0 ? `<span style="color:var(--success);font-weight:700;">\u00A3${Math.round(parseFloat(g.fee))}</span>` : '<span style="color:var(--text-3);font-size:11px;">no fee</span>';
+    return `
+      <div onclick="openGigDetail('${escapeAttr(g.id)}')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;">
+        <div><div>${escapeHtml(g.band_name || 'Gig')}</div><div style="color:var(--text-2);font-size:11px;">${d}${t}</div></div>
+        ${fee}
+      </div>`;
+  };
+
+  const factsBlock = data.facts.length
+    ? data.facts.map(factRow).join('')
+    : '<div style="font-size:12px;color:var(--text-3);padding:8px 0;">No heads-ups yet. Be the first to help the next musician in.</div>';
+
+  // After a gig here in the last week, ask one light question to keep
+  // facts fresh (only when there are facts from other people to confirm).
+  const now = new Date();
+  const recentGig = data.gigs.find(g => {
+    const gd = new Date(g.date);
+    return gd <= now && (now - gd) < 7 * 86400000;
+  });
+  const confirmables = data.facts.filter(f => !f.mine && f.my_vote !== 1);
+  const freshness = (recentGig && confirmables.length) ? `
+    <div style="background:linear-gradient(135deg,rgba(88,166,255,.14),transparent);border:1px solid rgba(88,166,255,.4);border-radius:12px;margin:6px 16px;padding:12px 14px;">
+      <div style="font-size:13px;font-weight:600;">You played here recently. Are the heads-ups below still right?</div>
+      <div style="font-size:11px;color:var(--text-2);margin-top:2px;">One tap keeps them fresh for everyone, or use the thumbs on any single one.</div>
+      <button onclick="confirmAllVenueFacts()" style="margin-top:10px;width:100%;background:var(--success);color:#000;border:none;border-radius:8px;padding:9px;font-size:12px;font-weight:700;cursor:pointer;">All still right</button>
+    </div>` : '';
+
+  body.innerHTML = `
+    <div style="padding:14px 16px 2px;">
+      ${data.address ? `<div onclick="openDirections('${escapeHtml(data.address).replace(/'/g, '&#39;')}')" style="font-size:12px;color:var(--text-2);cursor:pointer;">\uD83D\uDCCD ${escapeHtml(data.address)} <span style="color:var(--accent);font-weight:600;">Maps \u203A</span></div>` : ''}
+    </div>
+    <div style="display:flex;gap:8px;padding:10px 16px 4px;">
+      <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;text-align:center;"><b style="display:block;font-size:17px;">${data.stats.count}</b><span style="font-size:10px;color:var(--text-2);">gig${data.stats.count === 1 ? '' : 's'} played</span></div>
+      <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;text-align:center;"><b style="display:block;font-size:17px;color:var(--success);">${fmtMoney(data.stats.total_confirmed)}</b><span style="font-size:10px;color:var(--text-2);">earned here</span></div>
+      ${data.stats.miles ? `<div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;text-align:center;"><b style="display:block;font-size:17px;">${data.stats.miles} mi</b><span style="font-size:10px;color:var(--text-2);">from home</span></div>` : ''}
+    </div>
+
+    <div style="padding:14px 16px 4px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;">Community heads-up</div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;margin:6px 16px;padding:4px 14px;">${factsBlock}</div>
+    ${data.can_contribute ? `
+      <div onclick="openAddVenueFact()" style="text-align:center;background:var(--surface);border:1px dashed var(--border);border-radius:10px;margin:8px 16px;padding:11px;font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;">+ Add a heads-up (limiter, parking, load-in, power, PA, stage)</div>
+      <div style="font-size:10px;color:var(--text-3);text-align:center;margin:4px 16px 0;">You can add or confirm because you've played here. Logistics only, no venue reviews.</div>`
+    : data.needs_postcode ? `<div style="font-size:11px;color:var(--text-3);text-align:center;margin:8px 16px;">Add a postcode to one of your gigs here to join the shared heads-ups.</div>` : ''}
+    ${freshness}
+
+    <div style="padding:14px 16px 4px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;">My notes <span style="font-size:9px;color:var(--text-3);border:1px solid var(--border);border-radius:6px;padding:1px 6px;margin-left:6px;font-weight:700;">PRIVATE</span></div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;margin:6px 16px;padding:12px 14px;">
+      <textarea id="venueNotesInput" placeholder="Anything you want to remember about this venue. Only you see this." style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;line-height:1.5;padding:9px 10px;min-height:84px;resize:vertical;font-family:inherit;">${escapeHtml(data.notes || '')}</textarea>
+      <button onclick="saveVenueNotes()" style="margin-top:8px;background:var(--accent);color:#000;border:none;border-radius:8px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;">Save notes</button>
+      <span id="venueNotesSaved" style="font-size:11px;color:var(--success);margin-left:8px;display:none;">Saved</span>
+    </div>
+
+    <div style="padding:14px 16px 4px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;">My gigs here</div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;margin:6px 16px 30px;padding:4px 14px;">${data.gigs.map(gigRow).join('')}</div>`;
+}
+
+async function refreshVenueMemory() {
+  const data = window._venueMemoryData;
+  if (!data) return;
+  try {
+    const resp = await fetch('/api/venues/detail?name=' + encodeURIComponent(data.name));
+    if (resp.ok) {
+      window._venueMemoryData = await resp.json();
+      renderVenueMemory(window._venueMemoryData);
+    }
+  } catch (err) { /* keep the stale render */ }
+}
+
+async function saveVenueNotes() {
+  const data = window._venueMemoryData;
+  const input = document.getElementById('venueNotesInput');
+  if (!data || !input) return;
+  try {
+    const resp = await fetch('/api/venues/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ venue_name: data.name, notes: input.value }),
+    });
+    if (!resp.ok) throw new Error();
+    data.notes = input.value;
+    const saved = document.getElementById('venueNotesSaved');
+    if (saved) { saved.style.display = 'inline'; setTimeout(() => { saved.style.display = 'none'; }, 2000); }
+  } catch (err) {
+    showToast('Could not save notes. Try again.');
+  }
+}
+
+function openAddVenueFact() {
+  const existing = document.getElementById('venueFactSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'venueFactSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  const opts = Object.keys(VENUE_FACT_META).map(k => `<option value="${k}">${VENUE_FACT_META[k][1]}</option>`).join('');
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+    + '<div style="font-size:14px;font-weight:700;color:var(--text);text-align:center;margin-bottom:12px;">Add a heads-up</div>'
+    + '<select id="venueFactKind" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:10px;margin-bottom:8px;">' + opts + '</select>'
+    + '<input id="venueFactValue" maxlength="120" placeholder="Short and factual, e.g. 95dB / behind the barn / stage left" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:10px;margin-bottom:4px;">'
+    + '<div style="font-size:10px;color:var(--text-3);margin-bottom:12px;">Logistics only. Anything else belongs in your private notes.</div>'
+    + '<button onclick="submitVenueFact()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">Add heads-up</button>'
+    + '<button onclick="document.getElementById(\'venueFactSheet\').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Cancel</button>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) sheet.remove(); });
+  document.body.appendChild(sheet);
+}
+
+async function submitVenueFact() {
+  const data = window._venueMemoryData;
+  const kind = document.getElementById('venueFactKind');
+  const value = document.getElementById('venueFactValue');
+  if (!data || !kind || !value) return;
+  try {
+    const resp = await fetch('/api/venues/facts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ venue_name: data.name, kind: kind.value, value: value.value }),
+    });
+    const out = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(out.error || 'failed');
+    const sheet = document.getElementById('venueFactSheet');
+    if (sheet) sheet.remove();
+    showToast('Heads-up added. Thanks for helping the next one in.');
+    refreshVenueMemory();
+  } catch (err) {
+    showToast(err.message || 'Could not add that. Try again.');
+  }
+}
+
+async function voteVenueFact(factId, vote) {
+  try {
+    const resp = await fetch('/api/venues/facts/' + factId + '/vote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vote }),
+    });
+    if (!resp.ok) {
+      const out = await resp.json().catch(() => ({}));
+      throw new Error(out.error || 'failed');
+    }
+    refreshVenueMemory();
+  } catch (err) {
+    showToast(err.message || 'Could not record that.');
+  }
+}
+
+async function confirmAllVenueFacts() {
+  const data = window._venueMemoryData;
+  if (!data) return;
+  const targets = data.facts.filter(f => !f.mine && f.my_vote !== 1);
+  for (const f of targets) {
+    try {
+      await fetch('/api/venues/facts/' + f.id + '/vote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vote: 1 }),
+      });
+    } catch (err) { /* best effort per fact */ }
+  }
+  showToast('Thanks, heads-ups confirmed.');
+  refreshVenueMemory();
+}
+
+async function deleteVenueFact(factId) {
+  try {
+    const resp = await fetch('/api/venues/facts/' + factId, { method: 'DELETE' });
+    if (!resp.ok) throw new Error();
+    refreshVenueMemory();
+  } catch (err) {
+    showToast('Could not delete that.');
+  }
+}
+
+window.openVenueMemory = openVenueMemory;
+window.saveVenueNotes = saveVenueNotes;
+window.openAddVenueFact = openAddVenueFact;
+window.submitVenueFact = submitVenueFact;
+window.voteVenueFact = voteVenueFact;
+window.confirmAllVenueFacts = confirmAllVenueFacts;
+window.deleteVenueFact = deleteVenueFact;
 
 // ── Nav reorder: long-press any nav button to enter wiggle/reorder mode ──────
 (function setupNavReorder() {

@@ -1843,6 +1843,37 @@ async function runMigrations() {
     // path deletes whatever google_event_id points at; putting the source id
     // there would delete the user's real Google event on unblock.
     await db.query(`ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS source_event_id TEXT`);
+    // 2026-06-10 venue memory. venue_notes is private per user (keyed on the
+    // normalised venue name as that user spells it). venue_facts is the
+    // community heads-up layer, keyed on name + outward postcode so two
+    // different "The Crown"s never merge; kind is a fixed logistics-only
+    // menu, one fact per kind per contributor. Votes: 1 confirm, -1 flag.
+    await db.query(`CREATE TABLE IF NOT EXISTS venue_notes (
+      user_id UUID NOT NULL,
+      venue_key TEXT NOT NULL,
+      notes TEXT,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (user_id, venue_key)
+    )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS venue_facts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      venue_key TEXT NOT NULL,
+      venue_name TEXT,
+      kind TEXT NOT NULL,
+      value TEXT NOT NULL,
+      created_by UUID NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (venue_key, kind, created_by)
+    )`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_venue_facts_key ON venue_facts (venue_key)`);
+    await db.query(`CREATE TABLE IF NOT EXISTS venue_fact_votes (
+      fact_id UUID NOT NULL,
+      user_id UUID NOT NULL,
+      vote SMALLINT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (fact_id, user_id)
+    )`);
     // 2026-04-29 contextual-send batch: messages.attachments was TEXT[] but
     // we now store snapshotted gig/contact objects in there. Promote to
     // JSONB. Existing rows are always NULL (no real users have used the
