@@ -4,43 +4,60 @@ Build order agreed: venue memory -> gig pack -> rebooking radar.
 
 ## Wave 1 — Venue memory
 
-- [ ] Tables: venue_notes (private, per user+venue), venue_facts (community,
+- [x] Tables: venue_notes (private, per user+venue), venue_facts (community,
       structured kinds: limiter/parking/loadin/power/pa/stage, keyed
       name+outward postcode), venue_fact_votes (confirm/flag, one per user)
-- [ ] Write gate: only users with a logged gig at the venue can add/vote;
+- [x] Write gate: only users with a logged gig at the venue can add/vote;
       community facts need a postcode in the venue address (prevents
       cross-town "The Crown" collisions); value length capped; one fact per
       kind per user (upsert own). Nothing reputational: kinds are fixed.
-- [ ] API: GET /api/venues/detail (stats, gigs, notes, facts+votes,
+- [x] API: GET /api/venues/detail (stats, gigs, notes, facts+votes,
       canContribute), PUT notes, POST fact, POST fact vote
-- [ ] UI: venue panel (stats row, community heads-up with confirmed-by +
+- [x] UI: venue panel (stats row, community heads-up with confirmed-by +
       thumbs, freshness banner after a recent gig there, private notes,
       gigs-here list), entry link on gig detail
-- [ ] Deploy + verify live (facts gated, votes, notes persist)
+- [x] Deploy + verify live (facts gated, votes, notes persist)
 
 ## Wave 2 — Gig pack
 
-- [ ] Migration: gigs.load_in_time, soundcheck_time, stage_time TIME,
+- [x] Migration: gigs.load_in_time, soundcheck_time, stage_time TIME,
       parking_notes TEXT; PATCH whitelist extended
-- [ ] Pack panel from gig detail: timeline (leave-by -> load-in -> soundcheck
+- [x] Pack panel from gig detail: timeline (leave-by -> load-in -> soundcheck
       -> on stage -> finish), essentials (contact, maps, parking, dress code,
       fee+invoice state, setlist), venue heads-up line, inline edit of the
       new fields
-- [ ] Share to band chat as a snapshot card (house pattern; snapshot, not
+- [x] Share to band chat as a snapshot card (house pattern; snapshot, not
       live-updating - difference from mockup noted to Gareth)
-- [ ] Deploy + verify live
+- [x] Deploy + verify live
 
 ## Wave 3 — Rebooking radar
 
-- [ ] rebook_dismissals table (dismiss forever / snooze a month)
-- [ ] GET /api/rebooking-suggestions: one-off venue gigs 10-12 months old
+- [x] rebook_dismissals table (dismiss forever / snooze a month)
+- [x] GET /api/rebooking-suggestions: one-off venue gigs 10-12 months old
       with no later booking; wedding-looking gigs ~11 months old framed as
       anniversary; regular venues overdue vs their usual gap. Pure SQL/date
       arithmetic, no AI.
-- [ ] Home card "Worth a follow-up" (count + estimated value) -> panel of
+- [x] Home card "Worth a follow-up" (count + estimated value) -> panel of
       cards with Message / Dismiss / Snooze; Message routes to chat when a
       contact matches, otherwise shows the gig's client details
-- [ ] Deploy + verify live
+- [x] Deploy + verify live
+
+## Review (2026-06-10, commits e0db142..1659cc7)
+
+Wave 1 venue memory: tables + gated API + panel live. Verified on the dev
+server: fact created by Gareth (postcode OX27 derived from the address),
+demo2 blocked from adding/voting without a gig there (403s), self-vote
+blocked, demo2 gained access by logging a gig, confirm bumped the count,
+flag flipped disputed, notes round-tripped, all test data cleaned up.
+Wave 2 gig pack: soundcheck_time column, timeline panel (leave-by 16:00
+computed from 27 mi), inline edit saved via PATCH, chat snapshot extended
+(soundcheck/sets/parking/leader) and proven inside a sent message. One
+bug found and fixed during verify: /api/chat/threads returns {threads},
+not an array. Wave 3 radar: all three rules fired on crafted demo data
+(rebook £320 / anniversary £650 / regular £153 avg), dismiss permanent,
+snooze 30 days, Home card wired; ym key fix (pg Date objects). Panels
+verified rendering with a clean console. Gareth's radar is empty today
+because nothing in his history sits in the 10-12 month windows yet.
 
 # Google pin three-choice tap (2026-06-10, approved "yeh build it")
 
