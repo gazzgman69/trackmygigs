@@ -144,7 +144,11 @@
 
     const wrap = document.createElement('div');
     wrap.id = 'stageMode';
-    wrap.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#000;color:#E6EDF3;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,sans-serif;overscroll-behavior:none;';
+    // Full-bleed black, but the CONTENT column caps at a readable width on
+    // desktop/tablet; phones use the full width. Safe-area padding keeps the
+    // header clear of the notch and the next-up bar clear of the iPhone
+    // home indicator when installed as a PWA.
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#000;color:#E6EDF3;display:flex;flex-direction:column;align-items:center;font-family:-apple-system,BlinkMacSystemFont,sans-serif;overscroll-behavior:none;padding-top:env(safe-area-inset-top, 0px);padding-bottom:env(safe-area-inset-bottom, 0px);';
     document.body.appendChild(wrap);
     document.body.style.overflow = 'hidden';
     renderStage();
@@ -200,6 +204,7 @@
 
     wrap.innerHTML = `
       <style>
+        #stageMode > div, #stageMode > #stgJump { width:100%; max-width:760px; }
         #stageMode .stg-sec{font-size:${11 * fs}px;color:#6E7681;letter-spacing:1px;margin-top:10px;font-weight:700;}
         #stageMode #stgLyr b{color:var(--accent,#F0A500);font-weight:800;font-size:${14 * fs}px;vertical-align:super;margin-right:2px;}
         #stageMode .stg-pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent,#F0A500);margin-left:6px;${bpm ? 'animation:stgbeat ' + (60 / bpm).toFixed(3) + 's infinite;' : 'display:none;'}}
