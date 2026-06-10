@@ -20102,8 +20102,7 @@ function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
       <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:var(--info);"></i>Google</span>
       <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:var(--text-3);"></i>Blocked</span>
     </div>
-    <div id="calListBody" style="padding:4px 12px 24px;">${listHtml}</div>
-    <button id="calListTodayFab" onclick="calListGoToday()" style="display:none;position:fixed;bottom:84px;right:16px;background:var(--card);border:1px solid var(--border);color:var(--accent);border-radius:999px;padding:9px 16px;font-size:12px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer;z-index:50;">Today</button>`;
+    <div id="calListBody" style="padding:4px 12px 24px;">${listHtml}</div>`;
 }
 
 // Render one day's rows (header with prev/next chevrons + items or empty state).
@@ -20115,7 +20114,7 @@ function buildCalListDayHtml(iso) {
   let html = `
     <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 6px;border-bottom:1px solid var(--border);">
       <button onclick="calListShiftDay(-1)" style="background:none;border:none;color:var(--accent);font-size:18px;cursor:pointer;padding:0 8px;">&#8249;</button>
-      <span style="font-size:12px;font-weight:700;color:${iso === todayIso ? 'var(--accent)' : 'var(--text-2)'};text-transform:uppercase;letter-spacing:.6px;">${escapeHtml(label)}</span>
+      <span style="font-size:12px;font-weight:700;color:${iso === todayIso ? 'var(--accent)' : 'var(--text-2)'};text-transform:uppercase;letter-spacing:.6px;">${escapeHtml(label)}${iso !== todayIso ? ` <span onclick="event.stopPropagation();calListGoToday()" style="color:#000;background:var(--accent);border-radius:8px;padding:2px 8px;font-size:10px;font-weight:800;cursor:pointer;margin-left:6px;letter-spacing:0;text-transform:none;">Today</span>` : ''}</span>
       <button onclick="calListShiftDay(1)" style="background:none;border:none;color:var(--accent);font-size:18px;cursor:pointer;padding:0 8px;">&#8250;</button>
     </div>`;
   if (items.length === 0) {
@@ -20139,8 +20138,6 @@ function selectCalListDay(iso) {
   });
   const body = document.getElementById('calListBody');
   if (body) body.innerHTML = buildCalListDayHtml(iso);
-  const fab = document.getElementById('calListTodayFab');
-  if (fab) fab.style.display = iso === _calIso(new Date()) ? 'none' : 'block';
 }
 window.selectCalListDay = selectCalListDay;
 
@@ -20181,8 +20178,6 @@ function initCalListBehaviour() {
     c.style.outline = c.dataset.date === sel ? '2px solid var(--accent)' : '';
     c.style.outlineOffset = c.dataset.date === sel ? '-2px' : '';
   });
-  const fab = document.getElementById('calListTodayFab');
-  if (fab) fab.style.display = sel === _calIso(new Date()) ? 'none' : 'block';
   // Swipe left/right on the day panel moves a day, like Apple.
   const body = document.getElementById('calListBody');
   if (body && !body._swipeWired) {
