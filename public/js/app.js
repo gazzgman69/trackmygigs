@@ -559,7 +559,7 @@ function openTextSizePicker() {
     + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>'
     + '<div style="font-size:14px;font-weight:700;text-align:center;margin-bottom:4px;">Text size</div>'
     + '<div style="font-size:11px;color:var(--text-2);text-align:center;margin-bottom:12px;">Scales the whole app. Auto follows your phone\u2019s setting.</div>'
-    + opt('Auto (follow my phone)', None, 14)
+    + opt('Auto (follow my phone)', null, 14)
     + opt('Default', 1, 14)
     + opt('Large', 1.15, 16)
     + opt('Extra large', 1.3, 18)
