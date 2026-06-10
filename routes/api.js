@@ -4565,6 +4565,7 @@ router.get('/documents', async (req, res) => {
     const result = await db.query(
       `SELECT id, name, doc_type, mime_type, file_name, file_size,
               issued_date, expiry_date, notes, uploaded_at, updated_at,
+              share_token,
               (file_data IS NOT NULL) AS has_file
        FROM user_documents
        WHERE user_id = $1
@@ -4622,6 +4623,41 @@ router.get('/documents/:id/file', async (req, res) => {
   } catch (error) {
     console.error('Get document file error:', error);
     res.status(500).send('Failed to fetch file');
+  }
+});
+
+// Share link: unguessable token, public read-only page at /docs/:token.
+// Revocable any time; revoking kills the old URL for good (a re-share mints
+// a fresh token rather than resurrecting the leaked one).
+router.post('/documents/:id/share', async (req, res) => {
+  try {
+    const token = require('crypto').randomBytes(18).toString('base64url');
+    const result = await db.query(
+      `UPDATE user_documents SET share_token = COALESCE(share_token, $3)
+        WHERE id = $1 AND user_id = $2
+        RETURNING share_token`,
+      [req.params.id, req.user.id, token]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, url: '/docs/' + result.rows[0].share_token });
+  } catch (error) {
+    console.error('Document share error:', error);
+    res.status(500).json({ error: 'Failed to create link' });
+  }
+});
+
+router.post('/documents/:id/revoke', async (req, res) => {
+  try {
+    const result = await db.query(
+      `UPDATE user_documents SET share_token = NULL
+        WHERE id = $1 AND user_id = $2 RETURNING id`,
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Document revoke error:', error);
+    res.status(500).json({ error: 'Failed to revoke link' });
   }
 });
 

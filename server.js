@@ -1871,6 +1871,8 @@ async function runMigrations() {
     // 2026-06-10 rebooking radar: per-user dismissals/snoozes keyed per
     // suggestion (the key embeds the source gig month, so dismissing this
     // year's nudge does not suppress next year's).
+    await db.query(`ALTER TABLE user_documents ADD COLUMN IF NOT EXISTS share_token TEXT`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_documents_share_token ON user_documents (share_token) WHERE share_token IS NOT NULL`);
     await db.query(`CREATE TABLE IF NOT EXISTS rebook_dismissals (
       user_id UUID NOT NULL,
       key TEXT NOT NULL,

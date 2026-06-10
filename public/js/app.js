@@ -7428,6 +7428,40 @@ const DOC_TYPE_LABELS = {
   other: 'Other document',
 };
 
+async function shareDocumentLink(docId) {
+  try {
+    const resp = await fetch('/api/documents/' + encodeURIComponent(docId) + '/share', { method: 'POST' });
+    const out = await resp.json();
+    if (!resp.ok || !out.url) throw new Error(out.error || 'failed');
+    const full = window.location.origin + out.url;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Document', url: full }); }
+      catch (e) { /* user cancelled the share sheet */ }
+    } else if (navigator.clipboard) {
+      await navigator.clipboard.writeText(full);
+      showToast('Link copied. Anyone with it can view this document until you revoke it.');
+    } else {
+      prompt('Copy this link:', full);
+    }
+    openDocumentsPanel();
+  } catch (err) {
+    showToast('Could not create the link. Try again.');
+  }
+}
+
+async function revokeDocumentLink(docId) {
+  try {
+    const resp = await fetch('/api/documents/' + encodeURIComponent(docId) + '/revoke', { method: 'POST' });
+    if (!resp.ok) throw new Error();
+    showToast('Link revoked. The old URL is dead.');
+    openDocumentsPanel();
+  } catch (err) {
+    showToast('Could not revoke. Try again.');
+  }
+}
+window.shareDocumentLink = shareDocumentLink;
+window.revokeDocumentLink = revokeDocumentLink;
+
 function _docExpiryBadge(expiry) {
   if (!expiry) return { label: 'No expiry', bg: 'rgba(160,160,160,.18)', color: 'var(--text-2)' };
   const expMs = new Date(String(expiry).slice(0, 10) + 'T00:00:00Z').getTime();
@@ -7487,6 +7521,10 @@ async function openDocumentsPanel() {
             </div>
             <div style="background:${badge.bg};color:${badge.color};font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px;white-space:nowrap;">${badge.label}</div>
           </div>
+          ${d.has_file ? `<div style="display:flex;gap:8px;margin-top:10px;">
+            <span onclick="event.stopPropagation();shareDocumentLink('${escapeHtml(d.id)}')" style="flex:1;text-align:center;background:var(--accent);color:#000;border-radius:8px;padding:8px 0;font-size:12px;font-weight:700;">Send link</span>
+            ${d.share_token ? `<span onclick="event.stopPropagation();revokeDocumentLink('${escapeHtml(d.id)}')" style="flex:1;text-align:center;background:var(--surface);border:1px solid var(--border);color:var(--danger);border-radius:8px;padding:8px 0;font-size:12px;font-weight:600;">Revoke link</span>` : ''}
+          </div>` : ''}
         </div>`;
       }).join('');
     }

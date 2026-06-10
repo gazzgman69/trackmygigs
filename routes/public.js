@@ -230,6 +230,74 @@ router.get('/pay/:slug', async (req, res) => {
 // the link knows whose calendar it is; anyone who stumbles across it should
 // see nothing but busy/free dates. If a musician wants to share bio, photo
 // and rates, they send their /epk/:slug link separately.
+// ── Shared document page ─────────────────────────────────────────────────────
+// /docs/:token shows one document with a download button, no login. The token
+// is unguessable and the owner can revoke it from the wallet at any time.
+
+async function findSharedDocument(token) {
+  if (!token || !/^[A-Za-z0-9_-]{10,64}$/.test(token)) return null;
+  const result = await db.query(
+    `SELECT d.id, d.name, d.doc_type, d.mime_type, d.file_name, d.file_size,
+            d.issued_date, d.expiry_date, d.file_data IS NOT NULL AS has_file,
+            u.name AS owner_name
+       FROM user_documents d
+       JOIN users u ON u.id = d.user_id
+      WHERE d.share_token = $1`,
+    [token]
+  );
+  return result.rows[0] || null;
+}
+
+router.get('/docs/:token', async (req, res) => {
+  try {
+    const doc = await findSharedDocument(req.params.token);
+    if (!doc) {
+      return res.status(404).set('Content-Type', 'text/html')
+        .send(pageHtml('Not found', `<div class="empty"><h1>Not found</h1><p class="sub">This link is no longer active. Ask the sender for a fresh one.</p></div>`));
+    }
+    const fmt = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : null;
+    const expiry = fmt(doc.expiry_date);
+    const issued = fmt(doc.issued_date);
+    const expired = doc.expiry_date && new Date(doc.expiry_date) < new Date();
+    const body = `
+      <div class="empty" style="text-align:left;max-width:460px;margin:40px auto;">
+        <h1 style="font-size:22px;">${esc(doc.owner_name || 'Musician')} &middot; ${esc(doc.name)}</h1>
+        <p class="sub" style="margin-top:8px;">
+          ${issued ? 'Issued ' + issued + ' &middot; ' : ''}
+          ${expiry ? (expired ? '<b style="color:#F85149;">Expired ' + expiry + '</b>' : 'Valid until ' + expiry) : 'No expiry date'}
+        </p>
+        <p class="sub">Shared via TrackMyGigs. The owner can revoke this link at any time.</p>
+        ${doc.has_file
+          ? `<a href="/docs/${esc(req.params.token)}/file" style="display:inline-block;margin-top:18px;background:#F0A500;color:#000;border-radius:10px;padding:12px 22px;font-weight:700;text-decoration:none;">Download ${doc.mime_type === 'application/pdf' ? 'PDF' : 'file'}</a>`
+          : '<p class="sub" style="margin-top:18px;">No file attached to this document.</p>'}
+      </div>`;
+    res.set('Content-Type', 'text/html').send(pageHtml(esc(doc.name), body));
+  } catch (error) {
+    console.error('Shared doc page error:', error);
+    res.status(500).send('Something went wrong');
+  }
+});
+
+router.get('/docs/:token/file', async (req, res) => {
+  try {
+    const doc = await findSharedDocument(req.params.token);
+    if (!doc || !doc.has_file) return res.status(404).send('Not found');
+    const fileRes = await db.query(
+      'SELECT file_data, mime_type, file_name FROM user_documents WHERE id = $1',
+      [doc.id]
+    );
+    const row = fileRes.rows[0];
+    if (!row || !row.file_data) return res.status(404).send('Not found');
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    const safeName = (row.file_name || 'document').replace(/[^\w.\-]/g, '_');
+    res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+    res.send(row.file_data);
+  } catch (error) {
+    console.error('Shared doc file error:', error);
+    res.status(500).send('Failed to fetch file');
+  }
+});
+
 router.get('/share/:slug', async (req, res) => {
   try {
     const user = await findUserBySlug(req.params.slug);
