@@ -734,8 +734,20 @@ router.post('/delete-account', async (req, res) => {
 
     const client = await db.getClient();
     try {
+      // Schema drift guard: dev and prod have slightly different table sets
+      // (expenses exists on one, not the other). A DELETE against a missing
+      // relation aborts the whole transaction, so resolve existence first
+      // and skip statements whose table is not there.
+      const existsRes = await client.query(
+        `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`
+      );
+      const tables = new Set(existsRes.rows.map(r => r.tablename));
       await client.query('BEGIN');
-      const run = (sql, params) => client.query(sql, params);
+      const run = (sql, params) => {
+        const m = sql.match(/(?:FROM|UPDATE)\s+([a-z_]+)/i);
+        if (m && !tables.has(m[1])) return Promise.resolve();
+        return client.query(sql, params);
+      };
       await run('DELETE FROM poll_votes WHERE user_id = $1', [userId]);
       await run('DELETE FROM polls WHERE created_by = $1', [userId]);
       await run('DELETE FROM venue_fact_votes WHERE user_id = $1', [userId]);
