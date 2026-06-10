@@ -15439,7 +15439,7 @@ function renderMessageAttachment(att, isMe, msgId) {
       <div class="chat-poll-card" data-poll-id="${pid}" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:10px 12px;margin-bottom:6px;min-width:230px;">
         <div style="font-size:10px;font-weight:700;color:${labelColor};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">\uD83D\uDDD3\uFE0F Availability poll</div>
         <div style="font-size:14px;font-weight:700;color:${titleColor};line-height:1.3;">${escapeHtml(att.title || 'Which dates work?')}</div>
-        <div class="poll-rows" style="font-size:12px;color:${subColor};margin-top:6px;">Loading votes\u2026</div>
+        <div class="poll-rows" style="font-size:12px;color:${subColor};margin-top:6px;overflow:hidden;">Loading votes\u2026</div>
       </div>`;
   }
 
@@ -18966,12 +18966,14 @@ async function hydratePollCard(pollId) {
     const pencil = (p.is_owner && allCan && p.status === 'open')
       ? `<div style="margin-top:4px;"><span onclick="pencilPollDate('${escapeAttr(pollId)}','${d}','${escapeAttr(p.title)}')" style="display:inline-block;background:var(--success);color:#000;border-radius:8px;padding:5px 10px;font-size:10px;font-weight:800;cursor:pointer;">Works for all ${total} \u00B7 pencil it in</span></div>` : '';
     return `
-      <div style="padding:7px 0;border-top:1px solid rgba(128,128,128,.25);">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-weight:700;font-size:12px;width:74px;flex-shrink:0;">${fmt(d)}</span>
-          <span style="display:flex;gap:3px;flex:1;">${pips}</span>
-          <span onclick="votePoll('${escapeAttr(pollId)}','${d}',true)" style="border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;${mine && mine.can ? 'background:var(--success);color:#000;' : 'border:1px solid var(--border);color:inherit;'}">Can</span>
-          <span onclick="votePoll('${escapeAttr(pollId)}','${d}',false)" style="border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;${mine && !mine.can ? 'background:var(--danger);color:#000;' : 'border:1px solid var(--border);color:inherit;'}">Can't</span>
+      <div style="padding:8px 0;border-top:1px solid rgba(128,128,128,.25);">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;row-gap:6px;">
+          <span style="font-weight:700;font-size:12px;white-space:nowrap;">${fmt(d)}</span>
+          <span style="display:flex;gap:3px;flex:1;min-width:50px;">${pips}</span>
+          <span style="display:flex;gap:6px;margin-left:auto;flex-shrink:0;">
+            <span onclick="votePoll('${escapeAttr(pollId)}','${d}',true)" style="border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;${mine && mine.can ? 'background:var(--success);color:#000;' : 'border:1px solid var(--border);color:inherit;'}">Can</span>
+            <span onclick="votePoll('${escapeAttr(pollId)}','${d}',false)" style="border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;${mine && !mine.can ? 'background:var(--danger);color:#000;' : 'border:1px solid var(--border);color:inherit;'}">Can't</span>
+          </span>
         </div>
         ${pencil}
       </div>`;
