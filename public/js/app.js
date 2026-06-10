@@ -9304,12 +9304,28 @@ window.closeChatGigPicker = closeChatGigPicker;
 // shows a tappable list (TMG-linked first, then non-linked). Tapping a
 // contact attaches it via the same sendChatMessage path. Same SWR pattern
 // as the gig picker so the second open is instant.
-function _renderContactPickerList(contacts) {
+function _filterContactPicker(query) {
+  const cache = window._chatPickerContactsCache;
+  const list = (cache && Array.isArray(cache.contacts)) ? cache.contacts : [];
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) { _renderContactPickerList(list); return; }
+  const hit = list.filter(c => {
+    const hay = [c.name, c.email, Array.isArray(c.instruments) ? c.instruments.join(' ') : c.instruments]
+      .filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  _renderContactPickerList(hit, q);
+}
+window._filterContactPicker = _filterContactPicker;
+
+function _renderContactPickerList(contacts, query) {
   const container = document.getElementById('chatContactPickerList');
   if (!container) return;
   const list = Array.isArray(contacts) ? contacts.slice() : [];
   if (list.length === 0) {
-    container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No contacts to share yet. Add some from the Contacts tab.</div>`;
+    container.innerHTML = query
+      ? `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No contacts match \u201C${escapeHtml(query)}\u201D.</div>`
+      : `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No contacts to share yet. Add some from the Contacts tab.</div>`;
     return;
   }
   // TMG-linked contacts first (more useful to share), then alphabetical.
@@ -9343,6 +9359,11 @@ async function openChatContactPicker() {
     <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;">
       <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;flex-shrink:0;">Pick a contact to share</div>
+      <div style="padding:0 16px 10px;flex-shrink:0;">
+        <input id="chatContactPickerSearch" type="search" placeholder="Search name or instrument..." autocomplete="off"
+          oninput="_filterContactPicker(this.value)"
+          style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;padding:10px 12px;">
+      </div>
       <div id="chatContactPickerList" style="flex:1;overflow-y:auto;">
         <div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Loading your contacts…</div>
       </div>
