@@ -9076,6 +9076,13 @@ function openChatAttachSheet() {
           <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Songs, keys and lengths from your repertoire</div>
         </div>
       </button>
+      <button onclick="openPollCompose()" style="width:100%;text-align:left;background:transparent;border:none;color:var(--text);font-size:15px;padding:14px 20px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+        <span style="font-size:20px;">🗓️</span>
+        <div>
+          <div style="font-weight:600;">Ask about dates</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Everyone taps Can or Can't per date, tally updates live</div>
+        </div>
+      </button>
       <button onclick="closeChatAttachSheet()" style="width:100%;text-align:center;background:transparent;border:none;color:var(--text-2);font-size:14px;padding:14px;cursor:pointer;">Cancel</button>
     </div>`;
   wrap.addEventListener('click', (e) => { if (e.target === wrap) closeChatAttachSheet(); });
@@ -14886,6 +14893,9 @@ function renderThreadItem(thread, type) {
     } else if (att && att.kind === 'setlist') {
       const sname = (att.snapshot && att.snapshot.name) ? att.snapshot.name : 'setlist';
       preview = `🎼 Setlist: ${sname.length > 32 ? sname.substring(0, 32) + '...' : sname}`;
+    } else if (att && att.kind === 'poll') {
+      const pname = att.title || 'which dates work?';
+      preview = `🗓️ Poll: ${pname.length > 32 ? pname.substring(0, 32) + '...' : pname}`;
     } else {
       preview = '📎 Attachment';
     }
@@ -15044,6 +15054,17 @@ function renderMessageAttachment(att, isMe, msgId) {
   const titleColor = isMe ? '#fff' : 'var(--text)';
   const subColor = isMe ? 'rgba(255,255,255,.9)' : 'var(--text-2)';
   const ctaColor = isMe ? '#fff' : 'var(--accent)';
+
+  if (att.kind === 'poll') {
+    const pid = escapeAttr(att.poll_id || '');
+    queuePollHydration(att.poll_id);
+    return `
+      <div class="chat-poll-card" data-poll-id="${pid}" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:10px 12px;margin-bottom:6px;min-width:230px;">
+        <div style="font-size:10px;font-weight:700;color:${labelColor};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">\uD83D\uDDD3\uFE0F Availability poll</div>
+        <div style="font-size:14px;font-weight:700;color:${titleColor};line-height:1.3;">${escapeHtml(att.title || 'Which dates work?')}</div>
+        <div class="poll-rows" style="font-size:12px;color:${subColor};margin-top:6px;">Loading votes\u2026</div>
+      </div>`;
+  }
 
   if (att.kind === 'contact') {
     const s = att.snapshot || {};
@@ -18492,6 +18513,169 @@ async function sendGigPackToThread(threadId) {
     showToast('Could not share. Try again.');
   }
 }
+
+// ── Availability polls ───────────────────────────────────────────────────────
+
+const _pollHydrated = {};
+function queuePollHydration(pollId) {
+  if (!pollId) return;
+  // Debounce: many bubbles can reference the same poll across re-renders.
+  clearTimeout(_pollHydrated[pollId]);
+  _pollHydrated[pollId] = setTimeout(() => hydratePollCard(pollId), 60);
+}
+
+async function hydratePollCard(pollId) {
+  const cards = document.querySelectorAll(`.chat-poll-card[data-poll-id="${CSS.escape(pollId)}"]`);
+  if (!cards.length) return;
+  let p;
+  try {
+    const resp = await fetch('/api/chat/polls/' + encodeURIComponent(pollId));
+    if (!resp.ok) return;
+    p = await resp.json();
+  } catch (err) { return; }
+  const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  const byDate = {};
+  (p.votes || []).forEach(v => { (byDate[v.date] = byDate[v.date] || []).push(v); });
+  const total = (p.participants || []).length;
+  const rows = (p.dates || []).map(d => {
+    const votes = byDate[d] || [];
+    const mine = votes.find(v => v.user_id === p.me);
+    const canCount = votes.filter(v => v.can).length;
+    const pips = (p.participants || []).map(u => {
+      const v = votes.find(x => x.user_id === u.id);
+      const col = !v ? 'border:1px solid var(--border);color:var(--text-3);'
+        : v.can ? 'background:rgba(63,185,80,.25);border:1px solid var(--success);color:var(--success);'
+        : 'background:rgba(248,81,73,.18);border:1px solid var(--danger);color:var(--danger);';
+      return `<span title="${escapeHtml(u.name || '')}" style="display:inline-flex;width:20px;height:20px;border-radius:50%;align-items:center;justify-content:center;font-size:9px;font-weight:700;${col}">${escapeHtml((u.name || '?').charAt(0).toUpperCase())}</span>`;
+    }).join('');
+    const allCan = total > 0 && canCount === total;
+    const pencil = (p.is_owner && allCan && p.status === 'open')
+      ? `<div style="margin-top:4px;"><span onclick="pencilPollDate('${escapeAttr(pollId)}','${d}','${escapeAttr(p.title)}')" style="display:inline-block;background:var(--success);color:#000;border-radius:8px;padding:5px 10px;font-size:10px;font-weight:800;cursor:pointer;">Works for all ${total} \u00B7 pencil it in</span></div>` : '';
+    return `
+      <div style="padding:7px 0;border-top:1px solid rgba(128,128,128,.25);">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-weight:700;font-size:12px;width:74px;flex-shrink:0;">${fmt(d)}</span>
+          <span style="display:flex;gap:3px;flex:1;">${pips}</span>
+          <span onclick="votePoll('${escapeAttr(pollId)}','${d}',true)" style="border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;${mine && mine.can ? 'background:var(--success);color:#000;' : 'border:1px solid var(--border);color:inherit;'}">Can</span>
+          <span onclick="votePoll('${escapeAttr(pollId)}','${d}',false)" style="border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;${mine && !mine.can ? 'background:var(--danger);color:#000;' : 'border:1px solid var(--border);color:inherit;'}">Can't</span>
+        </div>
+        ${pencil}
+      </div>`;
+  }).join('');
+  cards.forEach(card => {
+    const slot = card.querySelector('.poll-rows');
+    if (slot) slot.innerHTML = rows + (p.status === 'closed' ? '<div style="font-size:10px;margin-top:6px;opacity:.7;">Poll closed</div>' : '');
+  });
+}
+
+async function votePoll(pollId, date, can) {
+  try {
+    const resp = await fetch('/api/chat/polls/' + encodeURIComponent(pollId) + '/vote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, can }),
+    });
+    if (!resp.ok) {
+      const out = await resp.json().catch(() => ({}));
+      showToast(out.error || 'Could not record that vote.');
+      return;
+    }
+    hydratePollCard(pollId);
+  } catch (err) {
+    showToast('Could not record that vote.');
+  }
+}
+
+async function pencilPollDate(pollId, date, title) {
+  try {
+    const resp = await fetch('/api/gigs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ band_name: title || 'Band date', date, status: 'pending' }),
+    });
+    if (!resp.ok) throw new Error();
+    window._cachedGigs = null;
+    showToast('Pencilled into your diary for ' + new Date(date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + '.');
+  } catch (err) {
+    showToast('Could not pencil that in.');
+  }
+}
+
+function openPollCompose() {
+  closeChatAttachSheet();
+  if (!_currentThreadId) { showToast('Open a chat first.'); return; }
+  const existing = document.getElementById('pollComposeSheet');
+  if (existing) existing.remove();
+  window._pollDates = [];
+  const sheet = document.createElement('div');
+  sheet.id = 'pollComposeSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+    + '<div style="font-size:14px;font-weight:700;text-align:center;margin-bottom:12px;">Ask about dates</div>'
+    + '<input id="pollTitle" maxlength="140" placeholder="What\'s it for? e.g. Rehearsal for the Heyford set" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:10px;margin-bottom:8px;">'
+    + '<div style="display:flex;gap:8px;margin-bottom:8px;"><input id="pollDateInput" type="date" style="flex:1;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px;">'
+    + '<button onclick="addPollDate()" style="background:var(--surface);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;">Add</button></div>'
+    + '<div id="pollDateChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;"></div>'
+    + '<button onclick="submitPoll()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">Send poll</button>'
+    + '<button onclick="document.getElementById(\'pollComposeSheet\').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Cancel</button>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) sheet.remove(); });
+  document.body.appendChild(sheet);
+}
+
+function addPollDate() {
+  const input = document.getElementById('pollDateInput');
+  if (!input || !input.value) return;
+  const d = input.value;
+  window._pollDates = window._pollDates || [];
+  if (window._pollDates.includes(d)) return;
+  if (window._pollDates.length >= 6) { showToast('Six dates is plenty for one poll.'); return; }
+  window._pollDates.push(d);
+  window._pollDates.sort();
+  const chips = document.getElementById('pollDateChips');
+  if (chips) chips.innerHTML = window._pollDates.map(x =>
+    `<span style="background:var(--surface);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;">${new Date(x + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} <span onclick="removePollDate('${x}')" style="cursor:pointer;margin-left:4px;">\u2715</span></span>`).join('');
+  input.value = '';
+}
+
+function removePollDate(d) {
+  window._pollDates = (window._pollDates || []).filter(x => x !== d);
+  const chips = document.getElementById('pollDateChips');
+  if (chips) chips.innerHTML = (window._pollDates).map(x =>
+    `<span style="background:var(--surface);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;">${new Date(x + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} <span onclick="removePollDate('${x}')" style="cursor:pointer;margin-left:4px;">\u2715</span></span>`).join('');
+}
+
+async function submitPoll() {
+  const title = (document.getElementById('pollTitle') || {}).value || '';
+  const dates = window._pollDates || [];
+  if (!title.trim()) { showToast('Give the poll a title.'); return; }
+  if (dates.length < 2) { showToast('Pick at least two dates.'); return; }
+  try {
+    const resp = await fetch('/api/chat/threads/' + encodeURIComponent(_currentThreadId) + '/polls', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: title.trim(), dates }),
+    });
+    const out = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(out.error || 'failed');
+    const sheet = document.getElementById('pollComposeSheet');
+    if (sheet) sheet.remove();
+    if (window._chatThreadCacheById) delete window._chatThreadCacheById[_currentThreadId];
+    openChatThread(_currentThreadId);
+  } catch (err) {
+    showToast(err.message || 'Could not send the poll.');
+  }
+}
+
+window.queuePollHydration = queuePollHydration;
+window.hydratePollCard = hydratePollCard;
+window.votePoll = votePoll;
+window.pencilPollDate = pencilPollDate;
+window.openPollCompose = openPollCompose;
+window.addPollDate = addPollDate;
+window.removePollDate = removePollDate;
+window.submitPoll = submitPoll;
 
 // ── Gig-day weather ──────────────────────────────────────────────────────────
 

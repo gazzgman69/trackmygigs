@@ -1881,6 +1881,26 @@ async function runMigrations() {
     )`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS chased_at TIMESTAMPTZ`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS fee_splits JSONB`);
+    // 2026-06-10 availability polls. Live objects, deliberately NOT message
+    // snapshots: the chat attachment carries only {kind:'poll', poll_id} and
+    // the card hydrates from these tables so votes always show current state.
+    await db.query(`CREATE TABLE IF NOT EXISTS polls (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      thread_id UUID NOT NULL,
+      created_by UUID NOT NULL,
+      title TEXT NOT NULL,
+      dates JSONB NOT NULL DEFAULT '[]',
+      status TEXT DEFAULT 'open',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await db.query(`CREATE TABLE IF NOT EXISTS poll_votes (
+      poll_id UUID NOT NULL,
+      user_id UUID NOT NULL,
+      date TEXT NOT NULL,
+      can BOOLEAN NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (poll_id, user_id, date)
+    )`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_documents_share_token ON user_documents (share_token) WHERE share_token IS NOT NULL`);
     await db.query(`CREATE TABLE IF NOT EXISTS rebook_dismissals (
       user_id UUID NOT NULL,

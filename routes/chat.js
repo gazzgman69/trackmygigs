@@ -338,6 +338,104 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
 // ── Create a new thread (for a gig or 1-to-1) ──────────────────────────────
 
+// ── Availability polls ───────────────────────────────────────────────────────
+// A poll belongs to a thread; only participants can read or vote. Creation
+// also drops a message into the thread carrying {kind:'poll', poll_id} so
+// the card renders in the conversation and hydrates live.
+
+async function pollThreadGate(pollId, userId) {
+  const r = await db.query(
+    `SELECT p.*, t.participant_ids
+       FROM polls p JOIN threads t ON t.id = p.thread_id
+      WHERE p.id = $1 AND $2 = ANY(t.participant_ids)`,
+    [pollId, userId]
+  );
+  return r.rows[0] || null;
+}
+
+router.post('/threads/:threadId/polls', async (req, res) => {
+  try {
+    const tr = await db.query(
+      'SELECT id, participant_ids FROM threads WHERE id = $1 AND $2 = ANY(participant_ids)',
+      [req.params.threadId, req.user.id]
+    );
+    if (tr.rows.length === 0) return res.status(404).json({ error: 'Thread not found' });
+    const title = String(req.body.title || '').trim().slice(0, 140);
+    const iso = /^\d{4}-\d{2}-\d{2}$/;
+    const dates = Array.from(new Set((Array.isArray(req.body.dates) ? req.body.dates : [])
+      .map(d => String(d).slice(0, 10)).filter(d => iso.test(d)))).sort().slice(0, 6);
+    if (!title) return res.status(400).json({ error: 'Give the poll a title' });
+    if (dates.length < 2) return res.status(400).json({ error: 'Pick at least two dates' });
+    const poll = await db.query(
+      `INSERT INTO polls (thread_id, created_by, title, dates)
+       VALUES ($1, $2, $3, $4::jsonb) RETURNING *`,
+      [req.params.threadId, req.user.id, title, JSON.stringify(dates)]
+    );
+    const msg = await db.query(
+      `INSERT INTO messages (thread_id, sender_id, content, attachments, read_by)
+       VALUES ($1, $2, '', $3::jsonb, ARRAY[$2]::uuid[]) RETURNING *`,
+      [req.params.threadId, req.user.id,
+       JSON.stringify([{ kind: 'poll', poll_id: poll.rows[0].id, title }])]
+    );
+    res.json({ success: true, poll: poll.rows[0], message: msg.rows[0] });
+  } catch (error) {
+    console.error('Create poll error:', error);
+    res.status(500).json({ error: 'Failed to create poll' });
+  }
+});
+
+router.get('/polls/:id', async (req, res) => {
+  try {
+    const poll = await pollThreadGate(req.params.id, req.user.id);
+    if (!poll) return res.status(404).json({ error: 'Not found' });
+    const participants = await db.query(
+      'SELECT id, name FROM users WHERE id = ANY($1::uuid[])', [poll.participant_ids]
+    );
+    const votes = await db.query(
+      `SELECT v.user_id, v.date, v.can, u.name
+         FROM poll_votes v JOIN users u ON u.id = v.user_id
+        WHERE v.poll_id = $1`,
+      [req.params.id]
+    );
+    res.json({
+      id: poll.id,
+      title: poll.title,
+      dates: poll.dates,
+      status: poll.status,
+      created_by: poll.created_by,
+      is_owner: poll.created_by === req.user.id,
+      participants: participants.rows.map(u => ({ id: u.id, name: u.name })),
+      votes: votes.rows,
+      me: req.user.id,
+    });
+  } catch (error) {
+    console.error('Get poll error:', error);
+    res.status(500).json({ error: 'Failed to load poll' });
+  }
+});
+
+router.post('/polls/:id/vote', async (req, res) => {
+  try {
+    const poll = await pollThreadGate(req.params.id, req.user.id);
+    if (!poll) return res.status(404).json({ error: 'Not found' });
+    if (poll.status !== 'open') return res.status(400).json({ error: 'Poll is closed' });
+    const date = String(req.body.date || '').slice(0, 10);
+    if (!(Array.isArray(poll.dates) ? poll.dates : []).includes(date)) {
+      return res.status(400).json({ error: 'Not one of the poll dates' });
+    }
+    await db.query(
+      `INSERT INTO poll_votes (poll_id, user_id, date, can)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (poll_id, user_id, date) DO UPDATE SET can = $4, created_at = NOW()`,
+      [req.params.id, req.user.id, date, !!req.body.can]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Poll vote error:', error);
+    res.status(500).json({ error: 'Failed to vote' });
+  }
+});
+
 router.post('/threads', async (req, res) => {
   try {
     const { gig_id, thread_type, participant_ids } = req.body;
