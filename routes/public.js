@@ -249,7 +249,7 @@ router.get('/t/:token', async (req, res) => {
       return res.status(404).set('Content-Type', 'text/html')
         .send(pageHtml('Not found', `<div class="empty"><h1>Not found</h1><p class="sub">This link is no longer active.</p></div>`));
     }
-    const first = (reqRow.musician_name || 'the musician').split(' ')[0];
+    const first = (reqRow.musician_name || 'the musician').trim();
     const body = `
       <div class="empty" style="text-align:left;max-width:460px;margin:40px auto;">
         <h1 style="font-size:22px;">How did ${esc(first)} do?</h1>
@@ -287,7 +287,7 @@ router.post('/t/:token', express.urlencoded({ extended: false }), async (req, re
       [reqRow.user_id, reqRow.gig_id, quote, name || null, reqRow.context || null]
     );
     await db.query(`UPDATE testimonial_requests SET status = 'submitted' WHERE id = $1`, [reqRow.id]);
-    const first = (reqRow.musician_name || 'them').split(' ')[0];
+    const first = (reqRow.musician_name || 'them').trim();
     const googleBlock = reqRow.review_link ? `
       <p class="sub" style="margin-top:14px;">One more tap and it helps even more people find ${esc(first)}: paste it as a review, your words are already copied.</p>
       <a href="${esc(reqRow.review_link)}" onclick="try{navigator.clipboard.writeText(${JSON.stringify(quote)})}catch(e){}" target="_blank" rel="noopener" style="display:inline-block;margin-top:10px;background:#4285F4;color:#fff;border-radius:10px;padding:12px 20px;font-weight:700;text-decoration:none;">Open review page \u00B7 just paste &amp; pick stars</a>
