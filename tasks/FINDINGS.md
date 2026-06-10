@@ -1,85 +1,142 @@
-# TrackMyGigs full-app test campaign — findings (work in progress, 2026-06-10)
+# TrackMyGigs full-app test campaign — FINDINGS (final, 2026-06-10)
 
-Status: campaign run 1 (150 users) complete, heavy modules all PASS; run 2 (25 users,
-gentle) in progress to cover the phases that timed out; UX walk + Google sync pending.
+How this was produced: 150 simulated musicians ran every feature against the dev app
+(3,667 requests, assertion-checked), plus a 25-user follow-up run, a hands-on browser
+UX walk, a to-the-penny money reconciliation, and a live Google Calendar + Sheets
+sync cycle on Gareth's account. All synthetic data wiped afterwards. AI endpoints
+deliberately untested (Gareth will test by hand). Raw evidence: sim/results/*-campaign/.
 
-## A. Bugs found and ALREADY FIXED during the campaign
+═══════════════════════════════════════════════════════════════════
+## P0 — Fixed during the campaign (deployed + regression-tested)
+═══════════════════════════════════════════════════════════════════
 
-1. **Accepted dep work never reached the dep's calendar** (CRITICAL, found by Gareth).
-   Accepting a dep offer, winning an FCFS take, or being picked only flipped statuses.
-   Fixed: gig copy stamped into the winner's diary (source dep-accept / marketplace-fill,
-   sender or poster becomes gig leader, agreed offer fee wins). Idempotent. Verified live
-   and regression-asserted 267/267 in the campaign.
+1. **Dep work never reached the winner's calendar** (found by Gareth). Accepting a dep
+   offer, winning an FCFS take, or being picked only flipped statuses; no gig was
+   created for the dep. Fixed via a shared diary-stamp (source 'dep-accept' /
+   'marketplace-fill', sender or poster becomes gig leader, agreed fee wins,
+   idempotent). 267/267 dep assertions + FCFS race (exactly one winner) now pass.
+2. **API wedged permanently under load.** pg pool defaults (10 conns, infinite wait)
+   plus a 20-conn experiment exhausted the dev Postgres slots; every request hung
+   until a hard restart. Now: max 10 (PG_POOL_MAX override for prod), 10s bounded
+   connect wait, 30s statement timeout. Verified recovered.
 
-## B. Bugs confirmed, NOT yet fixed
+═══════════════════════════════════════════════════════════════════
+## P1 — Real bugs, open, in priority order
+═══════════════════════════════════════════════════════════════════
 
-2. **Two competing premium flags.** `/auth/dev-set-premium` (and possibly other paths) set
-   `users.premium` + `premium_until`, while the lineup gate and the client UI check
-   `users.subscription_tier === 'premium'`. The two disagree; premium upgrades through one
-   path won't unlock features gated on the other. Decide the canonical flag (suggest
-   subscription_tier) and migrate.
-3. **Contacts linkage split.** `POST /api/contacts` writes `linked_user_id`, but thread
-   creation (routes/chat.js) and the offer-cancel replacement picker read
-   `contact_user_id` (only populated when a dep-offer send resolves the contact by email).
-   Contacts added by hand are therefore invisible to flows that should recognise them.
-   Decide one column and backfill the other.
-4. **Dead Google token reported as live.** `/api/sheets/status` returns
-   `has_google_token: true` when the stored token no longer works (calendar reports
-   connected:false). The UI can't prompt a reconnect off that signal. Status should
-   verify the token (or at least reconcile with the calendar connection state).
+3. **Deleted gigs can resurrect.** Deleting a Google-synced gig sometimes fails to
+   remove the Google event (silent mirror failure); the next pull re-imports it.
+   Repro'd live once, second attempt clean — flaky, so it WILL hit users.
+   Fix: verify the Google delete, retry, and remember deleted event ids
+   (tombstones) so pull never re-imports something TMG deleted.
+4. **Calendar-connect bulk import trusts the AI classifier blindly.** "Wedding
+   anniversary next week" and "Doz's birthday next week" imported as confirmed gigs
+   (they then show as BUSY on the public availability page). The modal offers
+   "Import all 6" with no per-event review. Fix: checkbox list per event, default
+   ticked, so obvious non-gigs can be dropped in one glance.
+5. **"Send message" from Find Musicians opens the chat invisibly.** The thread panel
+   opens BEHIND the network panel (panel-stacking order); the user sees nothing
+   happen. Fix: close panel-network before opening panel-chat-thread.
+6. **Sync-now reports by-design skips as failures.** Google-imported gigs that are
+   deliberately not pushed back (read-only until edited in TMG) are counted in
+   pushed.failed with reason "push_returned_null" — the UI would say "8 failed"
+   forever. Fix: separate skipped from failed, human-readable reasons.
+7. **Single-gig push reports failure while succeeding.** POST /api/calendar/push/:id
+   stored the google_event_id but responded {"error":"Sync failed..."}. UI lies to
+   the user. Likely the response path checks the wrong return value.
+8. **Two competing premium flags.** /auth/dev-set-premium sets users.premium +
+   premium_until; the lineup gate and client UI read users.subscription_tier.
+   Confirmed live: a dev-set-premium user gets 403 on premium features. Pick one
+   flag (suggest subscription_tier, set by Stripe webhook) and migrate the other.
+9. **Contacts table split-brain.** POST /api/contacts writes linked_user_id; chat
+   permission checks and the dep replacement picker read contact_user_id (only
+   populated when a dep offer resolves the contact by email). Hand-added contacts
+   are invisible to those flows until then. Pick one column, backfill, drop the other.
+10. **Dead Google token reported as live.** /api/sheets/status returns
+    has_google_token:true when the token is revoked. The calendar banner gets it
+    right ("needs to be reconnected"); sheets status should verify the same way.
 
-## C. To verify in the clean pass (observed under load, may be environmental)
+═══════════════════════════════════════════════════════════════════
+## P2 — UX and navigation improvements (Gareth's priority area)
+═══════════════════════════════════════════════════════════════════
 
-5. Quick-log save under slow network: button sits on "Saving…" with no timeout; retest
-   clean, and add a timeout + inline error if reproducible.
-6. Home hero staleness after quick-log save (code looks correct; verify).
-7. Cold boot shows a pure black screen until /auth/me returns. On a Replit cold start
-   that is many seconds of "is it broken?". Add a splash or skeleton.
+11. **Marketplace needs venue location + maps link** (Gareth). Detail screen should
+    show the full address with the same "Open in Maps" tap as own gigs. The data is
+    already in marketplace_gigs (venue_address/postcode); reuse openDirections().
+12. **Two-step accept option for dep offers** (Gareth). Keep one-tap accept as the
+    default (panic deps need speed). Add a per-offer choice at send time mirroring
+    the marketplace's fcfs-vs-pick: "First yes wins" vs "I'll confirm each".
+    Confirm mode: accept => status 'provisional', sender notified, sender confirms
+    or releases; diary stamp + contact swap only on confirm.
+    Schema: offers.confirm_mode BOOLEAN, status gains 'provisional'.
+13. **Swipe-left on chat messages** (Gareth): reveal Copy / Delete (own) / Share.
+    Long-press as the desktop/accessibility fallback.
+14. **Reusable invoice items** (Gareth): autocomplete previous line items with last
+    price in the itemise rows + a small "Saved items" manager inside the invoice
+    panel. Mirror of the existing invoice_clients pattern (new table
+    invoice_items_saved: user_id, description, rate, last_used_at).
+15. **No splash on cold boot.** Replit cold starts show a black screen until /auth/me
+    returns. Add an instant skeleton/logo so it never looks dead.
+16. **Marketplace empty state is misleading + dead-endy.** Says "match your filters"
+    even when zero gigs exist at all, and offers no one-tap "show everything".
+    Differentiate the two cases and add a "Show all gigs" shortcut button.
+17. **Double header on My Network.** "‹ Back My Network" panel header sits directly
+    above a second "‹ My Network + Add" header. Remove the inner one.
+18. **Directory avatar fallback.** A slow/failed photo URL leaves an empty circle;
+    fall back to initials (the chat bubbles already do this properly).
+19. **Quick-log "next Friday"** parses as the upcoming Friday; many people mean the
+    week after. Suggest "this Friday"/"Friday" = upcoming, "next Friday" = +1 week.
+    The live parse preview already makes errors catchable — keep that.
+20. **Quick-log save under a slow server** sits on "Saving…" with no timeout. Add a
+    10s timeout with inline error + retry (code path is otherwise correct).
+21. **Receipts "Claimable £0"** showed against £283 of expenses incl. Travel during
+    the walk — verify the claimable calculation (may only count mileage, in which
+    case label it "Mileage claimable" to avoid looking broken).
+22. **Stale [SEC-TEST] expenses** (3 rows, Dec 2025) sit in Gareth's real receipt
+    list from an old test — delete after confirming.
 
-## D. Improvements queued from Gareth (with design proposals — to finish in final report)
+═══════════════════════════════════════════════════════════════════
+## P3 — Notes / housekeeping
+═══════════════════════════════════════════════════════════════════
 
-8. **Marketplace location info + maps link.** Cards show distance but the detail screen
-   should show the full address with the same tappable "Open in Maps" affordance as own
-   gigs (`openDirections`). Cheap: snapshot already carries venue fields.
-9. **Two-step accept option for dep offers.** Keep one-tap accept as default (panic deps
-   need speed). Add per-offer setting at send time, mirroring the marketplace's
-   fcfs-vs-pick concept: "First yes wins" vs "I'll confirm". In confirm mode an accept
-   puts the offer into 'provisional' and notifies the sender, who confirms or releases;
-   only on confirm does the diary stamp + contact swap happen. Schema: offers.status
-   gains 'provisional'; offers.confirm_mode BOOLEAN.
-10. **Swipe-left message actions.** Swipe a bubble to reveal Copy / Delete (own messages)
-    / Share. Touch: touchstart/touchmove transform with a threshold, falls back to
-    long-press on desktop.
-11. **Reusable invoice items.** Autocomplete in the itemise rows from previously used
-    line items (description + last rate), plus a small "Saved items" manager inside the
-    invoice panel. Pattern already exists for clients (invoice_clients) — add
-    invoice_items_saved (user_id, description, rate, last_used_at).
-12. **"next Friday" parsing.** Quick-log parses "next Friday" as the upcoming Friday;
-    many users mean the Friday after. Suggest: treat "this Friday" as upcoming,
-    "next Friday" as the following week, and always show the parsed date prominently
-    (already done) so misreads are catchable.
+23. Dev Replit instance saturates around 10-12 concurrent active users (10s+ medians,
+    timeouts). Production (Neon) handled 50 concurrent in May with zero 5xx. Demo
+    from the production deployment, not the dev URL.
+24. /api/discover is the heaviest query in the app (4 correlated subqueries per
+    candidate row). Fine when idle (0.8s for 175 users); first thing to die under
+    load. Candidate: precompute gig/offer counts or LIMIT before decorating.
+25. After connect, Google Calendar sync pushed all 19 TMG gigs (incl. [DEMO] seeds)
+    to the connected calendar. Expected behaviour, but Gareth's test calendar now
+    contains them; the [TEST] sheet "[TEST] TMG sync check 2026-06-10" in his Drive
+    can be binned (couldn't self-delete: app has no Drive scope, deliberately).
+26. The 6 calendar-imported gigs (incl. the 2 misclassified personal events) are
+    left in Gareth's account for his review — deleting them from TMG may remove
+    the matching Google events, so review rather than bulk-delete.
+27. Browser walk did not cover: invoice composer visuals, chat thread visuals, EPK
+    editor, repertoire screens (all API-verified though). Worth eyeballing when
+    convenient.
 
-## E. Campaign results (run 1, 150 users, 3,667 requests)
+═══════════════════════════════════════════════════════════════════
+## What was proven to WORK (all assertion-checked against production code)
+═══════════════════════════════════════════════════════════════════
 
-- PASS: fleet 424 checks, gigs 1350, invoices 510, expenses 759, dep-offers 267,
-  messaging 360, marketplace 157, FCFS race 15 (exactly one winner), block semantics 3.
-- Regressions specifically asserted and passing: dep-accept diary stamp + re-accept
-  dedupe, marketplace-fill stamp, FILLED-gig 500 (no longer reproduces), message-before-
-  pick DM authorization, fee floor, 40KB message cap, save-shared song dedupe.
-- INVALID (timeouts after the dev instance saturated; covered by run 2): sweep,
-  public-pages, reconciliation.
-- Environment note: this hammered the DEV Replit instance. The May 1,000-user load test
-  against the production deployment recorded zero 5xx; the dev box starts timing out
-  around 12 concurrent users. Not an app bug, but worth remembering when demoing.
-
-## F. UX walk notes (in progress)
-
-- Quick-log sheet: placeholder, live parse preview and colour cue are genuinely good.
-- (to be completed after run 2)
-
-## G. Deliberately untested
-
-- All /api/ai/* endpoints (Gareth will test by hand; flows that chain off AI were
-  exercised through their non-AI paths).
-- Apple Wallet pass (route is a stub pending Apple Developer enrolment).
-- Stripe checkout (would create real billing objects).
+- Dep offers end to end: send (pick + broadcast), accept => diary stamp + contacts
+  swap, re-accept can't double-book, decline, snooze + reappear, nudge with 2-cap,
+  cancel with replacement, sent-tab counters. 267 + 58 checks across two runs.
+- Messaging: 1-to-1, group threads, gig threads, renames, leave semantics, read
+  receipts (ticks + group counts), gig/contact/setlist shares with server-side
+  snapshots, save-shared with song dedupe, 40KB cap, message delete. 360 + 126 checks.
+- Marketplace: fee floor, free-with-reason, pick + FCFS, the FCFS race (5 parallel
+  applies, exactly one winner), winner diary stamp, losers auto-rejected + late
+  applies 409, FILLED-gig 500 no longer reproduces, message-before-pick DM gate
+  (403 without an application, allowed with), withdraw/cancel/repost, block/report.
+- Money: every invoice/expense echo check across 150 users passed; Gareth's account
+  reconciles to the penny: gigs £3,359.00 == /api/earnings == MTD CSV, expenses
+  £207.45 == earnings == MTD, invoice buckets consistent, receipts zip valid.
+- Google: calendar OAuth reconnect, import (6 events), single push, edit + sync,
+  pull, delete (when the mirror works — see bug 3); Sheets: brand-new sheet,
+  preview, column-mapped import, TMG-edit write-back verified IN the actual sheet,
+  pull with zero conflicts, disconnect.
+- Public pages at scale: /epk/:slug, /share/:slug (+times/+embed), next-gig .ics.
+- Profiles: 150 users with photos, bios, EPKs (galleries, testimonials, video and
+  audio URLs), slugs; premium gate verified both ways (modulo bug 8).
