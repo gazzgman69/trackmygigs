@@ -9222,6 +9222,21 @@ window.closeChatAttachSheet = closeChatAttachSheet;
 // 2026-04-29 — render helper for the gig picker list. Pulled out of
 // openChatGigPicker so the SWR path can call it twice (once for the
 // cached paint, once for the fresh response).
+function _filterGigPicker(query) {
+  const cache = window._chatPickerGigsCache;
+  const list = (cache && Array.isArray(cache.gigs)) ? cache.gigs : [];
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) { _renderGigPickerList(list); return; }
+  const hit = list.filter(g => {
+    const dateStr = g.date ? new Date(g.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+    const hay = [g.band_name, g.venue_name, g.venue_address, dateStr]
+      .filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  _renderGigPickerList(hit);
+}
+window._filterGigPicker = _filterGigPicker;
+
 function _renderGigPickerList(gigs) {
   const container = document.getElementById('chatGigPickerList');
   if (!container) return;
@@ -9264,6 +9279,11 @@ async function openChatGigPicker() {
     <div class="sheet-panel" onclick="event.stopPropagation()" style="background:var(--card);border-top:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;">
       <div style="height:4px;width:36px;background:var(--text-3);border-radius:2px;margin:8px auto 4px;flex-shrink:0;"></div>
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.5px;padding:14px 20px 6px;flex-shrink:0;">Pick a gig to share</div>
+      <div style="padding:0 16px 10px;flex-shrink:0;">
+        <input id="chatGigPickerSearch" type="search" placeholder="Search band, venue or date..." autocomplete="off"
+          oninput="_filterGigPicker(this.value)"
+          style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;padding:10px 12px;">
+      </div>
       <div id="chatGigPickerList" style="flex:1;overflow-y:auto;">
         <div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">Loading your gigs…</div>
       </div>

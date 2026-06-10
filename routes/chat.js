@@ -116,21 +116,34 @@ async function buildAttachmentSnapshot(attachment, actorId) {
     let songs = [];
     if (Array.isArray(sl.song_ids) && sl.song_ids.length > 0) {
       const sr = await db.query(
-        `SELECT id, title, artist, key, duration FROM songs WHERE id = ANY($1) AND user_id = $2`,
+        `SELECT id, title, artist, key, tempo, duration, lyrics FROM songs WHERE id = ANY($1) AND user_id = $2`,
         [sl.song_ids, actorId]
       );
       const byId = new Map(sr.rows.map(s => [s.id, s]));
-      // Preserve setlist order, drop any dangling ids.
+      // Preserve setlist order, drop any dangling ids. Charts ride along so
+      // the receiver gets playable songs, not just names: capped per song
+      // (8KB) and across the whole snapshot (120KB) so a monster songbook
+      // can't bloat the messages table; metadata always survives the cap.
+      let chartBudget = 120 * 1024;
       songs = sl.song_ids
         .map(id => byId.get(id))
         .filter(Boolean)
         .slice(0, 60)
-        .map(s => ({
-          title: s.title,
-          artist: s.artist || null,
-          key: s.key || null,
-          duration: s.duration != null ? Number(s.duration) : null
-        }));
+        .map(s => {
+          let lyrics = null;
+          if (s.lyrics && chartBudget > 0) {
+            lyrics = String(s.lyrics).slice(0, 8 * 1024);
+            chartBudget -= lyrics.length;
+          }
+          return {
+            title: s.title,
+            artist: s.artist || null,
+            key: s.key || null,
+            tempo: s.tempo != null ? Number(s.tempo) : null,
+            duration: s.duration != null ? Number(s.duration) : null,
+            lyrics,
+          };
+        });
     }
     return {
       kind: 'setlist',

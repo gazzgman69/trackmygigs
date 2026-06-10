@@ -4631,14 +4631,16 @@ router.post('/setlists/save-shared', async (req, res) => {
         continue;
       }
       const created = await db.query(
-        `INSERT INTO songs (user_id, title, artist, key, duration, source_app)
-         VALUES ($1, $2, $3, $4, $5, 'chat-share') RETURNING id`,
+        `INSERT INTO songs (user_id, title, artist, key, tempo, duration, lyrics, source_app)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'chat-share') RETURNING id`,
         [
           req.user.id,
           title,
           artist,
           s.key ? String(s.key).slice(0, 20) : null,
-          Number.isFinite(Number(s.duration)) ? Number(s.duration) : null
+          Number.isFinite(Number(s.tempo)) ? Number(s.tempo) : null,
+          Number.isFinite(Number(s.duration)) ? Number(s.duration) : null,
+          s.lyrics ? String(s.lyrics).slice(0, 8 * 1024) : null
         ]
       );
       songIds.push(created.rows[0].id);
