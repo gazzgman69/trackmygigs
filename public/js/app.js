@@ -494,27 +494,43 @@ function buildSkeletonHTML() {
 }
 
 function setupTextScaling() {
-  // Retired 2026-06-10 (pre-launch consistency pass). Only ~36 CSS rules
-  // used scalable units while the rest of the UI is fixed px, so a larger
-  // system text size inflated random fragments (the header greeting was
-  // the worst) without actually making the app more readable. Proper
-  // Dynamic Type support is on the roadmap as a whole-app job; until then
-  // the scale is locked at 1 so every device renders identically.
-  return;
-  // eslint-disable-next-line no-unreachable
+  // Whole-app scaling (2026-06-10, Gareth's standing request). The UI is
+  // px-based throughout, so honouring the phone's text size by scaling
+  // only rem text inflated random fragments. Instead the ENTIRE app zooms
+  // uniformly (text, spacing, buttons together) from the system preference,
+  // detected via the -apple-system-body probe (iOS Dynamic Type; Android
+  // font scale comes through the same way in Chrome).
+  // Preview/override: open the app with ?textscale=1.3 (or 0.9 ... 1.35);
+  // the choice persists until ?textscale=reset.
   try {
-    var probe = document.createElement('p');
-    probe.textContent = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-    probe.setAttribute('style', 'font: -apple-system-body !important; position: absolute !important; left: -9999px !important; top: -9999px !important; visibility: hidden !important; pointer-events: none !important;');
-    document.body.appendChild(probe);
-    var preferredSize = parseFloat(window.getComputedStyle(probe).fontSize);
-    document.body.removeChild(probe);
-    if (preferredSize && preferredSize > 0 && Math.abs(preferredSize - 16) > 0.5) {
-      // Clamp between 0.8x and 1.4x to prevent layout breakage
-      var scale = Math.min(1.4, Math.max(0.8, preferredSize / 16));
-      document.documentElement.style.setProperty('--text-scale', scale.toFixed(3));
+    var scale = null;
+    var qs = new URLSearchParams(window.location.search).get('textscale');
+    if (qs === 'reset') localStorage.removeItem('tmg_text_scale');
+    else if (qs && !isNaN(parseFloat(qs))) {
+      scale = parseFloat(qs);
+      localStorage.setItem('tmg_text_scale', String(scale));
     }
-  } catch (e) { /* silent - will use default 1x */ }
+    if (scale === null) {
+      var saved = parseFloat(localStorage.getItem('tmg_text_scale'));
+      if (saved > 0) scale = saved;
+    }
+    if (scale === null) {
+      var probe = document.createElement('p');
+      probe.textContent = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      probe.setAttribute('style', 'font: -apple-system-body !important; position: absolute !important; left: -9999px !important; visibility: hidden !important;');
+      document.body.appendChild(probe);
+      var preferredSize = parseFloat(window.getComputedStyle(probe).fontSize);
+      document.body.removeChild(probe);
+      if (preferredSize > 0 && Math.abs(preferredSize - 16) > 0.5) scale = preferredSize / 16;
+    }
+    if (scale && Math.abs(scale - 1) > 0.02) {
+      // Clamped so extreme settings can't shatter layouts.
+      var z = Math.min(1.35, Math.max(0.85, scale));
+      document.body.style.zoom = z;
+    } else {
+      document.body.style.zoom = '';
+    }
+  } catch (e) { /* default 1x */ }
 }
 
 function setupThemeToggle() {

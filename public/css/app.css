@@ -49,10 +49,10 @@
 }
 
 html {
-  /* Base font-size respects Dynamic Type on iOS via JS (see setupTextScaling).
-     The --text-scale custom property is set by JS based on the user's
-     preferred font size. All rem values then scale proportionally. */
-  font-size: calc(100% * var(--text-scale, 1));
+  /* Scaling happens as a uniform body zoom (setupTextScaling), never via
+     the root font-size: the UI is px-based, and rem-only scaling inflated
+     scattered fragments. Keep rem anchored at 16px. */
+  font-size: 100%;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
