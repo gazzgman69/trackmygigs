@@ -494,8 +494,14 @@ function buildSkeletonHTML() {
 }
 
 function setupTextScaling() {
-  // Detect the user's preferred text size (iOS Dynamic Type / Android font scale).
-  // Uses -apple-system-body font which respects Dynamic Type on iOS Safari.
+  // Retired 2026-06-10 (pre-launch consistency pass). Only ~36 CSS rules
+  // used scalable units while the rest of the UI is fixed px, so a larger
+  // system text size inflated random fragments (the header greeting was
+  // the worst) without actually making the app more readable. Proper
+  // Dynamic Type support is on the roadmap as a whole-app job; until then
+  // the scale is locked at 1 so every device renders identically.
+  return;
+  // eslint-disable-next-line no-unreachable
   try {
     var probe = document.createElement('p');
     probe.textContent = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';

@@ -104,6 +104,13 @@ prod-only expenses table -> drift guard). PRODUCTION.md runbook written.
       (admin/reload only refreshes the dev workspace).
 - [x] /health endpoint (built in Wave 1) + free uptime monitor + error visibility.
 
+## Accessibility note (decided 2026-06-10 with Gareth's phone testing)
+
+Dynamic Type half-support retired: ~36 scalable CSS rules vs a px-fixed
+UI meant larger system text inflated random fragments only. Locked to
+1x for launch. POST-LAUNCH ROADMAP ITEM: real text-size support done
+across the whole app in one pass.
+
 ## Wave 3 - legal + onboarding (days 5-9)
 
 - [ ] Privacy policy + Terms pages (UK/GDPR basics, only-essential-cookies
