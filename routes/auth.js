@@ -712,6 +712,84 @@ router.get('/me', async (req, res) => {
   }
 });
 
+// GDPR right-to-erasure. Requires the literal confirmation string so a
+// CSRF'd or fat-fingered request can't nuke an account. Deletes everything
+// the user owns; shared rows (messages they sent into other people's
+// threads, fact votes) go too. Their venue facts disappear rather than
+// being orphaned anonymously, which is the honest reading of erasure.
+router.post('/delete-account', async (req, res) => {
+  try {
+    const token = req.cookies && req.cookies.sessionToken;
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+    const sess = await db.query(
+      'SELECT user_id FROM sessions WHERE token = $1 AND expires_at > NOW() LIMIT 1', [token]
+    );
+    const userId = sess.rows[0] && sess.rows[0].user_id;
+    if (!userId) return res.status(401).json({ error: 'Session invalid' });
+    if (req.body.confirm !== 'DELETE') {
+      return res.status(400).json({ error: 'Type DELETE to confirm' });
+    }
+    const userRow = await db.query('SELECT email FROM users WHERE id = $1', [userId]);
+    const email = userRow.rows[0] ? userRow.rows[0].email : null;
+
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      const run = (sql, params) => client.query(sql, params);
+      await run('DELETE FROM poll_votes WHERE user_id = $1', [userId]);
+      await run('DELETE FROM polls WHERE created_by = $1', [userId]);
+      await run('DELETE FROM venue_fact_votes WHERE user_id = $1', [userId]);
+      await run('DELETE FROM venue_fact_votes WHERE fact_id IN (SELECT id FROM venue_facts WHERE created_by = $1)', [userId]);
+      await run('DELETE FROM venue_facts WHERE created_by = $1', [userId]);
+      await run('DELETE FROM venue_notes WHERE user_id = $1', [userId]);
+      await run('DELETE FROM rebook_dismissals WHERE user_id = $1', [userId]);
+      await run('DELETE FROM testimonial_requests WHERE user_id = $1', [userId]);
+      await run('DELETE FROM testimonial_submissions WHERE user_id = $1', [userId]);
+      await run('DELETE FROM checklist_templates WHERE user_id = $1', [userId]);
+      await run('DELETE FROM user_documents WHERE user_id = $1', [userId]);
+      await run('DELETE FROM invoice_saved_items WHERE user_id = $1', [userId]);
+      await run('DELETE FROM invoice_clients WHERE user_id = $1', [userId]);
+      await run('DELETE FROM notification_dismissals WHERE user_id = $1', [userId]);
+      await run('DELETE FROM nudge_feedback WHERE user_id = $1', [userId]);
+      await run('DELETE FROM discovery_lookups WHERE user_id = $1', [userId]);
+      await run('DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1', [userId]);
+      await run('DELETE FROM user_reports WHERE reporter_id = $1 OR reported_id = $1', [userId]);
+      await run('DELETE FROM marketplace_applications WHERE applicant_user_id = $1', [userId]);
+      await run('DELETE FROM marketplace_applications WHERE gig_id IN (SELECT id FROM marketplace_gigs WHERE poster_user_id = $1)', [userId]);
+      await run('DELETE FROM marketplace_gigs WHERE poster_user_id = $1', [userId]);
+      await run('DELETE FROM offers WHERE sender_id = $1 OR recipient_id = $1', [userId]);
+      await run('DELETE FROM messages WHERE sender_id = $1', [userId]);
+      await run(`UPDATE threads SET participant_ids = array_remove(participant_ids, $1) WHERE $1 = ANY(participant_ids)`, [userId]);
+      await run(`DELETE FROM threads WHERE cardinality(participant_ids) <= 1`);
+      await run('DELETE FROM setlists WHERE user_id = $1', [userId]);
+      await run('DELETE FROM songs WHERE user_id = $1', [userId]);
+      await run('DELETE FROM receipts WHERE user_id = $1', [userId]);
+      await run('DELETE FROM expenses WHERE user_id = $1', [userId]);
+      await run('DELETE FROM calendar_syncs WHERE user_id = $1', [userId]);
+      await run('DELETE FROM blocked_dates WHERE user_id = $1', [userId]);
+      await run('DELETE FROM invoices WHERE user_id = $1', [userId]);
+      await run('DELETE FROM contacts WHERE user_id = $1', [userId]);
+      await run('UPDATE contacts SET linked_user_id = NULL WHERE linked_user_id = $1', [userId]);
+      await run('UPDATE contacts SET contact_user_id = NULL WHERE contact_user_id = $1', [userId]);
+      await run('DELETE FROM gigs WHERE user_id = $1', [userId]);
+      if (email) await run('DELETE FROM magic_links WHERE email = $1', [email]);
+      await run('DELETE FROM sessions WHERE user_id = $1', [userId]);
+      await run('DELETE FROM users WHERE id = $1', [userId]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+    res.clearCookie('sessionToken');
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete account error:', error);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
 router.post('/logout', async (req, res) => {
   try {
     const token = req.cookies.sessionToken;

@@ -5115,6 +5115,7 @@ function buildProfileHTML(content, profile) {
       </div>
       <div style="padding:0 16px;margin-top:12px;">
         <button onclick="logout()" class="pill" style="background:var(--danger);color:#fff;">Sign Out</button>
+        <div onclick="openDeleteAccountSheet()" style="text-align:center;font-size:11px;color:var(--text-3);margin-top:14px;cursor:pointer;text-decoration:underline;">Delete my account and all data</div>
       </div>`;
 
     content.innerHTML = html;
@@ -10677,6 +10678,48 @@ async function saveEditGig(gigId) {
 // into its own helper because it has a lot of state (discoverable toggle, bio
 // counter, photo URL, genres chip grid) and inlining it made editProfile()
 // hard to scan.
+function openDeleteAccountSheet() {
+  const existing = document.getElementById('deleteAccountSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'deleteAccountSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.65);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+    + '<div style="font-size:15px;font-weight:700;color:var(--danger);text-align:center;">Delete your account</div>'
+    + '<div style="font-size:12px;color:var(--text-2);text-align:center;margin:8px 0 12px;line-height:1.6;">Everything goes: gigs, invoices, receipts, contacts, chats, documents, EPK. There is no undo. Export your data first from Settings if you want a copy.</div>'
+    + '<input id="deleteAccountConfirm" placeholder="Type DELETE to confirm" autocomplete="off" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--danger);border-radius:8px;color:var(--text);font-size:14px;padding:11px;text-align:center;margin-bottom:10px;">'
+    + '<button onclick="confirmDeleteAccount()" style="width:100%;background:var(--danger);color:#fff;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">Permanently delete</button>'
+    + '<button onclick="document.getElementById(\'deleteAccountSheet\').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Keep my account</button>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) sheet.remove(); });
+  document.body.appendChild(sheet);
+}
+
+async function confirmDeleteAccount() {
+  const input = document.getElementById('deleteAccountConfirm');
+  if (!input || input.value.trim() !== 'DELETE') {
+    showToast('Type DELETE in capitals to confirm.');
+    return;
+  }
+  try {
+    const resp = await fetch('/auth/delete-account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'DELETE' }),
+    });
+    if (!resp.ok) {
+      const out = await resp.json().catch(() => ({}));
+      throw new Error(out.error || 'failed');
+    }
+    window.location.href = '/';
+  } catch (err) {
+    showToast(err.message || 'Could not delete the account.');
+  }
+}
+window.openDeleteAccountSheet = openDeleteAccountSheet;
+window.confirmDeleteAccount = confirmDeleteAccount;
+
 function buildDirectoryProfileEditor(profile) {
   const discoverable = profile.discoverable !== false; // default TRUE if never set
   const bioText = profile.bio || '';

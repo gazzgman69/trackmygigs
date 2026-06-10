@@ -59,6 +59,63 @@ app.use(express.json({ limit: '30mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// ── Production hardening ─────────────────────────────────────────────────────
+// Security headers on every response. CSP is deliberately omitted for now:
+// the frontend uses inline handlers throughout, so a useful CSP needs a
+// dedicated refactor pass; these headers are the high-value, zero-breakage
+// set. The embed share variant is the one legitimate framing case.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
+  const isEmbed = req.path.startsWith('/share/') && req.query.embed === '1';
+  if (!isEmbed) res.setHeader('X-Frame-Options', 'DENY');
+  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+
+// Light in-memory rate limiting. Two buckets: a general per-IP ceiling that
+// only trips on abuse, and a tighter one for unauthenticated public token
+// pages (testimonials, shared docs, share/EPK) where spam costs us storage.
+// Single-process app, so in-memory is fine; swap for Redis if that changes.
+const _rlBuckets = new Map();
+function rateLimited(key, max, windowMs) {
+  const now = Date.now();
+  let b = _rlBuckets.get(key);
+  if (!b || now - b.start > windowMs) { b = { start: now, count: 0 }; _rlBuckets.set(key, b); }
+  b.count += 1;
+  if (_rlBuckets.size > 50000) _rlBuckets.clear();
+  return b.count > max;
+}
+app.use((req, res, next) => {
+  const ip = req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : req.ip;
+  if (rateLimited('g|' + ip, 600, 60000)) {
+    return res.status(429).json({ error: 'rate_limited', message: 'Slow down a little.' });
+  }
+  const publicToken = /^\/(t|docs)\//.test(req.path) || /^\/(share|epk)\//.test(req.path);
+  if (publicToken && rateLimited('p|' + ip, 60, 60000)) {
+    return res.status(429).send('Too many requests');
+  }
+  if (req.path.startsWith('/auth/') && req.method === 'POST' && rateLimited('a|' + ip, 30, 60000)) {
+    return res.status(429).json({ error: 'rate_limited' });
+  }
+  next();
+});
+
+// Health endpoint for uptime monitoring: checks the DB round-trip so a
+// wedged pool reads as DOWN, not just "express is up".
+app.get('/health', async (req, res) => {
+  try {
+    const db = require('./db');
+    await db.query('SELECT 1');
+    res.json({ ok: true, build: BUILD_ID });
+  } catch (err) {
+    res.status(503).json({ ok: false });
+  }
+});
+
 // Serve static assets (JS, CSS, images) — never serve index.html or sw.js from here
 // sw.js is excluded because the server injects BUILD_ID into it dynamically
 app.use((req, res, next) => {

@@ -1,6 +1,10 @@
-# PRODUCTION READINESS (target: 2026-06-24, plan pending Gareth sign-off)
+# PRODUCTION READINESS (approved 2026-06-10, "Lets start")
 
-Goal: trackmygigs.app live and safe for real users in 2 weeks.
+Timeline revised by Gareth: ~2 months to full launch (around mid-August),
+waitlist-first. The landing page + email collection goes live FIRST to
+build attention; the app follows. External blockers (Google verification,
+Resend DNS) still start immediately. Launch shape: waitlist trickle.
+Open decisions: AI features hand-test vs hide; support email address.
 
 ## External blockers (start day 1, not under our control)
 
