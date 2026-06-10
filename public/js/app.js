@@ -722,10 +722,12 @@ function buildHomeHTML(content, stats) {
   let html = '<div style="padding:8px 0 16px;">';
   html += buildHomeHero(state, stats);
   html += buildHomeNeedsStrip(stats, state);
+  html += '<div id="homeRebookSlot"></div>';
   html += buildHomeActionGrid();
   html += '</div>';
 
   content.innerHTML = html;
+  paintHomeRebookCard();
 
   // Busy hero renders a 7-day strip with the same id the legacy hydrate
   // helper expects, so we can reuse it without changes.
@@ -18311,6 +18313,118 @@ async function sendGigPackToThread(threadId) {
     showToast('Could not share. Try again.');
   }
 }
+
+// ── Rebooking radar ──────────────────────────────────────────────────────────
+
+async function loadRebookingSuggestions(force) {
+  const fresh = window._rebookData && (Date.now() - (window._rebookTime || 0)) < 10 * 60000;
+  if (fresh && !force) return window._rebookData;
+  try {
+    const resp = await fetch('/api/rebooking-suggestions');
+    if (!resp.ok) return window._rebookData || { suggestions: [], total_value: 0 };
+    window._rebookData = await resp.json();
+    window._rebookTime = Date.now();
+  } catch (err) { /* keep stale */ }
+  return window._rebookData || { suggestions: [], total_value: 0 };
+}
+
+async function paintHomeRebookCard() {
+  const data = await loadRebookingSuggestions();
+  const slot = document.getElementById('homeRebookSlot');
+  if (!slot) return;
+  const n = (data.suggestions || []).length;
+  if (!n) { slot.innerHTML = ''; return; }
+  slot.innerHTML = `
+    <div onclick="openRebookRadar()" style="margin:0 16px 12px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;">
+      <span style="font-size:20px;">\uD83D\uDD01</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;">Worth a follow-up</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:1px;">${n} past gig${n === 1 ? ' looks' : 's look'} rebookable${data.total_value ? ' \u00B7 ~\u00A3' + Number(data.total_value).toLocaleString() + ' if they land' : ''}</div>
+      </div>
+      <span style="background:var(--success);color:#000;font-size:11px;font-weight:800;border-radius:10px;padding:2px 8px;">${n}</span>
+    </div>`;
+}
+
+async function openRebookRadar() {
+  const body = document.getElementById('rebookRadarBody');
+  if (!body) return;
+  body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text-2);">Looking through your gig history&hellip;</div>';
+  openPanel('panel-rebook');
+  const data = await loadRebookingSuggestions(true);
+  renderRebookRadar(data);
+}
+
+function renderRebookRadar(data) {
+  const body = document.getElementById('rebookRadarBody');
+  if (!body) return;
+  const list = data.suggestions || [];
+  if (!list.length) {
+    body.innerHTML = '<div style="padding:36px 24px;text-align:center;color:var(--text-2);font-size:13px;">Nothing right now. Cards appear here when a gig from your history looks worth a fresh ask, around ten months after you played it.</div>';
+    return;
+  }
+  const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const cards = list.map((s, i) => {
+    const isAnniv = s.kind === 'anniversary';
+    const tag = isAnniv
+      ? '<span style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;border-radius:6px;padding:2px 7px;color:#A78BFA;background:rgba(167,139,250,.14);border:1px solid rgba(167,139,250,.4);">Anniversary</span>'
+      : `<span style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;border-radius:6px;padding:2px 7px;color:var(--success);background:rgba(63,185,80,.14);border:1px solid rgba(63,185,80,.4);">${s.kind === 'regular' ? 'Regular spot' : 'Rebooking'}</span>`;
+    let blurb;
+    if (isAnniv) {
+      blurb = `Their <b style="color:var(--text);">first anniversary</b> is coming up (you played ${fmtDate(s.date)}${s.fee ? ', <span style="color:var(--success);font-weight:700;">\u00A3' + s.fee + '</span>' : ''}). Some couples book the wedding band for the party; a short note costs nothing.`;
+    } else if (s.kind === 'regular') {
+      blurb = `You've played here <b style="color:var(--text);">${s.count} times, roughly every ${s.usual_gap_months} month${s.usual_gap_months === 1 ? '' : 's'}</b>${s.fee ? ', averaging <span style="color:var(--success);font-weight:700;">\u00A3' + s.fee + '</span>' : ''}. It's been ${s.months_since} months since the last one.`;
+    } else {
+      blurb = `You played here <b style="color:var(--text);">this time last year</b>${s.fee ? ' for <span style="color:var(--success);font-weight:700;">\u00A3' + s.fee + '</span>' : ''}. Venues book these slots early; now is a good time to ask about this year.`;
+    }
+    const c = s.contact || {};
+    let action;
+    if (c.email) {
+      const subject = encodeURIComponent(isAnniv ? 'Your first anniversary' : 'Booking for this year?');
+      action = `<a href="mailto:${escapeAttr(c.email)}?subject=${subject}" style="flex:1.4;background:var(--accent);color:#000;border-radius:10px;padding:10px 0;font-size:12px;font-weight:700;text-align:center;text-decoration:none;">Email ${escapeHtml((c.name || '').split(' ')[0] || 'them')}</a>`;
+    } else if (c.phone) {
+      action = `<a href="tel:${escapeAttr(String(c.phone).replace(/\s+/g, ''))}" style="flex:1.4;background:var(--accent);color:#000;border-radius:10px;padding:10px 0;font-size:12px;font-weight:700;text-align:center;text-decoration:none;">Call ${escapeHtml((c.name || '').split(' ')[0] || 'them')}</a>`;
+    } else {
+      action = `<span onclick="openGigDetail('${escapeAttr(s.gig_id)}')" style="flex:1.4;background:var(--accent);color:#000;border-radius:10px;padding:10px 0;font-size:12px;font-weight:700;text-align:center;cursor:pointer;">Open gig to add a contact</span>`;
+    }
+    return `
+      <div id="rebookCard${i}" style="margin:10px 16px;background:linear-gradient(135deg,${isAnniv ? 'rgba(167,139,250,.12)' : 'rgba(63,185,80,.12)'},transparent);border:1px solid ${isAnniv ? 'rgba(167,139,250,.4)' : 'rgba(63,185,80,.4)'};border-radius:14px;padding:14px;">
+        ${tag}
+        <div style="font-size:15px;font-weight:700;margin-top:8px;">${escapeHtml(s.title || 'Gig')}</div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:4px;line-height:1.55;">${blurb}</div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          ${action}
+          <span onclick="dismissRebook('${escapeAttr(s.key)}', 0, 'rebookCard${i}')" style="flex:1;background:var(--card);border:1px solid var(--border);color:var(--text-2);border-radius:10px;padding:10px 0;font-size:12px;font-weight:700;text-align:center;cursor:pointer;">Dismiss</span>
+        </div>
+        <div onclick="dismissRebook('${escapeAttr(s.key)}', 30, 'rebookCard${i}')" style="font-size:10px;color:var(--text-3);text-align:center;margin-top:8px;cursor:pointer;">Snooze 1 month</div>
+      </div>`;
+  }).join('');
+  body.innerHTML = `
+    <div style="padding:14px 16px 0;font-size:12px;color:var(--text-2);line-height:1.5;">Gigs from your history that tend to come around again. Nothing is sent automatically; the buttons just open a message you write.</div>
+    ${cards}
+    <div style="height:30px;"></div>`;
+}
+
+async function dismissRebook(key, snoozeDays, cardId) {
+  try {
+    await fetch('/api/rebooking-suggestions/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, snooze_days: snoozeDays || undefined }),
+    });
+  } catch (err) { /* card removal below still applies this session */ }
+  const card = document.getElementById(cardId);
+  if (card) card.remove();
+  if (window._rebookData) {
+    window._rebookData.suggestions = (window._rebookData.suggestions || []).filter(s => s.key !== key);
+    window._rebookData.total_value = (window._rebookData.suggestions || []).reduce((a, s) => a + (s.fee || 0), 0);
+  }
+  paintHomeRebookCard();
+  showToast(snoozeDays ? 'Snoozed for a month.' : 'Dismissed. It will not come back for that gig.');
+}
+
+window.openRebookRadar = openRebookRadar;
+window.dismissRebook = dismissRebook;
+window.paintHomeRebookCard = paintHomeRebookCard;
 
 window.openGigPack = openGigPack;
 window.saveGigPackFields = saveGigPackFields;

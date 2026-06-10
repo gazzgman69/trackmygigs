@@ -2478,6 +2478,138 @@ router.delete('/venues/facts/:id', async (req, res) => {
   }
 });
 
+// ── Rebooking radar ──────────────────────────────────────────────────────────
+// Surfaces revenue hiding in the user's own gig history. Pure date
+// arithmetic over their gigs; nothing is ever auto-sent.
+
+router.get('/rebooking-suggestions', async (req, res) => {
+  try {
+    const gigsRes = await db.query(
+      `SELECT id, venue_name, band_name, date, fee, status, gig_type, notes,
+              client_name, client_email, client_phone,
+              gig_leader_name, gig_leader_phone, gig_leader_email
+         FROM gigs
+        WHERE user_id = $1 AND (status IS NULL OR status != 'cancelled')
+          AND date IS NOT NULL`,
+      [req.user.id]
+    );
+    const dismissRes = await db.query(
+      `SELECT key, snooze_until FROM rebook_dismissals WHERE user_id = $1`,
+      [req.user.id]
+    );
+    const today = new Date();
+    const suppressed = new Set();
+    for (const d of dismissRes.rows) {
+      if (!d.snooze_until || new Date(d.snooze_until) > today) suppressed.add(d.key);
+    }
+    const monthsAgo = (date) => (today - new Date(date)) / (30.44 * 86400000);
+    const ym = (date) => String(date).slice(0, 7);
+    const contactOf = (g) => ({
+      name: g.client_name || g.gig_leader_name || null,
+      email: g.client_email || g.gig_leader_email || null,
+      phone: g.client_phone || g.gig_leader_phone || null,
+    });
+    const gigs = gigsRes.rows;
+    const suggestions = [];
+    const weddingGigIds = new Set();
+
+    // Anniversary: wedding-looking gigs roughly a year back.
+    for (const g of gigs) {
+      const hay = [g.gig_type, g.band_name, g.notes].filter(Boolean).join(' ');
+      if (!/wedding/i.test(hay)) continue;
+      const m = monthsAgo(g.date);
+      if (m < 10 || m > 12.5) { if (m >= 0) weddingGigIds.add(g.id); continue; }
+      weddingGigIds.add(g.id);
+      const key = 'anniv|' + g.id;
+      if (suppressed.has(key)) continue;
+      suggestions.push({
+        key, kind: 'anniversary',
+        title: (g.band_name || 'Wedding') + (g.client_name ? ' \u00B7 ' + g.client_name : ''),
+        gig_id: g.id, date: g.date, fee: g.fee != null ? Number(g.fee) : null,
+        venue_name: g.venue_name || null, contact: contactOf(g),
+      });
+    }
+
+    // Group the rest by venue.
+    const byVenue = {};
+    for (const g of gigs) {
+      const k = String(g.venue_name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      if (!k) continue;
+      (byVenue[k] = byVenue[k] || []).push(g);
+    }
+    for (const k of Object.keys(byVenue)) {
+      const rows = byVenue[k].sort((a, b) => new Date(a.date) - new Date(b.date));
+      const past = rows.filter(g => new Date(g.date) <= today);
+      const future = rows.filter(g => new Date(g.date) > today);
+      if (!past.length || future.length) continue;
+      const last = past[past.length - 1];
+      const lastM = monthsAgo(last.date);
+      const fees = past.map(g => parseFloat(g.fee)).filter(f => f > 0);
+      const avgFee = fees.length ? Math.round(fees.reduce((a, b) => a + b, 0) / fees.length) : null;
+
+      if (past.length >= 3) {
+        // Regular spot: flag when the usual rhythm is overdue.
+        const gaps = [];
+        for (let i = 1; i < past.length; i++) gaps.push(new Date(past[i].date) - new Date(past[i - 1].date));
+        gaps.sort((a, b) => a - b);
+        const medianGapDays = gaps[Math.floor(gaps.length / 2)] / 86400000;
+        const sinceDays = (today - new Date(last.date)) / 86400000;
+        if (medianGapDays >= 14 && sinceDays >= medianGapDays * 1.5 && lastM <= 18) {
+          const key = 'regular|' + k + '|' + ym(last.date);
+          if (!suppressed.has(key)) {
+            suggestions.push({
+              key, kind: 'regular',
+              title: last.venue_name,
+              gig_id: last.id, date: last.date, fee: avgFee,
+              venue_name: last.venue_name, contact: contactOf(last),
+              count: past.length,
+              usual_gap_months: Math.max(1, Math.round(medianGapDays / 30.44)),
+              months_since: Math.round(lastM),
+            });
+          }
+        }
+      } else if (lastM >= 10 && lastM <= 12.5 && !weddingGigIds.has(last.id)) {
+        // One-off venue, this time last year.
+        const key = 'rebook|' + k + '|' + ym(last.date);
+        if (!suppressed.has(key)) {
+          suggestions.push({
+            key, kind: 'rebook',
+            title: last.venue_name,
+            gig_id: last.id, date: last.date,
+            fee: parseFloat(last.fee) > 0 ? Math.round(parseFloat(last.fee)) : avgFee,
+            venue_name: last.venue_name, contact: contactOf(last),
+          });
+        }
+      }
+    }
+
+    const totalValue = suggestions.reduce((a, s) => a + (s.fee || 0), 0);
+    res.json({ suggestions, total_value: Math.round(totalValue) });
+  } catch (error) {
+    console.error('Rebooking suggestions error:', error);
+    res.status(500).json({ error: 'Failed to load suggestions' });
+  }
+});
+
+router.post('/rebooking-suggestions/dismiss', async (req, res) => {
+  try {
+    const { key, snooze_days } = req.body || {};
+    if (!key || String(key).length > 200) return res.status(400).json({ error: 'key is required' });
+    const days = Number(snooze_days);
+    const until = days > 0 ? new Date(Date.now() + days * 86400000).toISOString().slice(0, 10) : null;
+    await db.query(
+      `INSERT INTO rebook_dismissals (user_id, key, snooze_until)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, key) DO UPDATE SET snooze_until = $3, created_at = NOW()`,
+      [req.user.id, String(key), until]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Rebooking dismiss error:', error);
+    res.status(500).json({ error: 'Failed to dismiss' });
+  }
+});
+
 router.post('/blocked-dates', async (req, res) => {
   try {
     const { mode, date, from, to, reason, days, source_event_id } = req.body;

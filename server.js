@@ -1868,6 +1868,16 @@ async function runMigrations() {
     )`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_venue_facts_key ON venue_facts (venue_key)`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS soundcheck_time TIME`);
+    // 2026-06-10 rebooking radar: per-user dismissals/snoozes keyed per
+    // suggestion (the key embeds the source gig month, so dismissing this
+    // year's nudge does not suppress next year's).
+    await db.query(`CREATE TABLE IF NOT EXISTS rebook_dismissals (
+      user_id UUID NOT NULL,
+      key TEXT NOT NULL,
+      snooze_until DATE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (user_id, key)
+    )`);
     await db.query(`CREATE TABLE IF NOT EXISTS venue_fact_votes (
       fact_id UUID NOT NULL,
       user_id UUID NOT NULL,
