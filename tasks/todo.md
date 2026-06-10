@@ -2,17 +2,28 @@
 
 Approved in chat: "all sound perfect additions". All in public/js/app.js list view.
 
-- [ ] BUG: Day-options sheet recognises blocked days only by first date; use
+- [x] BUG: Day-options sheet recognises blocked days only by first date; use
       expanded_dates / start_date so mid-run days show Blocked + Manage block
-- [ ] Tap month name -> month/year jump sheet (year stepper + 12-month grid)
-- [ ] Sideways swipe on the grid changes month (day-panel swipe stays per-day)
-- [ ] Dim past days in the grid (number + bars), Apple style
-- [ ] Subtle weekend tint on SA/SU cells
-- [ ] Small + on the day header: add gig prefilled to selected date
+- [x] Tap month name -> month/year jump sheet (year stepper + 12-month grid)
+- [x] Sideways swipe on the grid changes month (day-panel swipe stays per-day)
+- [x] Dim past days in the grid (number + bars), Apple style
+- [x] Subtle weekend tint on SA/SU cells
+- [x] Small + on the day header: add gig prefilled to selected date
       (reuses window._prefillGigDate + openGigWizard, same as Day options)
-- [ ] Long-press a grid day opens Day options directly (with click suppression
+- [x] Long-press a grid day opens Day options directly (with click suppression
       + no text selection on the grid)
-- [ ] node --check, one commit, deploy, grep new symbols, browser verify, console clean
+- [x] node --check, one commit, deploy, grep new symbols, browser verify, console clean
+
+## Review (2026-06-10, commit 463f14c)
+
+All seven shipped in one wave and verified live in the browser: jump sheet
+opens from the month name (year stepper, current month highlighted, Jump to
+today), Dec 2027 jump rendered with the money strip and blocked count
+correct, the Day-options sheet on the blocked 15 Dec 2027 now shows
+Blocked + Manage block (the bug fix), past days dim, weekends tint, the
+day-header + opened the New Gig wizard, and grid gesture handlers
+(month swipe + long-press) are attached. Console clean. Touch gestures
+need a real phone for feel; Gareth to try swipe + long-press on iPhone.
 
 # Landing page refresh + premium purchase check (2026-06-10)
 
