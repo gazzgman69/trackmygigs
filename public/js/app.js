@@ -10770,7 +10770,7 @@ function buildDirectoryProfileEditor(profile) {
     <div style="margin-bottom:14px;padding:12px;background:${availActive ? 'rgba(63,185,80,.10)' : 'var(--card)'};border:1px solid ${availActive ? 'rgba(63,185,80,.4)' : 'var(--border)'};border-radius:var(--rs);">
       <div style="display:flex;align-items:flex-start;gap:12px;">
         <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
-          <input id="editAvailableNow" type="checkbox" ${availActive ? 'checked' : ''} style="opacity:0;width:0;height:0;" onchange="this.parentElement.querySelector('.tmg-toggle-dot').style.transform = this.checked ? 'translateX(20px)' : 'translateX(0)'; this.parentElement.querySelector('.tmg-toggle-bg').style.background = this.checked ? 'var(--success,#3FB950)' : 'var(--border)'; this.closest('div[style*=padding]').style.background = this.checked ? 'rgba(63,185,80,.10)' : 'var(--card)'; this.closest('div[style*=padding]').style.borderColor = this.checked ? 'rgba(63,185,80,.4)' : 'var(--border)';" />
+          <input id="editAvailableNow" type="checkbox" ${availActive ? 'checked' : ''} style="opacity:0;width:0;height:0;" onchange="this.parentElement.querySelector('.tmg-toggle-dot').style.transform = this.checked ? 'translateX(20px)' : 'translateX(0)'; this.parentElement.querySelector('.tmg-toggle-bg').style.background = this.checked ? 'var(--success,#3FB950)' : 'var(--border)'; this.closest('div[style*=padding]').style.background = this.checked ? 'rgba(63,185,80,.10)' : 'var(--card)'; this.closest('div[style*=padding]').style.borderColor = this.checked ? 'rgba(63,185,80,.4)' : 'var(--border)'; saveAvailableNowInstant(this);" />
           <span class="tmg-toggle-bg" style="position:absolute;inset:0;background:${availActive ? 'var(--success,#3FB950)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
           <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${availActive ? 'translateX(20px)' : 'translateX(0)'};"></span>
         </label>
@@ -17455,6 +17455,11 @@ async function togglePushReminders(checkbox) {
     } else {
       await unsubscribeFromPush();
     }
+    // Success: slide the visual toggle too. The dot and track are inline
+    // styles set at render time, so without this the switch keeps showing
+    // the old state even though the server flag flipped.
+    setVisual(desired);
+    if (window._cachedProfile) window._cachedProfile.push_reminders_enabled = desired;
   } catch (err) {
     // Roll back the toggle UI on any error so it doesn't lie.
     setVisual(!desired);
@@ -17464,6 +17469,38 @@ async function togglePushReminders(checkbox) {
   }
 }
 window.togglePushReminders = togglePushReminders;
+
+// The availability toggle used to persist only via the profile editor's
+// Save button, which silently lost the change for anyone who toggled and
+// walked away (it LOOKED instant). Now it saves on flip, like the push
+// toggle above it; the form save still includes it harmlessly.
+async function saveAvailableNowInstant(checkbox) {
+  const desired = !!checkbox.checked;
+  try {
+    const resp = await fetch('/api/user/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ available_now: desired }),
+    });
+    if (!resp.ok) throw new Error();
+    if (window._cachedProfile) {
+      window._cachedProfile.available_now = desired;
+      window._cachedProfile.available_now_until = desired
+        ? new Date(Date.now() + 7 * 86400000).toISOString() : null;
+    }
+    showToast(desired
+      ? 'You\u2019re marked available. Auto-expires in 7 days.'
+      : 'Availability switched off.');
+  } catch (err) {
+    checkbox.checked = !desired;
+    const dot = checkbox.parentElement.querySelector('.tmg-toggle-dot');
+    const bg = checkbox.parentElement.querySelector('.tmg-toggle-bg');
+    if (dot) dot.style.transform = !desired ? 'translateX(20px)' : 'translateX(0)';
+    if (bg) bg.style.background = !desired ? 'var(--success,#3FB950)' : 'var(--border)';
+    showToast('Could not save availability. Try again.');
+  }
+}
+window.saveAvailableNowInstant = saveAvailableNowInstant;
 
 async function subscribeToPush() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
