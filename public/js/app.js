@@ -467,7 +467,33 @@ function updateAppHeader() {
   if (hour >= 18) greeting = 'Evening';
 
   const avatarEl = document.getElementById('userAvatar');
-  if (avatarEl) avatarEl.textContent = initial;
+  if (avatarEl) {
+    const pUrl = (window._cachedProfile && window._cachedProfile.photo_url)
+      || (window._currentUser && window._currentUser.photo_url) || null;
+    if (pUrl) {
+      avatarEl.textContent = '';
+      avatarEl.style.backgroundImage = `url('${pUrl}')`;
+      avatarEl.style.backgroundSize = 'cover';
+      avatarEl.style.backgroundPosition = 'center';
+    } else {
+      avatarEl.style.backgroundImage = '';
+      avatarEl.textContent = initial;
+    }
+  }
+  window.refreshHeaderAvatar = () => {
+    const el = document.getElementById('userAvatar');
+    const u = (window._cachedProfile && window._cachedProfile.photo_url) || null;
+    if (!el) return;
+    if (u) {
+      el.textContent = '';
+      el.style.backgroundImage = `url('${u}')`;
+      el.style.backgroundSize = 'cover';
+      el.style.backgroundPosition = 'center';
+    } else {
+      el.style.backgroundImage = '';
+      el.textContent = initial;
+    }
+  };
 
   const greetingEl = document.getElementById('greeting');
   if (greetingEl) greetingEl.textContent = `${greeting}, ${name}`;
@@ -4979,7 +5005,7 @@ function buildProfileHTML(content, profile) {
       </div>
       <div style="padding:0 16px 12px;">
         <div style="text-align:center;">
-          <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:32px;background:var(--accent-dim);border:3px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:var(--accent);">${userInitial}</div>
+          <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:32px;border:3px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:var(--accent);${profile.photo_url ? `background:var(--card) center/cover no-repeat;background-image:url('${escapeHtml(profile.photo_url)}');` : 'background:var(--accent-dim);'}">${profile.photo_url ? '' : userInitial}</div>
           <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px;">${escapeHtml(displayName || 'Guest')}</div>
           ${profile.name && profile.name !== displayName ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:4px;">Act: ${escapeHtml(profile.name)}</div>` : ''}
           <div style="font-size:12px;color:var(--text-2);margin-bottom:2px;">${escapeHtml(Array.isArray(profile.instruments) ? profile.instruments.join(', ') : (profile.instruments || 'No instruments listed'))}</div>
@@ -19629,6 +19655,7 @@ async function confirmPhotoCrop() {
     const hidden = document.getElementById('editPhotoUrl');
     if (hidden) hidden.value = out.photo_url;
     if (window._cachedProfile) window._cachedProfile.photo_url = out.photo_url;
+    if (typeof window.refreshHeaderAvatar === 'function') window.refreshHeaderAvatar();
     if (status) status.textContent = 'Saved \u2713';
     setTimeout(() => { if (status) status.textContent = ''; }, 2500);
   } catch (err) {
@@ -19648,6 +19675,7 @@ async function removeProfilePhoto() {
     const hidden = document.getElementById('editPhotoUrl');
     if (hidden) hidden.value = '';
     if (window._cachedProfile) window._cachedProfile.photo_url = null;
+    if (typeof window.refreshHeaderAvatar === 'function') window.refreshHeaderAvatar();
     showToast('Photo removed.');
   } catch (err) {
     showToast('Could not remove the photo.');
