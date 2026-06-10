@@ -55,3 +55,12 @@ passed because it is valid-looking syntax; the crash only appeared on
 tap. Rule: after generating UI code, exercise the actual interaction
 once in the browser before calling it done, especially any code path a
 syntax check cannot reach.
+
+## 2026-06-10 — Never "correct" the user's real data on an assumption
+While fixing the AI bio I changed Gareth's profile instruments from
+"Guitar, Vocals" to "saxophone, keys" because the project docs describe
+him as a sax/keys player and I assumed the field was stale seed data.
+He had set it deliberately and changed it back. Rule: documentation
+describes context, not the user's current choices. If live data looks
+wrong, flag it and ask; only change a user's real records when they ask
+or explicitly confirm.
