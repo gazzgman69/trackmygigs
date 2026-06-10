@@ -9233,11 +9233,11 @@ function _filterGigPicker(query) {
       .filter(Boolean).join(' ').toLowerCase();
     return hay.includes(q);
   });
-  _renderGigPickerList(hit);
+  _renderGigPickerList(hit, q);
 }
 window._filterGigPicker = _filterGigPicker;
 
-function _renderGigPickerList(gigs) {
+function _renderGigPickerList(gigs, query) {
   const container = document.getElementById('chatGigPickerList');
   if (!container) return;
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -9251,7 +9251,10 @@ function _renderGigPickerList(gigs) {
     })
     .slice(0, 30);
   if (list.length === 0) {
-    container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No gigs to share yet. Add one from the Gigs tab first.</div>`;
+    const emptyMsg = query
+      ? 'No gigs match "' + escapeHtml(String(query)) + '"'
+      : 'No gigs to share yet. Add one from the Gigs tab first.';
+    container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">${emptyMsg}</div>`;
     return;
   }
   container.innerHTML = list.map(g => {
