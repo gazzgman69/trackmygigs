@@ -1,3 +1,39 @@
+# Stage-ready setlists (approved 2026-06-10 "Lets get started", mockup signed off)
+
+Scope agreed in chat: editor upgrade + stage mode + the extras list
+(transpose, per-song stage notes, announcement markers, jump-to-song,
+overrun warning, pedal keys, count-in pulse, auto-scroll with remembered
+speed), then follow mode as its own wave.
+
+## Wave S1 - data + editor
+
+- [ ] setlists.stage_meta JSONB: { breaks: [idx], markers: [{after, text}],
+      notes: {song_id: text}, speeds: {song_id}, transpose: {song_id} } -
+      one column, no other schema churn
+- [ ] PATCH /api/setlists/:id accepts stage_meta
+- [ ] Editor: hold-drag reorder (pointer events), set breaks with per-set
+      song count + running time, announcement marker rows, per-song stage
+      note editing, Perform button
+
+## Wave S2 - stage mode
+
+- [ ] Full-screen performance view: huge title, key chip, BPM, inline
+      chords from ChordPro lyrics, next-up bar, swipe L/R + arrow/pedal
+      keys + space for scroll toggle, tap-to-pause, font size controls
+      (persisted), wake lock with visibility re-acquire, elapsed set clock
+      with amber overrun, jump-to-song grid from the position indicator,
+      count-in BPM pulse, auto-scroll (default speed from song duration vs
+      lyric height, remembered per song), transpose stepper on the key chip
+      (chord maths with sensible enharmonics, remembered per song)
+
+## Wave S3 - follow mode
+
+- [ ] stage_sessions (code, setlist_id, leader, position, updated_at);
+      leader PATCHes position on swipe; followers poll GET /api/stage/:code
+      which returns the rendered song payload (no setlist copy needed);
+      share-the-code card into band chat; follower view = stage mode minus
+      controls, "Following <leader>" banner
+
 # PRODUCTION READINESS (approved 2026-06-10, "Lets start")
 
 Timeline revised by Gareth: ~2 months to full launch (around mid-August),
