@@ -24,11 +24,10 @@ deliberately untested (Gareth will test by hand). Raw evidence: sim/results/*-ca
 ## P1 — Real bugs, open, in priority order
 ═══════════════════════════════════════════════════════════════════
 
-3. **Deleted gigs can resurrect.** Deleting a Google-synced gig sometimes fails to
-   remove the Google event (silent mirror failure); the next pull re-imports it.
-   Repro'd live once, second attempt clean — flaky, so it WILL hit users.
-   Fix: verify the Google delete, retry, and remember deleted event ids
-   (tombstones) so pull never re-imports something TMG deleted.
+3. ~~Deleted gigs can resurrect~~ **WITHDRAWN after clean retest (2026-06-10).**
+   The "resurrection" was a duplicate test gig created by an aborted shell command
+   during testing, not the app. A clean create-push-delete-pull-pull cycle does not
+   resurrect. No tombstone work needed.
 4. **Calendar-connect bulk import trusts the AI classifier blindly.** "Wedding
    anniversary next week" and "Doz's birthday next week" imported as confirmed gigs
    (they then show as BUSY on the public availability page). The modal offers
@@ -41,9 +40,10 @@ deliberately untested (Gareth will test by hand). Raw evidence: sim/results/*-ca
    deliberately not pushed back (read-only until edited in TMG) are counted in
    pushed.failed with reason "push_returned_null" — the UI would say "8 failed"
    forever. Fix: separate skipped from failed, human-readable reasons.
-7. **Single-gig push reports failure while succeeding.** POST /api/calendar/push/:id
-   stored the google_event_id but responded {"error":"Sync failed..."}. UI lies to
-   the user. Likely the response path checks the wrong return value.
+7. ~~Single-gig push reports failure while succeeding~~ **DOWNGRADED after retest.**
+   Could not reproduce; the one occurrence was seconds after the OAuth reconnect
+   (token not yet usable, push returned null, a later sync created the event).
+   Clean retest returns success with the event id. No code change.
 8. **Two competing premium flags.** /auth/dev-set-premium sets users.premium +
    premium_until; the lineup gate and client UI read users.subscription_tier.
    Confirmed live: a dev-set-premium user gets 403 on premium features. Pick one

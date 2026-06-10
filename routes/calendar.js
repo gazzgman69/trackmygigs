@@ -1865,8 +1865,20 @@ router.post('/sync-now', async (req, res) => {
       [req.user.id]
     );
     let pushed = 0;
+    let skipped = 0;
     const failures = [];
     for (const g of gigs.rows) {
+      // Same predicate as pushGigToGoogle's write-safety guard: a gig that
+      // was imported from Google and never edited in TMG deliberately stays
+      // read-only toward Google. That's a skip, not a failure — counting it
+      // as failed made every sync-now report "N failed" forever.
+      const originatedInGoogle = Boolean(
+        g.google_event_id || (g.source && String(g.source).startsWith('gcal:'))
+      );
+      if (originatedInGoogle && !g.tmg_edited) {
+        skipped++;
+        continue;
+      }
       try {
         const id = await pushGigToGoogle(req.user.id, g);
         if (id) {
@@ -1877,7 +1889,7 @@ router.post('/sync-now', async (req, res) => {
             band_name: g.band_name || null,
             venue_name: g.venue_name || null,
             date: g.date || null,
-            reason: 'push_returned_null',
+            reason: 'Could not push — Google connection may need a re-link',
           });
         }
       } catch (err) {
@@ -1905,6 +1917,7 @@ router.post('/sync-now', async (req, res) => {
       },
       pushed: {
         ok: pushed,
+        skipped,
         failed: failures.length,
         total: gigs.rows.length,
         failures: failures.slice(0, 20),

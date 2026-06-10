@@ -19023,6 +19023,21 @@ window.isTimeAutoBlocked = isTimeAutoBlocked;
         </div>
       </div>
 
+      <div style="max-height:200px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:8px;">
+        ${events.map((e, i) => {
+          const d = e.start ? new Date(e.start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+          const sub = [d, e.suggested_venue_name || e.location].filter(Boolean).join(' · ');
+          return `
+        <label style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer;">
+          <input type="checkbox" class="fi-event-check" data-idx="${i}" checked onchange="fiUpdateImportCount()" style="width:16px;height:16px;accent-color:var(--accent);flex-shrink:0;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.suggested_band_name || e.title || 'Untitled event')}</div>
+            ${sub ? `<div style="font-size:11px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(sub)}</div>` : ''}
+          </div>
+        </label>`;
+        }).join('')}
+      </div>
+      <div style="font-size:11px;color:var(--text-3);margin-bottom:10px;">Untick anything that isn't really a gig (birthdays, anniversaries...).</div>
       <button id="fiImportBtn" onclick="fiStartImport()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:14px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;">Import all ${events.length}</button>
       <button onclick="document.getElementById('firstImportOverlay').remove();localStorage.setItem(window._currentUser?.id ? 'tmg_first_import_done:' + window._currentUser.id : 'tmg_first_import_done','1');" style="width:100%;background:transparent;color:var(--text-2);border:1px solid var(--border);border-radius:14px;padding:12px;font-size:13px;cursor:pointer;">Skip for now</button>
 
@@ -19031,6 +19046,19 @@ window.isTimeAutoBlocked = isTimeAutoBlocked;
     // Expose for inline handlers; closures on re-render.
     window.fiFetchAndRender = fiFetchAndRender;
     window.fiStartImport = fiStartImport;
+    window.fiUpdateImportCount = fiUpdateImportCount;
+  }
+
+  // Per-event review (June 2026): keep the Import button's count in step
+  // with the checkboxes so "Import selected (4)" always tells the truth.
+  function fiUpdateImportCount() {
+    const checks = document.querySelectorAll('.fi-event-check');
+    const on = Array.from(checks).filter(c => c.checked).length;
+    const btn = document.getElementById('fiImportBtn');
+    if (!btn) return;
+    btn.textContent = on === checks.length ? `Import all ${on}` : `Import selected (${on})`;
+    btn.disabled = on === 0;
+    btn.style.opacity = on === 0 ? '0.5' : '';
   }
 
   function rangeChip(val, label, current) {
@@ -19050,6 +19078,13 @@ window.isTimeAutoBlocked = isTimeAutoBlocked;
     if (!state || !Array.isArray(state.events)) return;
     const body = document.getElementById('fiBody');
     if (!body) return;
+    // Honour the review checkboxes: only ticked events import.
+    const checks = document.querySelectorAll('.fi-event-check');
+    if (checks.length > 0) {
+      const keep = new Set(Array.from(checks).filter(c => c.checked).map(c => parseInt(c.dataset.idx, 10)));
+      state.events = state.events.filter((_, i) => keep.has(i));
+      if (state.events.length === 0) return;
+    }
     body.innerHTML = `
       <div style="text-align:center;padding:30px 16px;">
         <div style="width:44px;height:44px;border-radius:50%;border:3px solid var(--border);border-top-color:var(--accent);margin:0 auto 16px;animation:fiSpin 1s linear infinite;"></div>
