@@ -1582,7 +1582,7 @@ async function renderGigsScreen() {
   const cached = window._cachedGigs;
 
   content.innerHTML = `
-    <div style="padding:6px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+    <div style="margin-top:-8px;padding:0 20px 4px;display:flex;align-items:center;justify-content:space-between;">
       <div style="font-size:22px;font-weight:700;color:var(--text);">My Gigs</div>
       <button style="background:var(--accent);color:#000;border:none;border-radius:24px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;" onclick="openGigWizard()">+ New</button>
     </div>
@@ -4213,7 +4213,7 @@ function buildInvoicesHTML(content, invoices) {
     }).join('');
 
     let html = `
-      <div style="padding:6px 20px 8px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <div style="margin-top:-8px;padding:0 20px 4px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
         <div style="min-width:0;">
           <div style="font-size:22px;font-weight:700;color:var(--text);">Invoices</div>
           <div style="font-size:13px;color:var(--text-2);margin-top:2px;">${invoices.length} total &middot; &pound;${(paid + overdue + draft + sent).toFixed(0)} invoiced</div>
@@ -4486,7 +4486,7 @@ function buildOffersHTML(content, offers) {
   const isSent = view === 'sent';
 
   let html = `
-    <div class="ph" style="padding:6px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
+    <div class="ph" style="margin-top:-8px;padding:0 20px 4px;display:flex;align-items:center;justify-content:space-between;">
       <div class="pht" style="font-size:22px;font-weight:700;color:var(--text);">Offers</div>
       <div style="display:flex;align-items:center;gap:6px;">
         <div onclick="showAcceptedOffers()" title="Accepted offers" style="display:flex;align-items:center;gap:4px;background:var(--success-dim);border:1px solid rgba(63,185,80,.3);border-radius:12px;padding:5px 10px;cursor:pointer;">
