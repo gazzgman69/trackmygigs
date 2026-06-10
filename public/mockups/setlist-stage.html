@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Setlists that work on stage</title>
+<style>
+:root{--bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;--text:#E6EDF3;--text-2:#8B949E;--text-3:#6E7681;--accent:#F0A500;--accent-dim:rgba(240,165,0,.15);--success:#3FB950;--danger:#F85149;--info:#58A6FF;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;padding-bottom:60px;}
+.note{background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);margin:10px;padding:10px 12px;border-radius:10px;font-size:12px;color:var(--text-2);}
+.note strong{color:var(--accent);}
+.cp-label{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.8px;margin:16px 16px 8px;}
+header{padding:14px 16px 2px;display:flex;align-items:center;justify-content:space-between;}
+h1{font-size:18px;}
+.perform{background:var(--accent);color:#000;border-radius:999px;padding:9px 18px;font-size:13px;font-weight:800;}
+.sec{display:flex;align-items:center;justify-content:space-between;margin:14px 16px 6px;}
+.sec .t{font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.8px;}
+.sec .time{font-size:11px;color:var(--text-2);}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;margin:0 16px;padding:2px 6px;}
+.song{display:flex;align-items:center;gap:10px;padding:11px 8px;border-bottom:1px solid var(--border);}
+.song:last-child{border-bottom:none;}
+.grip{color:var(--text-3);font-size:15px;cursor:grab;letter-spacing:-2px;}
+.song .n{flex:1;min-width:0;}
+.song .t{font-size:14px;font-weight:600;}
+.song .s{font-size:11px;color:var(--text-2);margin-top:1px;}
+.keychip{font-size:10px;font-weight:800;color:var(--info);background:rgba(88,166,255,.12);border-radius:6px;padding:2px 7px;flex-shrink:0;}
+.dur{font-size:11px;color:var(--text-3);width:38px;text-align:right;flex-shrink:0;}
+.dragghost{opacity:.45;background:var(--accent-dim);border:1px dashed var(--accent);border-radius:8px;}
+.addbreak{text-align:center;font-size:11px;color:var(--accent);font-weight:600;margin:8px 16px;padding:9px;border:1px dashed var(--border);border-radius:10px;}
+.stage{background:#000;border:1px solid var(--border);border-radius:18px;margin:0 16px;padding:18px 16px 14px;}
+.stage .meta{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--text-3);}
+.stage .pos{color:var(--accent);font-weight:700;}
+.stage .title{font-size:30px;font-weight:800;line-height:1.15;margin-top:10px;}
+.stage .sub{font-size:15px;color:var(--text-2);margin-top:4px;}
+.stage .keybig{display:inline-block;font-size:14px;font-weight:800;color:var(--info);background:rgba(88,166,255,.12);border-radius:8px;padding:3px 10px;margin-top:10px;}
+.stage .lyr{font-size:17px;line-height:1.8;margin-top:14px;color:var(--text);}
+.stage .lyr b{color:var(--accent);font-weight:800;font-size:14px;vertical-align:super;}
+.stage .next{margin-top:16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 12px;font-size:12px;color:var(--text-2);display:flex;justify-content:space-between;}
+.stage .next b{color:var(--text);}
+.stage .hint{text-align:center;font-size:10px;color:var(--text-3);margin-top:10px;}
+.awake{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--success);}
+.awake i{width:6px;height:6px;border-radius:50%;background:var(--success);display:inline-block;}
+</style>
+</head>
+<body>
+<div class="note"><strong>MOCKUP — not wired.</strong> Two halves. TOP: the setlist editor grows drag-to-reorder (hold the grip), set breaks with per-set running time, and a big Perform button. BOTTOM: stage mode, full-screen black, huge text, chords inline if the song has them, swipe or tap for next song, screen stays awake all set. Works offline once loaded (songs are already local).</div>
+
+<div class="cp-label">The editor, upgraded</div>
+<header><h1>Function Bangers Vol 2</h1><span class="perform">&#9654; Perform</span></header>
+
+<div class="sec"><span class="t">Set 1</span><span class="time">5 songs &middot; 22 min</span></div>
+<div class="card">
+  <div class="song"><span class="grip">&#8942;&#8942;</span><div class="n"><div class="t">Shotgun</div><div class="s">George Ezra &middot; 115bpm</div></div><span class="keychip">D</span><span class="dur">3:20</span></div>
+  <div class="song dragghost"><span class="grip">&#8942;&#8942;</span><div class="n"><div class="t">Dakota</div><div class="s">Stereophonics &middot; being dragged&hellip;</div></div><span class="keychip">E</span><span class="dur">4:50</span></div>
+  <div class="song"><span class="grip">&#8942;&#8942;</span><div class="n"><div class="t">Valerie</div><div class="s">The Zutons &middot; 108bpm</div></div><span class="keychip">Bb</span><span class="dur">3:50</span></div>
+  <div class="song"><span class="grip">&#8942;&#8942;</span><div class="n"><div class="t">Mr Brightside</div><div class="s">The Killers &middot; 148bpm</div></div><span class="keychip">Db</span><span class="dur">3:45</span></div>
+  <div class="song"><span class="grip">&#8942;&#8942;</span><div class="n"><div class="t">Sex on Fire</div><div class="s">Kings of Leon &middot; 153bpm</div></div><span class="keychip">E</span><span class="dur">3:25</span></div>
+</div>
+
+<div class="sec"><span class="t">Set 2</span><span class="time">4 songs &middot; 18 min</span></div>
+<div class="card">
+  <div class="song"><span class="grip">&#8942;&#8942;</span><div class="n"><div class="t">Rolling in the Deep</div><div class="s">Adele &middot; 105bpm</div></div><span class="keychip">Cm</span><span class="dur">3:48</span></div>
+  <div class="song"><span class="grip">&#8942;&#8942;</span><div class="n"><div class="t">I Wanna Dance With Somebody</div><div class="s">Whitney &middot; 119bpm</div></div><span class="keychip">G#</span><span class="dur">4:52</span></div>
+  <div class="song"><span class="grip">&#8942;&#8942;</span><div class="n"><div class="t">Hey Ya!</div><div class="s">OutKast &middot; 160bpm</div></div><span class="keychip">G</span><span class="dur">3:55</span></div>
+  <div class="song"><span class="grip">&#8942;&#8942;</span><div class="n"><div class="t">Don't Stop Me Now</div><div class="s">Queen &middot; 156bpm</div></div><span class="keychip">F</span><span class="dur">3:30</span></div>
+</div>
+<div class="addbreak">+ Add a set break (drag songs across sets freely)</div>
+
+<div class="cp-label">Stage mode (tap Perform). Black, huge, screen never sleeps.</div>
+<div class="stage">
+  <div class="meta"><span class="pos">SET 1 &middot; 3 OF 5</span><span class="awake"><i></i>screen awake &middot; 21:42</span></div>
+  <div class="title">Valerie</div>
+  <div class="sub">The Zutons &middot; 108bpm &middot; 3:50</div>
+  <span class="keybig">Key: Bb</span>
+  <div class="lyr"><b>Bb</b>Well sometimes I go out by my<b>Cm</b>self<br><b>Bb</b>And I look across the <b>Cm</b>water<br><b>Eb</b>Why don't you <b>D7</b>come on over <b>Gm</b>Vale<b>F</b>rie</div>
+  <div class="next"><span>Next up</span><b>Mr Brightside &middot; Db &middot; 148bpm</b></div>
+  <div class="hint">swipe left for next song &middot; swipe right to go back &middot; tap title for full lyrics &middot; pinch for text size</div>
+</div>
+</body>
+</html>
