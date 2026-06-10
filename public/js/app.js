@@ -12848,6 +12848,21 @@ async function openSetlistDetail(setlistId) {
 }
 window.openSetlistDetail = openSetlistDetail;
 
+function songSecs(d) {
+  const n = Number(d) || 0;
+  if (!n) return 0;
+  // Mixed legacy data: the form captures minutes but seeded rows hold
+  // seconds. Nobody plays a 3-second or 200-minute song, so >20 = seconds.
+  return n > 20 ? n : n * 60;
+}
+function songLen(d) {
+  const s = songSecs(d);
+  if (!s) return '';
+  return Math.floor(s / 60) + ':' + String(Math.round(s % 60)).padStart(2, '0');
+}
+window.songSecs = songSecs;
+window.songLen = songLen;
+
 function _slMeta(sl) {
   const m = (sl.stage_meta && typeof sl.stage_meta === 'object') ? sl.stage_meta : {};
   m.breaks = Array.isArray(m.breaks) ? m.breaks : [];
@@ -12891,7 +12906,7 @@ function renderSetlistDetail() {
         <span class="sl-grip" data-idx="${i}" style="color:var(--text-3);font-size:15px;cursor:grab;letter-spacing:-2px;padding:6px 2px;touch-action:none;">&#8942;&#8942;</span>
         <div style="flex:1;min-width:0;" onclick="openSetlistSongOptions(${i})">
           <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.title)}</div>
-          <div style="font-size:11px;color:var(--text-2);">${escapeHtml([s.artist, s.duration ? s.duration + ' min' : ''].filter(Boolean).join(' \u00B7 '))}</div>
+          <div style="font-size:11px;color:var(--text-2);">${escapeHtml([s.artist, songLen(s.duration)].filter(Boolean).join(' \u00B7 '))}</div>
           ${note ? `<div style="font-size:10px;font-weight:700;color:var(--accent);margin-top:2px;">\u26A0 ${escapeHtml(note)}</div>` : ''}
         </div>
         ${s.key ? `<span style="font-size:10px;font-weight:800;color:var(--info);background:rgba(88,166,255,.12);border-radius:6px;padding:2px 7px;flex-shrink:0;">${escapeHtml(s.key)}</span>` : ''}
@@ -12903,7 +12918,7 @@ function renderSetlistDetail() {
   let listHtml = '';
   for (let si = 0; si < bounds.length - 1; si++) {
     const slice = ordered.slice(bounds[si], bounds[si + 1]);
-    const mins = slice.reduce((a, x) => a + (Number(x.duration) || 0), 0);
+    const mins = slice.reduce((a, x) => a + songSecs(x.duration), 0) / 60;
     if (bounds.length > 2 || si > 0) {
       listHtml += `
         <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 4px 5px;">
@@ -12916,7 +12931,7 @@ function renderSetlistDetail() {
       + `</div>`;
   }
 
-  const sumMins = ordered.reduce((s, x) => s + (Number(x.duration) || 0), 0);
+  const sumMins = ordered.reduce((s, x) => s + songSecs(x.duration), 0) / 60;
   body.innerHTML = `
     <div style="padding:0 16px 20px;">
       <div style="padding:14px 0 4px;">

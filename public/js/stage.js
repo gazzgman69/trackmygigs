@@ -177,8 +177,8 @@
     el.textContent = fmtClock(elapsed);
     // Amber overrun: elapsed beyond the whole set's planned minutes.
     const set = setOfIndex(S.index);
-    const planned = S.ordered.slice(set.start, set.end).reduce((a, x) => a + (Number(x.duration) || 0), 0);
-    el.style.color = planned && elapsed > planned * 60000 ? 'var(--accent, #F0A500)' : '#6E7681';
+    const planned = S.ordered.slice(set.start, set.end).reduce((a, x) => a + songSecs(x.duration), 0);
+    el.style.color = planned && elapsed > planned * 1000 ? 'var(--accent, #F0A500)' : '#6E7681';
   }
 
   function renderStage() {
@@ -218,7 +218,7 @@
       ${marker ? `<div style="margin:10px 16px 0;background:rgba(240,165,0,.14);border:1px solid rgba(240,165,0,.5);border-radius:10px;padding:9px 12px;font-size:${14 * fs}px;font-weight:800;color:var(--accent,#F0A500);flex-shrink:0;">📣 ${escapeHtml(marker.text)}</div>` : ''}
       <div style="padding:8px 16px 0;flex-shrink:0;">
         <div style="font-size:${30 * fs}px;font-weight:800;line-height:1.12;">${escapeHtml(song.title)}</div>
-        <div style="font-size:${15 * fs}px;color:#8B949E;margin-top:3px;">${escapeHtml([song.artist, bpm ? bpm + 'bpm' : '', song.duration ? song.duration + ' min' : ''].filter(Boolean).join(' · '))}${bpm ? '<span class="stg-pulse"></span>' : ''}</div>
+        <div style="font-size:${15 * fs}px;color:#8B949E;margin-top:3px;">${escapeHtml([song.artist, bpm ? bpm + 'bpm' : '', songLen(song.duration)].filter(Boolean).join(' · '))}${bpm ? '<span class="stg-pulse"></span>' : ''}</div>
         ${note ? `<div style="font-size:${14 * fs}px;font-weight:800;color:var(--accent,#F0A500);margin-top:6px;">⚠ ${escapeHtml(note)}</div>` : ''}
         <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
           ${keyShown ? `
@@ -353,7 +353,7 @@
     if (saved > 0) { S.scroll.speed = saved; }
     else {
       // Land the last line just before the song ends, with a 15s lead-out.
-      const secs = Math.max(60, (Number(song.duration) || 3.5) * 60 - 15);
+      const secs = Math.max(60, (songSecs(song.duration) || 210) - 15);
       const dist = Math.max(0, el.scrollHeight - el.clientHeight);
       S.scroll.speed = dist > 0 ? Math.max(4, dist / secs) : 12;
     }
