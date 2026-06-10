@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Gig Fee Splitter</title>
+<style>
+:root{--bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;--text:#E6EDF3;--text-2:#8B949E;--text-3:#6E7681;--accent:#F0A500;--accent-dim:rgba(240,165,0,.15);--success:#3FB950;--danger:#F85149;--info:#58A6FF;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;padding-bottom:60px;}
+.note{background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);margin:10px;padding:10px 12px;border-radius:10px;font-size:12px;color:var(--text-2);}
+.note strong{color:var(--accent);}
+header{padding:14px 16px 6px;}
+h1{font-size:18px;}
+.sub{font-size:12px;color:var(--text-2);margin-top:2px;}
+.prem{font-size:9px;font-weight:700;color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:2px 6px;text-transform:uppercase;margin-left:8px;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;margin:8px 16px;padding:12px 14px;}
+.kv{display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:13px;}
+.kv .k{color:var(--text-2);font-size:12px;}
+.kv .v{font-weight:700;}
+.kv input{background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:6px 8px;width:90px;text-align:right;}
+.hr{border-top:1px solid var(--border);margin:4px 0;}
+.pot{font-size:13px;}
+.pot b{color:var(--success);font-size:16px;}
+.mode{display:flex;gap:6px;margin:8px 0 2px;}
+.mode span{flex:1;text-align:center;border:1px solid var(--border);border-radius:8px;padding:7px;font-size:12px;color:var(--text-2);}
+.mode .on{background:var(--accent);border-color:var(--accent);color:#000;font-weight:700;}
+.member{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);}
+.member:last-child{border-bottom:none;}
+.av{width:30px;height:30px;border-radius:50%;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--text-2);flex-shrink:0;}
+.member .n{flex:1;font-size:13px;font-weight:600;}
+.member .n small{display:block;font-size:10px;color:var(--text-3);font-weight:400;}
+.amt{font-size:14px;font-weight:700;width:60px;text-align:right;}
+.paid{font-size:10px;font-weight:700;border-radius:8px;padding:4px 10px;flex-shrink:0;margin-left:8px;}
+.p1{background:var(--success);color:#000;}
+.p0{background:var(--surface);border:1px solid var(--border);color:var(--text-2);}
+.foot{font-size:10px;color:var(--text-3);text-align:center;margin:10px 16px;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="note"><strong>MOCKUP — not wired.</strong> Fee splitter, a section on the gig detail right under Lineup (so it is premium, like lineup). Fee in, costs off the top, split the pot equally or with a leader cut, tick people off as you pay them. Members come from the gig's lineup. Numbers are yours to keep straight, nothing is sent to anyone.</div>
+
+<header>
+  <h1>Who gets what &middot; The Vents, Sat 20 June<span class="prem">Premium</span></h1>
+  <div class="sub">Fee &pound;480 &middot; lineup of 4</div>
+</header>
+
+<div class="card">
+  <div class="kv"><span class="k">Gig fee</span><span class="v">&pound;480</span></div>
+  <div class="kv"><span class="k">Costs off the top (PA hire, fuel)</span><input value="£60"></div>
+  <div class="hr"></div>
+  <div class="kv pot"><span class="k">Pot to split</span><b>&pound;420</b></div>
+  <div class="mode"><span class="on">Equal</span><span>Leader cut</span><span>Custom</span></div>
+</div>
+
+<div class="card">
+  <div class="member"><span class="av">G</span><div class="n">Gareth (you)<small>keys + sax · leader</small></div><span class="amt">&pound;105</span><span class="paid p1">Paid &#10003;</span></div>
+  <div class="member"><span class="av">S</span><div class="n">Stu<small>drums</small></div><span class="amt">&pound;105</span><span class="paid p1">Paid &#10003;</span></div>
+  <div class="member"><span class="av">L</span><div class="n">Leanne<small>vocals</small></div><span class="amt">&pound;105</span><span class="paid p0">Mark paid</span></div>
+  <div class="member"><span class="av">D</span><div class="n">Doz<small>bass</small></div><span class="amt">&pound;105</span><span class="paid p0">Mark paid</span></div>
+</div>
+
+<div class="foot">Leader cut mode: set your cut (say &pound;60 for the admin) and the rest splits equally. Custom: type each amount, the screen warns if it doesn't add up to the pot. Unpaid members show as a quiet count on the gig card until everyone's settled.</div>
+</body>
+</html>

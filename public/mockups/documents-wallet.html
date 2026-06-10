@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Documents Wallet</title>
+<style>
+:root{--bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;--text:#E6EDF3;--text-2:#8B949E;--text-3:#6E7681;--accent:#F0A500;--accent-dim:rgba(240,165,0,.15);--success:#3FB950;--danger:#F85149;--info:#58A6FF;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;padding-bottom:60px;}
+.note{background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);margin:10px;padding:10px 12px;border-radius:10px;font-size:12px;color:var(--text-2);}
+.note strong{color:var(--accent);}
+header{padding:14px 16px 6px;}
+.back{font-size:13px;color:var(--accent);margin-bottom:8px;}
+h1{font-size:22px;}
+.sub{font-size:12px;color:var(--text-2);margin-top:2px;line-height:1.5;}
+.doc{background:var(--card);border:1px solid var(--border);border-radius:14px;margin:10px 16px;padding:14px;}
+.doc .top{display:flex;align-items:center;gap:12px;}
+.doc .ico{font-size:22px;}
+.doc .t{font-size:14px;font-weight:700;}
+.doc .s{font-size:11px;color:var(--text-2);margin-top:1px;}
+.exp{font-size:10px;font-weight:800;border-radius:8px;padding:2px 8px;margin-left:auto;flex-shrink:0;}
+.ok{color:var(--success);background:rgba(63,185,80,.14);border:1px solid rgba(63,185,80,.4);}
+.soon{color:var(--accent);background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);}
+.dead{color:var(--danger);background:rgba(248,81,73,.14);border:1px solid rgba(248,81,73,.4);}
+.btns{display:flex;gap:8px;margin-top:12px;}
+.btns span{flex:1;border-radius:10px;padding:9px 0;font-size:12px;font-weight:700;text-align:center;}
+.b1{background:var(--accent);color:#000;}
+.b2{background:var(--surface);border:1px solid var(--border);color:var(--text-2);}
+.add{display:block;text-align:center;background:var(--surface);border:1px dashed var(--border);border-radius:12px;margin:10px 16px;padding:13px;font-size:13px;color:var(--accent);font-weight:600;}
+.homewrap{margin:18px 16px 6px;}
+.cp-label{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}
+.homecard{background:var(--card);border:1px solid rgba(240,165,0,.4);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;}
+.shared{margin:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;}
+.bubble{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;}
+.bubble .bt{font-size:13px;font-weight:700;}
+.bubble .line{font-size:12px;color:var(--text-2);margin-top:4px;line-height:1.5;}
+.bubble .dl{display:inline-block;margin-top:8px;background:var(--accent);color:#000;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;}
+</style>
+</head>
+<body>
+<div class="note"><strong>MOCKUP — not wired.</strong> Documents wallet, lives in Settings/Profile. Store the boring-but-vital papers once (photo or PDF, same storage as receipt photos), set the expiry, get reminded before they lapse, and send a venue a link in one tap. The link is public but unguessable, shows only that one document, and can be revoked.</div>
+
+<header>
+  <div class="back">&lsaquo; Back</div>
+  <h1>Documents</h1>
+  <div class="sub">Public liability, PAT, anything venues and agents keep asking for.</div>
+</header>
+
+<div class="doc">
+  <div class="top"><span class="ico">&#128737;&#65039;</span><div><div class="t">Public Liability Insurance</div><div class="s">PDF &middot; added Jan 2026 &middot; &pound;10m cover</div></div><span class="exp ok">Valid &middot; Jan 2027</span></div>
+  <div class="btns"><span class="b1">Send link</span><span class="b2">View</span><span class="b2">Replace</span></div>
+</div>
+
+<div class="doc">
+  <div class="top"><span class="ico">&#9889;</span><div><div class="t">PAT Certificate</div><div class="s">Photo &middot; added Aug 2025</div></div><span class="exp soon">30 days left</span></div>
+  <div class="btns"><span class="b1">Send link</span><span class="b2">View</span><span class="b2">Replace</span></div>
+</div>
+
+<div class="doc">
+  <div class="top"><span class="ico">&#128196;</span><div><div class="t">Risk Assessment</div><div class="s">PDF &middot; added Mar 2025</div></div><span class="exp dead">Expired</span></div>
+  <div class="btns"><span class="b1">Send link</span><span class="b2">View</span><span class="b2">Replace</span></div>
+</div>
+
+<a class="add">+ Add a document (photo or PDF, expiry optional)</a>
+
+<div class="homewrap">
+  <div class="cp-label">Reminder on Home when something is close to lapsing</div>
+  <div class="homecard"><span style="font-size:20px;">&#9203;</span><div style="flex:1;"><div style="font-size:13px;font-weight:600;">PAT certificate expires in 30 days</div><div style="font-size:11px;color:var(--text-2);margin-top:1px;">Venues will ask. Tap to replace it when renewed.</div></div></div>
+</div>
+
+<div class="shared">
+  <div class="cp-label">What the venue sees when you send a link</div>
+  <div class="bubble">
+    <div class="bt">Gareth Gwyn &middot; Public Liability Insurance</div>
+    <div class="line">Valid until 14 Jan 2027 &middot; shared via TrackMyGigs &middot; link can be revoked by the owner at any time.</div>
+    <span class="dl">Download PDF</span>
+  </div>
+</div>
+</body>
+</html>

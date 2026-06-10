@@ -1,3 +1,35 @@
+# Musician-life wave 2 (2026-06-10, "lets add 4-10")
+
+Mockups first for the four new screens, then build in waves.
+
+## Mockup round (pending Gareth sign-off)
+
+- [ ] Documents wallet mockup: store PLI/PAT/insurance docs (BYTEA, like
+      receipt photos), expiry dates with Home reminder chip, one-tap share
+      link a venue can open without logging in
+- [ ] Band availability poll mockup: pick dates, share into a chat thread,
+      participants tap yes/no per date, live tally; poll state lives
+      server-side (not a snapshot) so votes update
+- [ ] Gig fee splitter mockup: fee minus costs, equal or custom split with
+      optional leader cut, mark-paid per member; rides on lineup (premium)
+- [ ] Post-gig follow-up mockup: morning-after prompt on past gigs with a
+      client contact; testimonial ask via public link; submissions land as
+      pending and feed EPK testimonials after approval
+- [ ] Inline proposals (no new screens): weather on gig card + pack within
+      48h (Open-Meteo via server proxy, venue lat/lng already stored); kit
+      checklist templates on the existing prep checklist (save as template
+      by gig type, one-tap apply); unpaid invoice chase = overdue list in
+      the invoice panel + one-tap prefilled chase email and "chased" stamp
+      (manual send, consistent with nothing-auto-sends)
+
+## Build waves (after sign-off)
+
+- [ ] Wave A: documents wallet (+ expiry chip)
+- [ ] Wave B: weather + kit templates + invoice chase (small batch)
+- [ ] Wave C: fee splitter (premium, on lineup)
+- [ ] Wave D: availability poll (chat attachment kind with live state)
+- [ ] Wave E: post-gig follow-up + public testimonial submit + EPK approval
+
 # Musician-life wave (2026-06-10, mockups approved "go ahead")
 
 Build order agreed: venue memory -> gig pack -> rebooking radar.

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Band Availability Poll</title>
+<style>
+:root{--bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;--text:#E6EDF3;--text-2:#8B949E;--text-3:#6E7681;--accent:#F0A500;--accent-dim:rgba(240,165,0,.15);--success:#3FB950;--danger:#F85149;--info:#58A6FF;--dep:#A78BFA;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;padding-bottom:60px;}
+.note{background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);margin:10px;padding:10px 12px;border-radius:10px;font-size:12px;color:var(--text-2);}
+.note strong{color:var(--accent);}
+.cp-label{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.8px;margin:16px 16px 8px;}
+.compose{background:var(--card);border:1px solid var(--border);border-radius:14px;margin:0 16px;padding:14px;}
+.compose .t{font-size:14px;font-weight:700;margin-bottom:10px;}
+.field{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;color:var(--text);margin-bottom:8px;}
+.dates{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
+.datechip{background:var(--surface);border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;}
+.datechip.add{border-style:dashed;border-color:var(--border);color:var(--text-3);}
+.send{display:block;text-align:center;background:var(--accent);color:#000;border-radius:10px;padding:12px;font-size:13px;font-weight:700;margin-top:4px;}
+.bubblewrap{margin:0 16px;}
+.bubble{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;}
+.bubble .bt{font-size:10px;font-weight:700;color:var(--dep);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+.bubble .q{font-size:14px;font-weight:700;}
+.row{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border);}
+.row:last-child{border-bottom:none;}
+.row .d{font-size:13px;font-weight:600;width:84px;flex-shrink:0;}
+.tally{flex:1;display:flex;gap:4px;align-items:center;}
+.pip{width:22px;height:22px;border-radius:50%;background:var(--surface);border:1px solid var(--border);font-size:10px;display:flex;align-items:center;justify-content:center;color:var(--text-2);font-weight:700;}
+.pip.y{background:rgba(63,185,80,.2);border-color:var(--success);color:var(--success);}
+.pip.n{background:rgba(248,81,73,.14);border-color:var(--danger);color:var(--danger);}
+.me{display:flex;gap:6px;flex-shrink:0;}
+.me span{border:1px solid var(--border);border-radius:8px;padding:4px 10px;font-size:12px;color:var(--text-2);}
+.me .on{background:var(--success);border-color:var(--success);color:#000;font-weight:700;}
+.win{margin-top:10px;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.4);border-radius:10px;padding:9px 12px;font-size:12px;color:var(--text-2);}
+.win b{color:var(--success);}
+.winbtn{display:inline-block;margin-top:6px;background:var(--success);color:#000;border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;}
+</style>
+</head>
+<body>
+<div class="note"><strong>MOCKUP — not wired.</strong> Availability poll, started from any group chat's attach menu (next to gig/contact/setlist). Pick up to 6 dates, everyone in the thread taps Can / Can't per date, and the tally updates live in the chat bubble. When a date wins, one tap turns it into a pencilled gig. Polls are live objects, not snapshots, so votes always show current state.</div>
+
+<div class="cp-label">Step 1 — compose (from the chat attach menu)</div>
+<div class="compose">
+  <div class="t">Ask the band: which dates work?</div>
+  <div class="field">Rehearsal for the Heyford set</div>
+  <div class="dates">
+    <span class="datechip">Tue 23 Jun</span>
+    <span class="datechip">Thu 25 Jun</span>
+    <span class="datechip">Sun 28 Jun</span>
+    <span class="datechip add">+ Add date</span>
+  </div>
+  <a class="send">Send poll to The Vents group</a>
+</div>
+
+<div class="cp-label">Step 2 — what everyone sees in the chat (live)</div>
+<div class="bubblewrap">
+  <div class="bubble">
+    <div class="bt">&#128499;&#65039; Availability poll</div>
+    <div class="q">Rehearsal for the Heyford set</div>
+    <div class="row">
+      <span class="d">Tue 23 Jun</span>
+      <div class="tally"><span class="pip y">G</span><span class="pip y">S</span><span class="pip n">L</span><span class="pip">D</span></div>
+      <div class="me"><span class="on">Can</span><span>Can't</span></div>
+    </div>
+    <div class="row">
+      <span class="d">Thu 25 Jun</span>
+      <div class="tally"><span class="pip y">G</span><span class="pip y">S</span><span class="pip y">L</span><span class="pip y">D</span></div>
+      <div class="me"><span class="on">Can</span><span>Can't</span></div>
+    </div>
+    <div class="row">
+      <span class="d">Sun 28 Jun</span>
+      <div class="tally"><span class="pip n">G</span><span class="pip">S</span><span class="pip">L</span><span class="pip">D</span></div>
+      <div class="me"><span>Can</span><span class="on">Can't</span></div>
+    </div>
+    <div class="win"><b>Thu 25 Jun works for all 4.</b> Poll owner sees:<br><span class="winbtn">Pencil it in the diary</span></div>
+  </div>
+</div>
+</body>
+</html>
