@@ -1613,7 +1613,10 @@ router.patch('/user/profile', async (req, res) => {
       const trimmed = String(photo_url || '').trim();
       if (!trimmed) {
         photoUrlValue = null;
-      } else if (/^https?:\/\//i.test(trimmed)) {
+      } else if (/^https?:\/\//i.test(trimmed) || /^\/pp\/[0-9a-f-]{36}(\?v=\d+)?$/i.test(trimmed)) {
+        // Absolute http(s), or the app's own uploaded-photo path - the
+        // upload endpoint writes /pp/<uuid>?v=<ts> into photo_url, and the
+        // profile form echoes it back on save.
         photoUrlValue = trimmed.slice(0, 500);
       } else {
         return res.status(400).json({ error: 'Photo URL must start with http:// or https://', field: 'photo_url' });
