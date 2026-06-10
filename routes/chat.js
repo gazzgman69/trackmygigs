@@ -26,7 +26,9 @@ async function buildAttachmentSnapshot(attachment, actorId) {
     const r = await db.query(
       `SELECT id, band_name, venue_name, venue_address, venue_postcode,
               date, start_time, end_time, load_in_time, fee, dress_code,
-              notes, status, gig_type, client_name, rate_per_hour
+              notes, status, gig_type, client_name, rate_per_hour,
+              soundcheck_time, parking_info, set_times,
+              gig_leader_name, gig_leader_phone
          FROM gigs
         WHERE id = $1 AND user_id = $2
         LIMIT 1`,
@@ -47,6 +49,11 @@ async function buildAttachmentSnapshot(attachment, actorId) {
         start_time: g.start_time || null,
         end_time: g.end_time || null,
         load_in_time: g.load_in_time || null,
+        soundcheck_time: g.soundcheck_time || null,
+        parking_info: g.parking_info || null,
+        set_times: Array.isArray(g.set_times) ? g.set_times : null,
+        gig_leader_name: g.gig_leader_name || null,
+        gig_leader_phone: g.gig_leader_phone || null,
         fee: g.fee != null ? Number(g.fee) : null,
         dress_code: g.dress_code || null,
         notes: g.notes || null,

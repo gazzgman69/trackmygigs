@@ -9587,11 +9587,15 @@ async function openGigDetail(gigId) {
     </div>
     <!-- Gig Pack -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
-      <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">\uD83C\uDF92 Gig Pack</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">\uD83C\uDF92 Gig Pack</div>
+        <span onclick="openGigPack('${escapeAttr(gig.id)}')" style="font-size:11px;color:var(--accent);font-weight:700;cursor:pointer;">Open day sheet \u203A</span>
+      </div>
       ${getGigType(gig) ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Type</span><span style="color:var(--text);font-weight:500;">${escapeHtml(getGigType(gig))}</span></div>` : ''}
       ${gig.dress_code ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Dress code</span><span style="color:var(--text);font-weight:500;">${escapeHtml(gig.dress_code)}</span></div>` : ''}
       ${gig.parking_info ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Parking</span><span style="color:var(--text);font-weight:500;text-align:right;max-width:60%;">${escapeHtml(gig.parking_info)}</span></div>` : ''}
       ${gig.load_in_time ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Load-in</span><span style="color:var(--text);font-weight:500;">${formatTime(gig.load_in_time)}</span></div>` : ''}
+      ${gig.soundcheck_time ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px;"><span style="color:var(--text-2);">Soundcheck</span><span style="color:var(--text);font-weight:500;">${formatTime(gig.soundcheck_time)}</span></div>` : ''}
       ${(gig.gig_leader_name || gig.gig_leader_phone || gig.gig_leader_email) ? (() => {
         const phoneTel = (gig.gig_leader_phone || '').replace(/\s+/g, '');
         const valueParts = [];
@@ -14966,6 +14970,9 @@ function renderMessageAttachment(att, isMe, msgId) {
       ${fee ? `<div style="font-size:12px;color:${subColor};margin-top:2px;font-weight:600;">${escapeHtml(fee)}</div>` : ''}
       ${dress ? `<div style="font-size:11px;color:${subColor};margin-top:4px;"><strong>Dress:</strong> ${escapeHtml(dress.length > 60 ? dress.slice(0, 60) + '…' : dress)}</div>` : ''}
       ${loadInTime ? `<div style="font-size:11px;color:${subColor};margin-top:2px;"><strong>Load-in:</strong> ${escapeHtml(loadInTime)}</div>` : ''}
+      ${s.soundcheck_time ? `<div style="font-size:11px;color:${subColor};margin-top:2px;"><strong>Soundcheck:</strong> ${escapeHtml(String(s.soundcheck_time).slice(0, 5))}</div>` : ''}
+      ${Array.isArray(s.set_times) && s.set_times.length ? `<div style="font-size:11px;color:${subColor};margin-top:2px;"><strong>Sets:</strong> ${escapeHtml(s.set_times.map(x => (x.name ? x.name + ' ' : '') + String(x.start || '').slice(0, 5) + (x.end ? '\u2013' + String(x.end).slice(0, 5) : '')).join(', '))}</div>` : ''}
+      ${s.parking_info ? `<div style="font-size:11px;color:${subColor};margin-top:2px;"><strong>Parking:</strong> ${escapeHtml(String(s.parking_info).length > 60 ? String(s.parking_info).slice(0, 60) + '\u2026' : String(s.parking_info))}</div>` : ''}
       ${notesPreview ? `<div style="font-size:11px;color:${subColor};margin-top:2px;"><strong>Notes:</strong> ${escapeHtml(notesPreview.length > 80 ? notesPreview.slice(0, 80) + '…' : notesPreview)}</div>` : ''}
       <div style="font-size:11px;color:${ctaColor};margin-top:6px;font-weight:600;">View gig &rsaquo;</div>
     </div>`;
@@ -18110,6 +18117,202 @@ async function deleteVenueFact(factId) {
     showToast('Could not delete that.');
   }
 }
+
+// ── Gig Pack (day sheet) ─────────────────────────────────────────────────────
+
+async function openGigPack(gigId) {
+  const body = document.getElementById('gigPackBody');
+  if (!body) return;
+  let gig = (window._cachedGigs || []).find(g => g && g.id === gigId);
+  if (!gig) {
+    try {
+      const resp = await fetch('/api/gigs/' + encodeURIComponent(gigId));
+      if (resp.ok) gig = await resp.json();
+    } catch (err) { /* fall through to the error state */ }
+  }
+  if (!gig || !gig.id) {
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text-2);">Could not load this gig.</div>';
+    openPanel('panel-gig-pack');
+    return;
+  }
+  window._gigPackGig = gig;
+  renderGigPack(gig);
+  openPanel('panel-gig-pack');
+  // Venue heads-up loads after first paint so the pack opens instantly.
+  if (gig.venue_name) {
+    fetch('/api/venues/detail?name=' + encodeURIComponent(gig.venue_name))
+      .then(r => r.ok ? r.json() : null)
+      .then(v => {
+        const slot = document.getElementById('gigPackHeadsUp');
+        if (!slot || !v || !v.facts || !v.facts.length) return;
+        const line = v.facts.slice(0, 3).map(f => {
+          const meta = VENUE_FACT_META[f.kind] || ['', f.kind];
+          return meta[1] + ': ' + f.value + (f.disputed ? ' (disputed)' : '');
+        }).join(' \u00B7 ');
+        slot.innerHTML = '<b style="color:var(--text);">Venue heads-up:</b> ' + escapeHtml(line) + ' <span onclick="openVenueMemory(\'' + escapeAttr(gig.venue_name) + '\')" style="color:var(--accent);font-weight:600;cursor:pointer;">More \u203A</span>';
+        slot.style.display = 'block';
+      })
+      .catch(() => {});
+  }
+}
+
+function _packTime(t) { return t ? String(t).slice(0, 5) : ''; }
+
+function renderGigPack(gig) {
+  const body = document.getElementById('gigPackBody');
+  const title = document.getElementById('gigPackTitle');
+  if (!body) return;
+  if (title) title.textContent = 'Gig Pack';
+  const dateLine = gig.date ? new Date(gig.date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) : '';
+
+  // Timeline. Leave-by uses the earliest known commitment and the same
+  // travel/load preferences as the calendar list rows.
+  const rows = [];
+  const TRAVEL_MIN = Number(localStorage.getItem('tmg_travel_mins')) || 60;
+  const LOAD_MIN = Number(localStorage.getItem('tmg_load_mins')) || 30;
+  const earliest = gig.load_in_time || gig.soundcheck_time || gig.start_time;
+  if (earliest && parseFloat(gig.mileage_miles) > 0) {
+    const [h, m] = String(earliest).split(':').map(Number);
+    let mins = h * 60 + m - TRAVEL_MIN - LOAD_MIN;
+    if (mins < 0) mins = 0;
+    const leave = String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
+    rows.push({ t: leave, label: 'Leave home', d: Math.round(gig.mileage_miles) + ' mi \u00B7 allow ' + TRAVEL_MIN + ' min drive + ' + LOAD_MIN + ' min load', cls: 'leave' });
+  }
+  if (gig.load_in_time) rows.push({ t: _packTime(gig.load_in_time), label: 'Load-in', d: '' });
+  if (gig.soundcheck_time) rows.push({ t: _packTime(gig.soundcheck_time), label: 'Soundcheck', d: '' });
+  const sets = Array.isArray(gig.set_times) ? gig.set_times.filter(s => s && s.start) : [];
+  if (sets.length) {
+    sets.forEach((s, i) => rows.push({ t: _packTime(s.start), label: s.name || ('Set ' + (i + 1)), d: s.end ? 'until ' + _packTime(s.end) : '', cls: 'hot' }));
+  } else if (gig.start_time) {
+    rows.push({ t: _packTime(gig.start_time), label: 'On stage', d: gig.end_time ? 'until ' + _packTime(gig.end_time) : '', cls: 'hot' });
+  }
+  const timeline = rows.length ? rows.map(r => `
+    <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:15px;font-weight:800;width:52px;flex-shrink:0;color:${r.cls === 'hot' ? 'var(--accent)' : r.cls === 'leave' ? 'var(--info)' : 'var(--text)'};">${r.t}</span>
+      <div><div style="font-size:13px;font-weight:600;">${escapeHtml(r.label)}</div>${r.d ? `<div style="font-size:11px;color:var(--text-2);margin-top:1px;">${escapeHtml(r.d)}</div>` : ''}</div>
+    </div>`).join('')
+    : '<div style="font-size:12px;color:var(--text-3);padding:10px 0;">No times yet. Add them below and the timeline builds itself.</div>';
+
+  const kv = (k, v) => v ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);font-size:12px;">${k}</span><span style="font-weight:600;text-align:right;max-width:62%;">${v}</span></div>` : '';
+  const leaderBits = [];
+  if (gig.gig_leader_name) leaderBits.push(escapeHtml(gig.gig_leader_name));
+  if (gig.gig_leader_phone) leaderBits.push(`<a href="tel:${escapeAttr(String(gig.gig_leader_phone).replace(/\s+/g, ''))}" style="color:var(--info);text-decoration:none;">${escapeHtml(gig.gig_leader_phone)}</a>`);
+  const fee = parseFloat(gig.fee) > 0 ? `<span style="color:var(--success);">\u00A3${Math.round(parseFloat(gig.fee))}</span>` : '';
+
+  body.innerHTML = `
+    <div style="padding:14px 16px 2px;">
+      <div style="font-size:17px;font-weight:700;">${escapeHtml(gig.band_name || 'Gig')}${gig.venue_name ? ' \u00B7 ' + escapeHtml(gig.venue_name) : ''}</div>
+      <div style="font-size:12px;color:var(--text-2);margin-top:2px;">${escapeHtml(dateLine)}</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;margin:12px 16px 6px;padding:2px 14px;">${timeline}</div>
+
+    <div style="padding:12px 16px 4px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;">Essentials</div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;margin:6px 16px;padding:4px 14px;">
+      ${kv('Contact', leaderBits.join(' \u00B7 '))}
+      ${kv('Address', gig.venue_address ? `<a onclick="openDirections('${escapeHtml(gig.venue_address).replace(/'/g, '&#39;')}')" style="color:var(--info);cursor:pointer;">Open in Maps \u203A</a>` : '')}
+      ${kv('Parking', gig.parking_info ? escapeHtml(gig.parking_info) : '')}
+      ${kv('Dress code', gig.dress_code ? escapeHtml(gig.dress_code) : '')}
+      ${kv('Fee', fee)}
+      ${kv('Setlist', gig.setlist_id ? `<a onclick="openSetlistDetail('${escapeAttr(gig.setlist_id)}')" style="color:var(--info);cursor:pointer;">Open \u203A</a>` : '')}
+      <div id="gigPackHeadsUp" style="display:none;font-size:11px;color:var(--text-2);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin:8px 0;line-height:1.5;"></div>
+    </div>
+
+    <div style="padding:12px 16px 4px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;">Times &amp; parking</div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;margin:6px 16px;padding:12px 14px;">
+      <div style="display:flex;gap:8px;">
+        <div style="flex:1;"><div style="font-size:10px;color:var(--text-2);margin-bottom:3px;">Load-in</div><input type="time" id="packLoadIn" value="${_packTime(gig.load_in_time)}" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:8px;"></div>
+        <div style="flex:1;"><div style="font-size:10px;color:var(--text-2);margin-bottom:3px;">Soundcheck</div><input type="time" id="packSoundcheck" value="${_packTime(gig.soundcheck_time)}" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:8px;"></div>
+      </div>
+      <div style="font-size:10px;color:var(--text-2);margin:8px 0 3px;">Parking note</div>
+      <input type="text" id="packParking" maxlength="200" value="${escapeHtml(gig.parking_info || '')}" placeholder="e.g. behind the venue, two spaces by the fire door" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:8px;">
+      <button onclick="saveGigPackFields()" style="margin-top:10px;background:var(--accent);color:#000;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;">Save</button>
+      <span id="gigPackSaved" style="font-size:11px;color:var(--success);margin-left:8px;display:none;">Saved</span>
+    </div>
+
+    <div style="margin:14px 16px 30px;">
+      <button onclick="shareGigPackToChat()" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:12px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;">Share pack to a chat</button>
+      <div style="font-size:10px;color:var(--text-3);text-align:center;margin-top:6px;">Sends a card with the times, parking and dress code. It is a snapshot, so re-share if anything big changes.</div>
+    </div>`;
+}
+
+async function saveGigPackFields() {
+  const gig = window._gigPackGig;
+  if (!gig) return;
+  const loadIn = document.getElementById('packLoadIn');
+  const sound = document.getElementById('packSoundcheck');
+  const parking = document.getElementById('packParking');
+  try {
+    const resp = await fetch('/api/gigs/' + encodeURIComponent(gig.id), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        load_in_time: loadIn && loadIn.value ? loadIn.value : undefined,
+        soundcheck_time: sound && sound.value ? sound.value : undefined,
+        parking_info: parking ? parking.value : undefined,
+      }),
+    });
+    if (!resp.ok) throw new Error();
+    const updated = await resp.json();
+    window._gigPackGig = updated;
+    const idx = (window._cachedGigs || []).findIndex(g => g && g.id === updated.id);
+    if (idx >= 0) window._cachedGigs[idx] = updated;
+    renderGigPack(updated);
+    const saved = document.getElementById('gigPackSaved');
+    if (saved) { saved.style.display = 'inline'; setTimeout(() => { saved.style.display = 'none'; }, 2000); }
+  } catch (err) {
+    showToast('Could not save. Try again.');
+  }
+}
+
+async function shareGigPackToChat() {
+  const gig = window._gigPackGig;
+  if (!gig) return;
+  let threads = [];
+  try {
+    const resp = await fetch('/api/chat/threads');
+    if (resp.ok) threads = await resp.json();
+  } catch (err) { /* empty list path below */ }
+  const existing = document.getElementById('gigPackShareSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'gigPackShareSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  const rows = (threads || []).slice(0, 30).map(t => {
+    const label = t.name || t.band_name || t.other_name || t.title || 'Chat';
+    return `<div onclick="sendGigPackToThread('${escapeAttr(t.id)}')" style="padding:12px 4px;border-bottom:1px solid var(--border);font-size:14px;cursor:pointer;">${escapeHtml(label)}</div>`;
+  }).join('');
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;max-height:70vh;overflow-y:auto;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+    + '<div style="font-size:14px;font-weight:700;text-align:center;margin-bottom:10px;">Share the pack to&hellip;</div>'
+    + (rows || '<div style="font-size:12px;color:var(--text-3);text-align:center;padding:14px;">No chats yet. Start one from Network first.</div>')
+    + '<button onclick="document.getElementById(\'gigPackShareSheet\').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:12px;font-size:13px;cursor:pointer;margin-top:6px;">Cancel</button>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) sheet.remove(); });
+  document.body.appendChild(sheet);
+}
+
+async function sendGigPackToThread(threadId) {
+  const gig = window._gigPackGig;
+  const sheet = document.getElementById('gigPackShareSheet');
+  if (sheet) sheet.remove();
+  if (!gig || !threadId) return;
+  try {
+    const resp = await fetch('/api/chat/threads/' + encodeURIComponent(threadId) + '/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: '', attachment: { kind: 'gig', gig_id: gig.id } }),
+    });
+    if (!resp.ok) throw new Error();
+    showToast('Pack shared.');
+  } catch (err) {
+    showToast('Could not share. Try again.');
+  }
+}
+
+window.openGigPack = openGigPack;
+window.saveGigPackFields = saveGigPackFields;
+window.shareGigPackToChat = shareGigPackToChat;
+window.sendGigPackToThread = sendGigPackToThread;
 
 window.openVenueMemory = openVenueMemory;
 window.saveVenueNotes = saveVenueNotes;

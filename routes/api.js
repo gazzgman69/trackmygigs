@@ -484,7 +484,7 @@ router.get('/gigs/:id', async (req, res) => {
 
 router.patch('/gigs/:id', async (req, res) => {
   try {
-    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, gig_leader_name, gig_leader_phone, gig_leader_email, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode } = req.body;
+    const { band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, checklist, gig_type, details_complete, set_times, parking_info, gig_leader_name, gig_leader_phone, gig_leader_email, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode, soundcheck_time } = req.body;
     // Teaching: recompute fee from rate if rate changed and fee wasn't sent
     // explicitly. We only substitute when the caller didn't pass a fee, so an
     // explicit £0 fee still wins (cancellation credits etc.).
@@ -533,12 +533,13 @@ router.patch('/gigs/:id', async (req, res) => {
         venue_postcode = COALESCE($28, venue_postcode),
         venue_lat = COALESCE($29, venue_lat),
         venue_lng = COALESCE($30, venue_lng),
+        soundcheck_time = COALESCE($31, soundcheck_time),
         -- 2026-04-23: any user-initiated PATCH flips tmg_edited so sync-back
         -- to Google starts pushing changes. Imported-but-never-touched gigs
         -- stay read-only on the Google side until this flag flips.
         tmg_edited = TRUE
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, gig_leader_name || null, gig_leader_phone || null, gig_leader_email || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, gig_leader_name || null, gig_leader_phone || null, gig_leader_email || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng, soundcheck_time || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     const gig = result.rows[0];
