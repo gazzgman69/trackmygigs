@@ -743,10 +743,15 @@ router.post('/delete-account', async (req, res) => {
       );
       const tables = new Set(existsRes.rows.map(r => r.tablename));
       await client.query('BEGIN');
-      const run = (sql, params) => {
+      const run = async (sql, params) => {
         const m = sql.match(/(?:FROM|UPDATE)\s+([a-z_]+)/i);
-        if (m && !tables.has(m[1])) return Promise.resolve();
-        return client.query(sql, params);
+        if (m && !tables.has(m[1])) return;
+        try {
+          return await client.query(sql, params);
+        } catch (e) {
+          e.message = e.message + ' [stmt: ' + sql.replace(/\s+/g, ' ').slice(0, 80) + ']';
+          throw e;
+        }
       };
       await run('DELETE FROM poll_votes WHERE user_id = $1', [userId]);
       await run('DELETE FROM polls WHERE created_by = $1', [userId]);
