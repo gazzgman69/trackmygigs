@@ -11441,13 +11441,21 @@ function buildRateCardEditor(profile) {
         <textarea id="rateNotes" rows="2" placeholder="e.g. Rates include PA and lights. Travel outside 30 miles quoted separately." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;font-family:inherit;">${escapeHtml(p.rate_notes || '')}</textarea>
       </div>
 
-      <button onclick="saveRateCard()" class="pill-g" style="width:100%;">Save rate card</button>
+      <button onclick="saveProfileAndRates()" class="pill-g" style="width:100%;">Save all changes</button>
     </div>
   `;
 }
 window.buildRateCardEditor = buildRateCardEditor;
 
-async function saveRateCard() {
+async function saveProfileAndRates() {
+  // The bottom of a long edit form: saving only the rate card from here
+  // confused Gareth (rightly). Both buttons now save the whole form.
+  await saveRateCard(true);
+  if (typeof saveProfile === 'function') await saveProfile();
+}
+window.saveProfileAndRates = saveProfileAndRates;
+
+async function saveRateCard(quiet) {
   const rate_standard = document.getElementById('rateStandard')?.value?.trim();
   const rate_premium = document.getElementById('ratePremium')?.value?.trim();
   const rate_dep = document.getElementById('rateDep')?.value?.trim();
@@ -11469,7 +11477,7 @@ async function saveRateCard() {
     const updated = await res.json();
     window._cachedProfile = updated;
     window._currentUser = { ...window._currentUser, ...updated };
-    showToast('Rate card saved');
+    if (!quiet) showToast('Rate card saved');
   } catch (err) {
     console.error('Save rate card error:', err);
     showToast('Failed to save rate card');
