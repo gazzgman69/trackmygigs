@@ -454,9 +454,12 @@ function updateAppHeader() {
   const name = window._currentUser?.display_name || window._currentUser?.name || 'Guest';
   const initial = (name || 'G')[0].toUpperCase();
   const hour = new Date().getHours();
-  let greeting = 'Good morning';
-  if (hour >= 12 && hour < 18) greeting = 'Good afternoon';
-  if (hour >= 18) greeting = 'Good evening';
+  // 'Good evening, <name>' cannot share a phone-width line with the full
+  // name and three header icons; the shorter form keeps the size Gareth
+  // likes and the whole name visible.
+  let greeting = 'Morning';
+  if (hour >= 12 && hour < 18) greeting = 'Afternoon';
+  if (hour >= 18) greeting = 'Evening';
 
   const avatarEl = document.getElementById('userAvatar');
   if (avatarEl) avatarEl.textContent = initial;
