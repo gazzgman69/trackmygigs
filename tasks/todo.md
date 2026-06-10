@@ -1,3 +1,20 @@
+# Google pin three-choice tap (2026-06-10, approved "yeh build it")
+
+Tapping a From-Google row offers Import as gig / Mark day as busy / Ignore,
+so personal Google events can count as busy without becoming gigs.
+
+- [ ] server.js migration: blocked_dates.source_event_id TEXT (links a block to
+      the original Google event WITHOUT touching google_event_id, so unblocking
+      can never delete the user's real Google event)
+- [ ] POST /api/blocked-dates accepts source_event_id; skips the Google
+      "Unavailable" push for those rows (the original event already marks it)
+- [ ] GET /api/calendar/pins filters out events claimed by source_event_id
+      (pin disappears once marked busy)
+- [ ] Client: openGooglePinSheet(pinId) with Import as gig (existing
+      /api/calendar/import), Mark day as busy, Ignore + a See-all-imports link
+- [ ] List view pin rows route to the new sheet instead of openGigNudge()
+- [ ] Deploy, verify live on the harmless "Lock up shuts" event, then revert
+
 # Calendar polish wave (2026-06-10, all 6 ideas approved + 1 bug)
 
 Approved in chat: "all sound perfect additions". All in public/js/app.js list view.

@@ -656,12 +656,13 @@ router.get('/events', async (req, res) => {
     // this, they come back on the nudges/pins list every time the user opens
     // the Calendar tab, even though they're the user's own blocks.
     const blockedRows = await db.query(
-      `SELECT google_event_id FROM blocked_dates
-        WHERE user_id = $1 AND google_event_id IS NOT NULL`,
+      `SELECT google_event_id, source_event_id FROM blocked_dates
+        WHERE user_id = $1 AND (google_event_id IS NOT NULL OR source_event_id IS NOT NULL)`,
       [req.user.id]
     );
     for (const b of blockedRows.rows) {
       if (b.google_event_id) importedIds.add(b.google_event_id);
+      if (b.source_event_id) importedIds.add(b.source_event_id);
     }
 
     const candidates = items.filter(ev => !importedIds.has(ev.id));
@@ -873,12 +874,13 @@ router.get('/pins', async (req, res) => {
     // this, they come back on the nudges/pins list every time the user opens
     // the Calendar tab, even though they're the user's own blocks.
     const blockedRows = await db.query(
-      `SELECT google_event_id FROM blocked_dates
-        WHERE user_id = $1 AND google_event_id IS NOT NULL`,
+      `SELECT google_event_id, source_event_id FROM blocked_dates
+        WHERE user_id = $1 AND (google_event_id IS NOT NULL OR source_event_id IS NOT NULL)`,
       [req.user.id]
     );
     for (const b of blockedRows.rows) {
       if (b.google_event_id) importedIds.add(b.google_event_id);
+      if (b.source_event_id) importedIds.add(b.source_event_id);
     }
 
     const pins = (response.data.items || [])

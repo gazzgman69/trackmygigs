@@ -2282,20 +2282,23 @@ router.get('/blocked-dates', async (req, res) => {
 
 router.post('/blocked-dates', async (req, res) => {
   try {
-    const { mode, date, from, to, reason, days } = req.body;
+    const { mode, date, from, to, reason, days, source_event_id } = req.body;
     const dateValue = mode === 'single' ? date : from;
     const pattern = mode === 'recurring' && days ? `recurring:${days.join(',')}${to && /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? ';until=' + to : ''}` :
                     mode === 'range' && to ? `range:${to}` : null;
     const inserted = await db.query(
-      `INSERT INTO blocked_dates (user_id, date, reason, recurring_pattern)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO blocked_dates (user_id, date, reason, recurring_pattern, source_event_id)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT DO NOTHING
        RETURNING id`,
-      [req.user.id, dateValue, reason || null, pattern]
+      [req.user.id, dateValue, reason || null, pattern, source_event_id || null]
     );
     // Mirror to Google only if a new row actually landed — ON CONFLICT DO NOTHING
     // is silent, and re-pushing an unchanged block would create duplicate events.
-    if (inserted.rowCount > 0 && inserted.rows[0] && inserted.rows[0].id) {
+    // Blocks born from a Google event skip the mirror entirely: the original
+    // event already marks the user busy in Google, so pushing an extra
+    // "Unavailable" would double it up.
+    if (!source_event_id && inserted.rowCount > 0 && inserted.rows[0] && inserted.rows[0].id) {
       const rowRes = await db.query(
         'SELECT * FROM blocked_dates WHERE id = $1 AND user_id = $2',
         [inserted.rows[0].id, req.user.id]

@@ -1837,6 +1837,12 @@ async function runMigrations() {
     // the chat info sheet — keeps it simple for now, can lock down to thread
     // creator later if abuse becomes an issue.
     await db.query(`ALTER TABLE threads ADD COLUMN IF NOT EXISTS name VARCHAR(120)`);
+    // 2026-06-10 pin three-choice: a block created from a Google event keeps
+    // the ORIGINAL event id here, never in google_event_id. google_event_id
+    // is reserved for the "Unavailable" mirror TMG pushes, and the unblock
+    // path deletes whatever google_event_id points at; putting the source id
+    // there would delete the user's real Google event on unblock.
+    await db.query(`ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS source_event_id TEXT`);
     // 2026-04-29 contextual-send batch: messages.attachments was TEXT[] but
     // we now store snapshotted gig/contact objects in there. Promote to
     // JSONB. Existing rows are always NULL (no real users have used the

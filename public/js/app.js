@@ -3872,6 +3872,79 @@ function openDayActionSheet(dateStr) {
   document.body.appendChild(sheet);
 }
 
+function openGooglePinSheet(pinId) {
+  const pin = (Array.isArray(window._googlePins) ? window._googlePins : []).find(p => p.id === pinId);
+  if (!pin) { openGigNudge(); return; }
+  const existing = document.getElementById('googlePinSheet');
+  if (existing) existing.remove();
+  const when = new Date(pin.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+    + (pin.all_day ? ' · all day' : (pin.start_time ? ' · ' + pin.start_time : ''));
+  const sheet = document.createElement('div');
+  sheet.id = 'googlePinSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+    + '<div style="font-size:14px;font-weight:700;color:var(--text);text-align:center;">' + escapeHtml(pin.title || 'Google event') + '</div>'
+    + '<div style="font-size:12px;color:var(--text-2);text-align:center;margin:4px 0 14px;">' + escapeHtml(when) + ' · from Google Calendar</div>'
+    + '<button onclick="googlePinImport(\'' + escapeAttr(pinId) + '\')" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:10px;">Import as gig</button>'
+    + '<button onclick="googlePinMarkBusy(\'' + escapeAttr(pinId) + '\')" style="width:100%;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:10px;">Mark day as busy</button>'
+    + '<div style="font-size:11px;color:var(--text-3);text-align:center;margin:-4px 0 10px;">Busy hides the day on your public availability. Your Google event is not changed.</div>'
+    + '<button onclick="closeGooglePinSheet()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Ignore for now</button>'
+    + '<div style="text-align:center;margin-top:4px;"><span onclick="closeGooglePinSheet();openGigNudge();" style="color:var(--accent);font-size:11px;font-weight:600;cursor:pointer;">Review all Google imports &rsaquo;</span></div>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) closeGooglePinSheet(); });
+  document.body.appendChild(sheet);
+}
+
+function closeGooglePinSheet() {
+  const el = document.getElementById('googlePinSheet');
+  if (el) el.remove();
+}
+
+async function googlePinImport(pinId) {
+  const pin = (Array.isArray(window._googlePins) ? window._googlePins : []).find(p => p.id === pinId);
+  if (!pin) return;
+  closeGooglePinSheet();
+  try {
+    const resp = await fetch('/api/calendar/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_id: pin.id, title: pin.title, location: pin.location, start: pin.start, end: pin.end }),
+    });
+    if (!resp.ok) throw new Error('import failed');
+    window._cachedGigs = null;
+    window._googlePinsKey = null;
+    showToast('Imported as a gig. Add the fee from Gigs.');
+    renderCalendarScreen();
+  } catch (err) {
+    showToast('Could not import that event. Try again.');
+  }
+}
+
+async function googlePinMarkBusy(pinId) {
+  const pin = (Array.isArray(window._googlePins) ? window._googlePins : []).find(p => p.id === pinId);
+  if (!pin) return;
+  closeGooglePinSheet();
+  try {
+    const resp = await fetch('/api/blocked-dates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'single', date: pin.date, reason: pin.title, source_event_id: pin.id }),
+    });
+    if (!resp.ok) throw new Error('block failed');
+    window._cachedBlocked = null;
+    window._googlePinsKey = null;
+    showToast('Marked busy. The day now shows blocked everywhere.');
+    renderCalendarScreen();
+  } catch (err) {
+    showToast('Could not mark that day busy. Try again.');
+  }
+}
+window.openGooglePinSheet = openGooglePinSheet;
+window.closeGooglePinSheet = closeGooglePinSheet;
+window.googlePinImport = googlePinImport;
+window.googlePinMarkBusy = googlePinMarkBusy;
+
 function closeDayActionSheet() {
   const el = document.getElementById('dayActionSheet');
   if (el) el.remove();
@@ -20111,11 +20184,11 @@ function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
       const title = p.title || p.summary || 'Google event';
       const timed = p.start && String(p.start).length > 10;
       push(iso, timed ? String(p.start).slice(11, 16) : '97:97', `
-        <div onclick="openGigNudge()" style="display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;">
+        <div onclick="openGooglePinSheet('${escapeAttr(p.id)}')" style="display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;">
           <div style="width:4px;align-self:stretch;border-radius:2px;background:var(--info);flex-shrink:0;"></div>
           <div style="flex:1;min-width:0;">
             <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(title)} <span style="font-size:9px;color:var(--info);background:rgba(88,166,255,.12);border-radius:6px;padding:1px 6px;margin-left:6px;font-weight:700;">From Google</span></div>
-            <div style="font-size:11px;color:var(--text-2);margin-top:1px;">Tap to review in calendar imports</div>
+            <div style="font-size:11px;color:var(--text-2);margin-top:1px;">Tap for options: gig, busy, or ignore</div>
           </div>
           <div style="text-align:right;font-size:12px;color:var(--text-3);flex-shrink:0;">${timed ? String(p.start).slice(11, 16) : 'all-day'}</div>
         </div>`);
