@@ -2679,7 +2679,7 @@ function buildCalendarView(content, gigsData, blockedData) {
     : 'Google Calendar sync has failed. Reconnect to resume syncing.';
 
   let html = `
-    <div style="padding:10px 20px 10px;display:flex;align-items:center;justify-content:space-between;">
+    <div style="padding:0 20px 12px;display:flex;align-items:center;justify-content:space-between;">
       <div style="font-size:22px;font-weight:700;color:var(--text);">Calendar</div>
       <div style="display:flex;gap:8px;">
         <button type="button" onclick="toggleCalendarLayers()" aria-label="Toggle layers" title="Layers" style="width:40px;height:40px;border-radius:20px;background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;padding:0;">&#x2630;</button>
