@@ -305,6 +305,27 @@ router.post('/t/:token', express.urlencoded({ extended: false }), async (req, re
   }
 });
 
+// ── Profile photos ───────────────────────────────────────────────────────────
+// Public on purpose: these photos appear on EPKs, share pages and directory
+// cards, all of which strangers can view. UUID in the path is unguessable
+// enough for an avatar; cache for a day, the ?v= stamp busts on re-upload.
+router.get('/pp/:userId', async (req, res) => {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.userId)) return res.status(404).send('Not found');
+    const r = await db.query(
+      'SELECT photo_data, photo_mime FROM users WHERE id = $1', [req.params.userId]
+    );
+    const row = r.rows[0];
+    if (!row || !row.photo_data) return res.status(404).send('Not found');
+    res.setHeader('Content-Type', row.photo_mime || 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(row.photo_data);
+  } catch (error) {
+    console.error('Profile photo serve error:', error);
+    res.status(500).send('Failed');
+  }
+});
+
 // ── Shared document page ─────────────────────────────────────────────────────
 // /docs/:token shows one document with a download button, no login. The token
 // is unguessable and the owner can revoke it from the wallet at any time.

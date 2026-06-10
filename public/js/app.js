@@ -10923,9 +10923,16 @@ function buildDirectoryProfileEditor(profile) {
       <textarea id="editBio" rows="3" maxlength="280" placeholder="One or two lines about you. Shown on your directory card." oninput="const c=document.getElementById('editBioCount'); if(c){c.textContent=this.value.length+'/280'; c.style.color=this.value.length>280?'var(--danger)':'var(--text-3)';}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;min-height:60px;font-family:inherit;">${escapeHtml(bioText)}</textarea>
     </div>
     <div style="margin-bottom:14px;">
-      <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Profile photo URL</label>
-      <input id="editPhotoUrl" type="url" value="${escapeHtml(photoUrl)}" placeholder="https://..." style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
-      <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Paste a link to a headshot. Used on your directory card (and your EPK if you haven't set a separate EPK photo).</div>
+      <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Profile photo</label>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div id="editPhotoPreview" style="width:56px;height:56px;border-radius:50%;background:var(--card) center/cover no-repeat;border:1px solid var(--border);flex-shrink:0;${photoUrl ? `background-image:url('${escapeHtml(photoUrl)}');` : ''}"></div>
+        <button type="button" onclick="document.getElementById('editPhotoFile').click()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:10px 16px;font-size:13px;font-weight:700;cursor:pointer;">Upload photo</button>
+        ${photoUrl ? `<button type="button" onclick="removeProfilePhoto()" style="background:none;border:none;color:var(--text-3);font-size:12px;cursor:pointer;text-decoration:underline;">Remove</button>` : ''}
+        <span id="editPhotoStatus" style="font-size:11px;color:var(--text-2);"></span>
+      </div>
+      <input id="editPhotoFile" type="file" accept="image/*" onchange="uploadProfilePhoto(this)" style="display:none;">
+      <input id="editPhotoUrl" type="hidden" value="${escapeHtml(photoUrl)}" />
+      <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Shown on your directory card and your EPK (unless you set a separate EPK photo).</div>
     </div>
     <div style="margin-bottom:14px;">
       <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Genres &amp; tags</label>
@@ -19475,6 +19482,59 @@ window.openGigPack = openGigPack;
 window.saveGigPackFields = saveGigPackFields;
 window.shareGigPackToChat = shareGigPackToChat;
 window.sendGigPackToThread = sendGigPackToThread;
+
+async function uploadProfilePhoto(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const status = document.getElementById('editPhotoStatus');
+  if (status) status.textContent = 'Uploading\u2026';
+  try {
+    // Downscale on-device so a 12MP camera shot becomes a ~50KB avatar.
+    const bitmap = await createImageBitmap(file);
+    const max = 512;
+    const ratio = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * ratio);
+    canvas.height = Math.round(bitmap.height * ratio);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    const resp = await fetch('/api/profile-photo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: dataUrl, mime_type: 'image/jpeg' }),
+    });
+    const out = await resp.json();
+    if (!resp.ok) throw new Error(out.error || 'failed');
+    const preview = document.getElementById('editPhotoPreview');
+    if (preview) preview.style.backgroundImage = `url('${out.photo_url}')`;
+    const hidden = document.getElementById('editPhotoUrl');
+    if (hidden) hidden.value = out.photo_url;
+    if (window._cachedProfile) window._cachedProfile.photo_url = out.photo_url;
+    if (status) status.textContent = 'Saved \u2713';
+    setTimeout(() => { if (status) status.textContent = ''; }, 2500);
+  } catch (err) {
+    if (status) status.textContent = '';
+    showToast(err.message || 'Could not upload that photo.');
+  }
+  input.value = '';
+}
+
+async function removeProfilePhoto() {
+  try {
+    const resp = await fetch('/api/profile-photo', { method: 'DELETE' });
+    if (!resp.ok) throw new Error();
+    const preview = document.getElementById('editPhotoPreview');
+    if (preview) preview.style.backgroundImage = '';
+    const hidden = document.getElementById('editPhotoUrl');
+    if (hidden) hidden.value = '';
+    if (window._cachedProfile) window._cachedProfile.photo_url = null;
+    showToast('Photo removed.');
+  } catch (err) {
+    showToast('Could not remove the photo.');
+  }
+}
+window.uploadProfilePhoto = uploadProfilePhoto;
+window.removeProfilePhoto = removeProfilePhoto;
 
 window.openVenueMemory = openVenueMemory;
 window.saveVenueNotes = saveVenueNotes;

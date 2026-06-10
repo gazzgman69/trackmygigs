@@ -2281,6 +2281,49 @@ router.get('/blocked-dates', async (req, res) => {
   }
 });
 
+// ── Profile photo upload ─────────────────────────────────────────────────────
+// Phone-native path: client resizes to ~512px and POSTs base64; we store the
+// bytes and point photo_url at the serving endpoint, so every existing
+// renderer (directory cards, EPK, chat avatars) keeps reading photo_url and
+// just works. The serving route is public because profile photos ARE public
+// wherever the user is discoverable or has an EPK.
+
+router.post('/profile-photo', async (req, res) => {
+  try {
+    const decoded = _docDecodeBase64(req.body && req.body.image);
+    if (!decoded) return res.status(400).json({ error: 'Send the photo as base64' });
+    if (decoded.buf.length > 3 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Photo too large even after resize. Try a smaller image.' });
+    }
+    const mime = (req.body.mime_type || decoded.mime || 'image/jpeg').slice(0, 60);
+    if (!/^image\//.test(mime)) return res.status(400).json({ error: 'Not an image' });
+    const url = '/pp/' + req.user.id + '?v=' + Math.floor(new Date().getTime() / 1000);
+    await db.query(
+      `UPDATE users SET photo_data = $1, photo_mime = $2, photo_url = $3 WHERE id = $4`,
+      [decoded.buf, mime, url, req.user.id]
+    );
+    res.json({ success: true, photo_url: url });
+  } catch (error) {
+    console.error('Profile photo upload error:', error);
+    res.status(500).json({ error: 'Failed to save the photo' });
+  }
+});
+
+router.delete('/profile-photo', async (req, res) => {
+  try {
+    await db.query(
+      `UPDATE users SET photo_data = NULL, photo_mime = NULL,
+              photo_url = CASE WHEN photo_url LIKE '/api/profile-photo/%' THEN NULL ELSE photo_url END
+        WHERE id = $1`,
+      [req.user.id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Profile photo delete error:', error);
+    res.status(500).json({ error: 'Failed to remove the photo' });
+  }
+});
+
 // ── Venue memory ─────────────────────────────────────────────────────────────
 // Private notes + community heads-up facts per venue. The community layer is
 // write-gated: you can only add or vote on facts for venues you have a logged

@@ -1951,6 +1951,8 @@ async function runMigrations() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS review_link TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_data BYTEA`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime TEXT`);
     // 2026-06-10 stage mode: breaks/markers/notes/speeds/transpose all live
     // in one JSONB blob keyed mostly by song_id so reorders don't break it.
     await db.query(`ALTER TABLE setlists ADD COLUMN IF NOT EXISTS stage_meta JSONB`);
