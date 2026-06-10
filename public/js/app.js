@@ -99,7 +99,7 @@ window._cachedInvoices = null;
 window._cachedInvoicesTime = 0;
 window._cachedOffers = null;
 window._cachedOffersTime = 0;
-window._calViewMode = 'month';
+window._calViewMode = localStorage.getItem('tmg_cal_view') || 'list';
 window._calDate = new Date();
 
 // Cache TTL in ms
@@ -600,7 +600,7 @@ function showScreen(screenName) {
     // Reset to today when navigating to calendar from elsewhere, so user
     // always lands on the current month (not a stale stored date).
     window._calDate = new Date();
-    window._calViewMode = window._calViewMode || 'month';
+    window._calViewMode = window._calViewMode || localStorage.getItem('tmg_cal_view') || 'list';
     renderCalendarScreen();
   } else if (screenName === 'invoices') {
     renderInvoicesScreen();
@@ -2663,18 +2663,20 @@ function buildCalendarView(content, gigsData, blockedData) {
       ` : ''}
     </div>
     <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;gap:8px;">
+      <div class="tb ${view !== 'day' && view !== 'week' ? 'ac' : ''}" onclick="switchCalendarView('list')">List</div>
       <div class="tb ${view === 'day' ? 'ac' : ''}" onclick="switchCalendarView('day')">Day</div>
       <div class="tb ${view === 'week' ? 'ac' : ''}" onclick="switchCalendarView('week')">Week</div>
-      <div class="tb ${view === 'month' ? 'ac' : ''}" onclick="switchCalendarView('month')">Month</div>
     </div>`;
 
   const googlePins = (layers.google && Array.isArray(window._googlePins)) ? window._googlePins : [];
-  if (view === 'month') {
-    html += renderCalendarMonth(currentDate, gigsData, blockedData, googlePins);
-  } else if (view === 'week') {
+  if (view === 'week') {
     html += renderCalendarWeek(currentDate, gigsData, blockedData, googlePins);
   } else if (view === 'day') {
     html += renderCalendarDay(currentDate, gigsData, blockedData, googlePins);
+  } else {
+    // 'list' (default; old saved 'month' lands here too): Apple-style
+    // month grid + day-grouped list, approved from /mockups/calendar-list.html.
+    html += renderCalendarListView(currentDate, gigsData, blockedData, googlePins);
   }
 
   // Nudge bar moved to BELOW the grid so async inflation (when Google pins
@@ -2686,6 +2688,11 @@ function buildCalendarView(content, gigsData, blockedData) {
   html += `<div id="calScreenNudgeBar" style="margin-top:12px;"></div>`;
 
   content.innerHTML = html;
+
+  if (view !== 'day' && view !== 'week') {
+    setTimeout(initCalListBehaviour, 0);
+    loadCalendarListOffers();
+  }
 }
 
 function toggleCalendarMenu() {
@@ -2909,6 +2916,7 @@ function handleCalendarAction(action) {
 
 function switchCalendarView(view) {
   window._calViewMode = view;
+  try { localStorage.setItem('tmg_cal_view', view); } catch (_) {}
   renderCalendarScreen();
 }
 
@@ -19843,3 +19851,327 @@ async function deleteSavedInvoiceItem(id, btn) {
   }
 }
 window.deleteSavedInvoiceItem = deleteSavedInvoiceItem;
+
+
+// ── Calendar List view (June 2026, approved mockup) ─────────────────────────
+//
+// Apple-style flow: compact month grid with 4-colour activity bars, then a
+// continuous list grouped by day. Scrolling the list moves the grid
+// highlight; tapping a grid day scrolls the list. List is the default,
+// remembered view.
+
+function _calIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Offers feed the purple "dep activity" rows. Cached for 60s; re-renders the
+// list when fresh data lands (same pattern as the Google pins).
+async function loadCalendarListOffers() {
+  const now = Date.now();
+  if (window._calOffers && (now - (window._calOffersAt || 0)) < 60000) return;
+  try {
+    const [recRes, sentRes] = await Promise.all([
+      fetch('/api/offers'),
+      fetch('/api/offers/sent'),
+    ]);
+    const rec = recRes.ok ? await recRes.json() : [];
+    const sentBody = sentRes.ok ? await sentRes.json() : [];
+    const sent = Array.isArray(sentBody) ? sentBody : (sentBody.offers || []);
+    window._calOffers = {
+      received: (Array.isArray(rec) ? rec : []).filter(o => o.status === 'pending' || o.status === 'provisional'),
+      sent: sent.filter(o => o.status === 'provisional'),
+    };
+    window._calOffersAt = Date.now();
+    // Repaint if the list is on screen so the purple rows appear.
+    const panel = document.getElementById('calendarScreen');
+    if (panel && panel.classList.contains('active') && (window._calViewMode !== 'day' && window._calViewMode !== 'week')) {
+      renderCalendarScreen();
+    }
+  } catch (_) {}
+}
+
+function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7;
+  const todayIso = _calIso(new Date());
+  const monthLabel = currentDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const inMonth = (iso) => iso.slice(0, 7) === `${year}-${String(month + 1).padStart(2, '0')}`;
+
+  const liveGigs = (gigs || []).filter(g => g && g.date && g.status !== 'cancelled');
+  const gigsByDate = {};
+  liveGigs.forEach(g => {
+    const iso = String(g.date).slice(0, 10);
+    (gigsByDate[iso] = gigsByDate[iso] || []).push(g);
+  });
+
+  // Blocked: expanded date set for the grid + collapsed runs for the list.
+  const blockedSet = new Set();
+  const blockedRuns = [];
+  (blocked || []).forEach(row => {
+    const dates = (Array.isArray(row.expanded_dates) && row.expanded_dates.length
+      ? row.expanded_dates
+      : [String(row.start_date || row.date || '').slice(0, 10)]).filter(d => d && inMonth(d)).sort();
+    dates.forEach(d => blockedSet.add(d));
+    let run = null;
+    dates.forEach(d => {
+      if (run && new Date(d) - new Date(run.to) === 86400000) { run.to = d; return; }
+      run = { from: d, to: d, reason: row.reason || null, id: row.id };
+      blockedRuns.push(run);
+    });
+  });
+
+  // Google pins, minus ones already linked to a gig.
+  const linkedEventIds = new Set(liveGigs.map(g => g.google_event_id).filter(Boolean));
+  const pinsByDate = {};
+  (googlePins || []).forEach(p => {
+    if (!p || (p.id && linkedEventIds.has(p.id))) return;
+    const iso = String(p.start || p.date || '').slice(0, 10);
+    if (!iso || !inMonth(iso)) return;
+    (pinsByDate[iso] = pinsByDate[iso] || []).push(p);
+  });
+
+  // Dep activity (purple): received pending/provisional + sent provisional.
+  const offers = window._calOffers || { received: [], sent: [] };
+  const depByDate = {};
+  offers.received.forEach(o => {
+    const iso = String(o.gig_date || '').slice(0, 10);
+    if (!iso || !inMonth(iso)) return;
+    (depByDate[iso] = depByDate[iso] || []).push({ kind: 'received', o });
+  });
+  offers.sent.forEach(o => {
+    const iso = String(o.gig_date || '').slice(0, 10);
+    if (!iso || !inMonth(iso)) return;
+    (depByDate[iso] = depByDate[iso] || []).push({ kind: 'sent', o });
+  });
+
+  // Money strip: confirmed money only, per the house rule.
+  let confirmedSum = 0;
+  let gigCount = 0;
+  liveGigs.forEach(g => {
+    const iso = String(g.date).slice(0, 10);
+    if (!inMonth(iso)) return;
+    gigCount += 1;
+    if (g.status === 'confirmed') confirmedSum += parseFloat(g.fee) || 0;
+  });
+  const blockedDays = Array.from(blockedSet).length;
+
+  // ── Grid ──
+  let cells = ['Mo','Tu','We','Th','Fr','Sa','Su']
+    .map(d => `<div style="font-size:9px;color:var(--text-3);text-align:center;text-transform:uppercase;padding:4px 0;">${d}</div>`).join('');
+  for (let i = 0; i < firstDow; i++) cells += '<div></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const bars = [];
+    if (gigsByDate[iso]) bars.push('var(--accent)');
+    if (depByDate[iso]) bars.push('#A78BFA');
+    if (pinsByDate[iso]) bars.push('var(--info)');
+    if (blockedSet.has(iso)) bars.push('var(--text-3)');
+    const isToday = iso === todayIso;
+    cells += `
+      <div class="cal-list-cell" data-date="${iso}" onclick="selectCalListDay('${iso}')" style="aspect-ratio:.95;border-radius:8px;display:flex;flex-direction:column;align-items:center;padding-top:5px;cursor:pointer;">
+        <span style="${isToday ? 'background:var(--accent);color:#000;font-weight:800;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;' : 'color:var(--text);'}font-size:13px;">${d}</span>
+        <div style="display:flex;gap:2px;margin-top:3px;height:4px;">${bars.slice(0, 4).map(c => `<div style="width:9px;height:4px;border-radius:2px;background:${c};"></div>`).join('')}</div>
+      </div>`;
+  }
+
+  // ── List items per day ──
+  const fmtT = (t) => t ? String(t).slice(0, 5) : '';
+  const TRAVEL_MIN = Number(localStorage.getItem('tmg_travel_mins')) || 60;
+  const LOAD_MIN = Number(localStorage.getItem('tmg_load_mins')) || 30;
+  const leaveBy = (g) => {
+    if (!g.start_time || !(parseFloat(g.mileage_miles) > 0)) return '';
+    const [h, m] = String(g.start_time).split(':').map(Number);
+    let mins = h * 60 + m - TRAVEL_MIN - LOAD_MIN;
+    if (mins < 0) mins = 0;
+    return `Leave by ${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')} · ${Math.round(g.mileage_miles)} mi`;
+  };
+
+  const itemsByDate = {};
+  const push = (iso, sortKey, html) => {
+    (itemsByDate[iso] = itemsByDate[iso] || []).push({ sortKey, html });
+  };
+
+  liveGigs.forEach(g => {
+    const iso = String(g.date).slice(0, 10);
+    if (!inMonth(iso)) return;
+    const fee = parseFloat(g.fee) > 0 ? '£' + Math.round(parseFloat(g.fee)) : '';
+    const noFee = !fee ? '<span style="font-size:9px;color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:1px 6px;margin-left:6px;font-weight:700;">No fee set</span>' : '';
+    const subBits = [g.band_name && g.venue_name ? g.band_name : '', leaveBy(g), g.setlist_id ? 'setlist attached' : ''].filter(Boolean);
+    push(iso, (g.start_time || '99:99'), `
+      <div onclick="openGigDetail('${escapeAttr(g.id)}')" style="display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;">
+        <div style="width:4px;align-self:stretch;border-radius:2px;background:var(--accent);flex-shrink:0;"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.venue_name || g.band_name || 'Gig')}${noFee}</div>
+          ${subBits.length ? `<div style="font-size:11px;color:var(--text-2);margin-top:1px;">${escapeHtml(subBits.join(' · '))}</div>` : ''}
+        </div>
+        <div style="text-align:right;font-size:12px;color:var(--text-2);flex-shrink:0;line-height:1.5;">
+          ${g.start_time ? `<b style="display:block;color:var(--text);">${fmtT(g.start_time)}${g.end_time ? '–' + fmtT(g.end_time) : ''}</b>` : '<b style="display:block;color:var(--text-3);">all-day</b>'}
+          ${fee ? `<span style="color:var(--success);font-weight:700;">${fee}</span>` : ''}
+        </div>
+      </div>`);
+  });
+
+  Object.keys(depByDate).forEach(iso => {
+    depByDate[iso].forEach(({ kind, o }) => {
+      const isSent = kind === 'sent';
+      const who = isSent
+        ? (o.recipient_display_name || o.recipient_name || 'them')
+        : (o.sender_display_name || o.sender_name || 'a band leader');
+      const chip = isSent
+        ? 'Confirm their yes?'
+        : (o.status === 'provisional' ? 'Waiting for confirm' : 'Needs answer');
+      const deadline = o.deadline ? `respond by ${new Date(o.deadline).toLocaleDateString('en-GB', { weekday: 'short' })}` : '';
+      const fee = parseFloat(o.fee) > 0 ? '£' + Math.round(parseFloat(o.fee)) : '';
+      push(iso, '98:98', `
+        <div onclick="showScreen('offers')" style="display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;">
+          <div style="width:4px;align-self:stretch;border-radius:2px;background:#A78BFA;flex-shrink:0;"></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:600;color:var(--text);">${isSent ? 'Dep offer out' : 'Dep request'} <span style="font-size:9px;color:#A78BFA;background:rgba(167,139,250,.14);border:1px solid rgba(167,139,250,.4);border-radius:6px;padding:1px 6px;margin-left:6px;font-weight:700;">${chip}</span></div>
+            <div style="font-size:11px;color:var(--text-2);margin-top:1px;">${escapeHtml((isSent ? 'To ' : 'From ') + who)}${o.band_name ? ' · ' + escapeHtml(o.band_name) : ''}</div>
+          </div>
+          <div style="text-align:right;font-size:12px;color:var(--text-2);flex-shrink:0;line-height:1.5;">
+            ${fee ? `<b style="display:block;color:var(--text);">${fee}</b>` : ''}
+            ${deadline ? `<span style="font-size:10px;color:var(--text-3);">${escapeHtml(deadline)}</span>` : ''}
+          </div>
+        </div>`);
+    });
+  });
+
+  Object.keys(pinsByDate).forEach(iso => {
+    pinsByDate[iso].forEach(p => {
+      const title = p.title || p.summary || 'Google event';
+      const timed = p.start && String(p.start).length > 10;
+      push(iso, timed ? String(p.start).slice(11, 16) : '97:97', `
+        <div onclick="openGigNudge()" style="display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;">
+          <div style="width:4px;align-self:stretch;border-radius:2px;background:var(--info);flex-shrink:0;"></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(title)} <span style="font-size:9px;color:var(--info);background:rgba(88,166,255,.12);border-radius:6px;padding:1px 6px;margin-left:6px;font-weight:700;">From Google</span></div>
+            <div style="font-size:11px;color:var(--text-2);margin-top:1px;">Tap to review in calendar imports</div>
+          </div>
+          <div style="text-align:right;font-size:12px;color:var(--text-3);flex-shrink:0;">${timed ? String(p.start).slice(11, 16) : 'all-day'}</div>
+        </div>`);
+    });
+  });
+
+  blockedRuns.forEach(run => {
+    const label = run.from === run.to
+      ? new Date(run.from).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+      : `${new Date(run.from).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' })} – ${new Date(run.to).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}`;
+    push(run.from, '00:00', `
+      <div onclick="openMyAvailabilityPanel()" style="display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;">
+        <div style="width:4px;align-self:stretch;border-radius:2px;background:var(--text-3);flex-shrink:0;"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:600;color:var(--text);">Blocked${run.reason ? ' · ' + escapeHtml(run.reason) : ''}</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:1px;">${escapeHtml(label)} · hidden from your public availability</div>
+        </div>
+        <div style="text-align:right;font-size:12px;color:var(--text-3);flex-shrink:0;">all-day</div>
+      </div>`);
+  });
+
+  const dayKeys = Object.keys(itemsByDate).sort();
+  let listHtml = '';
+  if (dayKeys.length === 0) {
+    listHtml = '<div style="padding:32px 16px;text-align:center;color:var(--text-3);font-size:13px;">Nothing on this month. Enjoy the quiet, or check the marketplace.</div>';
+  } else {
+    dayKeys.forEach(iso => {
+      const d = new Date(iso);
+      const isToday = iso === todayIso;
+      const label = (isToday ? 'Today · ' : '') + d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long' });
+      listHtml += `
+        <div class="cal-list-dayhead" data-date="${iso}" style="display:flex;align-items:center;justify-content:space-between;padding:14px 4px 6px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:2;">
+          <span style="font-size:12px;font-weight:700;color:${isToday ? 'var(--accent)' : 'var(--text-2)'};text-transform:uppercase;letter-spacing:.6px;">${escapeHtml(label)}</span>
+        </div>`;
+      itemsByDate[iso].sort((a, b) => a.sortKey.localeCompare(b.sortKey)).forEach(it => { listHtml += it.html; });
+    });
+  }
+
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px 2px;">
+      <button onclick="prevCalendarMonth()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">&#8249;</button>
+      <span style="font-size:15px;font-weight:700;color:var(--text);">${escapeHtml(monthLabel)}</span>
+      <button onclick="nextCalendarMonth()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">&#8250;</button>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 16px 6px;">
+      <span style="font-size:11px;color:var(--text-2);">${gigCount} gig${gigCount === 1 ? '' : 's'} · <span style="color:var(--success);font-weight:700;">£${Math.round(confirmedSum).toLocaleString()} confirmed</span></span>
+      <span style="font-size:11px;color:var(--text-2);">${blockedDays ? blockedDays + ' day' + (blockedDays === 1 ? '' : 's') + ' blocked' : ''}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:0 12px;">${cells}</div>
+    <div style="display:flex;gap:12px;justify-content:center;font-size:10px;color:var(--text-2);padding:8px 0 2px;">
+      <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:var(--accent);"></i>Gig</span>
+      <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:#A78BFA;"></i>Dep</span>
+      <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:var(--info);"></i>Google</span>
+      <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:var(--text-3);"></i>Blocked</span>
+    </div>
+    <div id="calListBody" style="padding:4px 12px 24px;">${listHtml}</div>
+    <button id="calListTodayFab" onclick="calListGoToday()" style="display:none;position:fixed;bottom:84px;right:16px;background:var(--card);border:1px solid var(--border);color:var(--accent);border-radius:999px;padding:9px 16px;font-size:12px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer;z-index:50;">↓ Today</button>`;
+}
+
+function selectCalListDay(iso) {
+  document.querySelectorAll('.cal-list-cell').forEach(c => {
+    c.style.outline = c.dataset.date === iso ? '2px solid var(--accent)' : '';
+    c.style.outlineOffset = c.dataset.date === iso ? '-2px' : '';
+  });
+  // Scroll to that day's header, or the next day that has anything on.
+  const heads = Array.from(document.querySelectorAll('.cal-list-dayhead'));
+  const target = heads.find(h => h.dataset.date >= iso) || heads[heads.length - 1];
+  if (target) {
+    const y = target.getBoundingClientRect().top + window.scrollY - 64;
+    window.scrollTo({ top: y, behavior: 'smooth' });
+  }
+}
+window.selectCalListDay = selectCalListDay;
+
+function calListGoToday() {
+  const now = new Date();
+  const cur = window._calDate || now;
+  if (cur.getFullYear() !== now.getFullYear() || cur.getMonth() !== now.getMonth()) {
+    window._calDate = now;
+    renderCalendarScreen();
+    setTimeout(() => selectCalListDay(_calIso(now)), 120);
+  } else {
+    selectCalListDay(_calIso(now));
+  }
+}
+window.calListGoToday = calListGoToday;
+
+function initCalListBehaviour() {
+  const todayIso = _calIso(new Date());
+  // Land on today when viewing the current month.
+  const todayHead = document.querySelector(`.cal-list-dayhead[data-date="${todayIso}"]`)
+    || Array.from(document.querySelectorAll('.cal-list-dayhead')).find(h => h.dataset.date >= todayIso);
+  if (todayHead) {
+    const y = todayHead.getBoundingClientRect().top + window.scrollY - 64;
+    if (y > 100) window.scrollTo({ top: y });
+  }
+  // Scroll sync: grid highlight follows the day under the header line, and
+  // the Today pill shows whenever today's header is off-screen.
+  if (window._calListScrollHandler) window.removeEventListener('scroll', window._calListScrollHandler);
+  let ticking = false;
+  window._calListScrollHandler = () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      ticking = false;
+      const panel = document.getElementById('calendarScreen');
+      if (!panel || !panel.classList.contains('active')) return;
+      const heads = Array.from(document.querySelectorAll('.cal-list-dayhead'));
+      if (!heads.length) return;
+      const current = heads.filter(h => h.getBoundingClientRect().top <= 90).pop() || heads[0];
+      document.querySelectorAll('.cal-list-cell').forEach(c => {
+        const on = c.dataset.date === current.dataset.date;
+        c.style.outline = on ? '2px solid var(--accent)' : '';
+        c.style.outlineOffset = on ? '-2px' : '';
+      });
+      const fab = document.getElementById('calListTodayFab');
+      if (fab) {
+        const th = document.querySelector(`.cal-list-dayhead[data-date="${todayIso}"]`);
+        const visible = th && th.getBoundingClientRect().top > -40 && th.getBoundingClientRect().top < window.innerHeight - 80;
+        const offMonth = !document.querySelector(`.cal-list-cell[data-date="${todayIso}"]`);
+        fab.style.display = (offMonth || !visible) ? 'block' : 'none';
+      }
+    });
+  };
+  window.addEventListener('scroll', window._calListScrollHandler, { passive: true });
+}

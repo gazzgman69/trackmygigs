@@ -41,3 +41,14 @@ matches the real free core), honest capability stats, early-access-labelled
 testimonials, FAQ corrected (unlimited free) and extended (deps, sync), dead
 Log-in link fixed, phone mock matches the real 5-tab nav. All verified
 rendering in the browser; 9 feature blocks total.
+
+
+# Calendar List view (2026-06-10, mockup approved "I like them all")
+
+- [ ] List mode: compact month grid (4-colour bars: gig/dep/google/blocked) + day-grouped list
+- [ ] Month money strip (confirmed only) + blocked-day count
+- [ ] Rows: fee + time, leave-by subline, No-fee chip, dep Needs-answer rows with respond-by,
+      Google rows with From-Google tag, blocked ranges collapsed
+- [ ] Grid tap -> scroll list; list scroll -> grid highlight; Today FAB
+- [ ] List replaces Month tab, becomes default, view remembered (localStorage)
+- [ ] Deploy + browser verify
