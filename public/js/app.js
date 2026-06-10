@@ -18270,7 +18270,10 @@ async function shareGigPackToChat() {
   let threads = [];
   try {
     const resp = await fetch('/api/chat/threads');
-    if (resp.ok) threads = await resp.json();
+    if (resp.ok) {
+      const out = await resp.json();
+      threads = Array.isArray(out) ? out : (out && Array.isArray(out.threads) ? out.threads : []);
+    }
   } catch (err) { /* empty list path below */ }
   const existing = document.getElementById('gigPackShareSheet');
   if (existing) existing.remove();
