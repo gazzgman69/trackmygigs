@@ -580,6 +580,8 @@ function setTextSize(val) {
   if (val === null) localStorage.removeItem('tmg_text_scale');
   else localStorage.setItem('tmg_text_scale', String(val));
   setupTextScaling();
+  const row = document.getElementById('textSizeRowValue');
+  if (row) row.textContent = val === null ? 'Auto' : val === 1 ? 'Default' : val === 1.15 ? 'Large' : 'Extra large';
   // Re-render the sheet in place so the change shows immediately while
   // the options are still on screen.
   openTextSizePicker();
@@ -2677,8 +2679,8 @@ function buildCalendarView(content, gigsData, blockedData) {
     : 'Google Calendar sync has failed. Reconnect to resume syncing.';
 
   let html = `
-    <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-      <div style="font-size:24px;font-weight:700;color:var(--text);">Calendar</div>
+    <div style="padding:6px 20px 4px;display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:22px;font-weight:700;color:var(--text);">Calendar</div>
       <div style="display:flex;gap:8px;">
         <button type="button" onclick="toggleCalendarLayers()" aria-label="Toggle layers" title="Layers" style="width:40px;height:40px;border-radius:20px;background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;padding:0;">&#x2630;</button>
         <button type="button" onclick="toggleCalendarMenu()" aria-label="More actions" title="More" style="width:40px;height:40px;border-radius:20px;background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;padding:0;">&#8943;</button>
@@ -5133,7 +5135,7 @@ function buildProfileHTML(content, profile) {
         <div onclick="openTextSizePicker()" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
           <span style="color:var(--text);font-size:14px;">Text size</span>
           <span style="display:flex;align-items:center;gap:8px;">
-            <span style="font-size:12px;color:var(--text-2);">${(() => { const v = parseFloat(localStorage.getItem('tmg_text_scale')); return !v ? 'Auto' : v === 1 ? 'Default' : v === 1.15 ? 'Large' : v >= 1.3 ? 'Extra large' : v + 'x'; })()}</span>
+            <span id="textSizeRowValue" style="font-size:12px;color:var(--text-2);">${(() => { const v = parseFloat(localStorage.getItem('tmg_text_scale')); return !v ? 'Auto' : v === 1 ? 'Default' : v === 1.15 ? 'Large' : v >= 1.3 ? 'Extra large' : v + 'x'; })()}</span>
             <span style="color:var(--accent);font-size:16px;">\u203A</span>
           </span>
         </div>
