@@ -6414,7 +6414,7 @@ router.get('/marketplace', async (req, res) => {
     // total_open lets the empty state tell "nothing posted at all" apart
     // from "your filters hid everything" (June 2026 UX batch).
     const totalR = await db.query(
-      `SELECT COUNT(*)::int AS n FROM marketplace_gigs WHERE status = 'open' AND is_free = $1`,
+      `SELECT COUNT(*)::int AS n FROM marketplace_gigs WHERE status = 'open' AND is_free = $1 AND gig_date >= CURRENT_DATE`,
       [String(is_free) === 'true']
     );
     return res.json({ gigs: rows, total_open: totalR.rows[0] ? totalR.rows[0].n : 0 });
