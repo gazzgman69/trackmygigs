@@ -511,7 +511,11 @@ Rules:
 - NEVER drop a chord. First count the chord tokens in the input; your output must contain exactly the same number of chord tokens in the same order. When chord-over-lyric alignment is ambiguous, place the chord at your best estimate within the line rather than omitting it; mention uncertain placements in "notes".
 - If unsure, note it in "notes" rather than guessing.`;
 
-    const data = await callHaiku({ system, user: text, json: true, maxTokens: 4000 });
+    // Chord sheets punish dropped chords, and the small model fumbles
+    // chord-over-lyric alignment when two lines share a pattern. Sonnet
+    // handles it; this endpoint is low-volume so the cost difference is
+    // pennies.
+    const data = await callHaiku({ system, user: text, json: true, maxTokens: 4000, model: 'claude-sonnet-4-6' });
     sendAIResult(res, data);
   } catch (err) {
     console.error(`[ai/normalize-chordpro] error:`, err);
