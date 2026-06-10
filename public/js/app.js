@@ -3813,8 +3813,10 @@ function openDayActionSheet(dateStr) {
     .filter((g) => String(g.date || '').slice(0, 10) === dateStr);
   const blockedRows = Array.isArray(window._cachedBlocked) ? window._cachedBlocked : [];
   const blockedRow = blockedRows.find((b) => {
-    const bd = typeof b === 'string' ? b : (b && b.date);
-    return String(bd || '').slice(0, 10) === dateStr;
+    if (typeof b === 'string') return String(b).slice(0, 10) === dateStr;
+    if (!b) return false;
+    if (Array.isArray(b.expanded_dates) && b.expanded_dates.length) return b.expanded_dates.includes(dateStr);
+    return String(b.start_date || b.date || '').slice(0, 10) === dateStr;
   });
 
   let summaryHtml;
@@ -3876,6 +3878,69 @@ function closeDayActionSheet() {
 }
 window.closeDayActionSheet = closeDayActionSheet;
 window.openDayActionSheet = openDayActionSheet;
+
+function openMonthJumpSheet() {
+  const existing = document.getElementById('monthJumpSheet');
+  if (existing) existing.remove();
+  const cur = window._calDate || new Date();
+  window._mjYear = cur.getFullYear();
+  const sheet = document.createElement('div');
+  sheet.id = 'monthJumpSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+    + '<div style="display:flex;align-items:center;justify-content:center;gap:18px;margin-bottom:12px;">'
+    + '<button onclick="monthJumpSetYear(-1)" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;padding:0 10px;">&#8249;</button>'
+    + '<span id="mjYearLabel" style="font-size:16px;font-weight:700;color:var(--text);min-width:60px;text-align:center;"></span>'
+    + '<button onclick="monthJumpSetYear(1)" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;padding:0 10px;">&#8250;</button>'
+    + '</div>'
+    + '<div id="mjMonthGrid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>'
+    + '<button onclick="closeMonthJumpSheet();calListGoToday();" style="width:100%;background:var(--card);color:var(--accent);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;margin-top:12px;">Jump to today</button>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) closeMonthJumpSheet(); });
+  document.body.appendChild(sheet);
+  paintMonthJumpGrid();
+}
+
+function paintMonthJumpGrid() {
+  const y = window._mjYear;
+  const label = document.getElementById('mjYearLabel');
+  const grid = document.getElementById('mjMonthGrid');
+  if (!label || !grid) return;
+  label.textContent = y;
+  const cur = window._calDate || new Date();
+  const now = new Date();
+  grid.innerHTML = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => {
+    const isCurrent = y === cur.getFullYear() && i === cur.getMonth();
+    const isNow = y === now.getFullYear() && i === now.getMonth();
+    return '<button onclick="monthJumpPick(' + y + ',' + i + ')" style="padding:12px 0;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;'
+      + (isCurrent
+        ? 'background:var(--accent);color:#000;border:none;'
+        : 'background:var(--bg);color:' + (isNow ? 'var(--accent)' : 'var(--text)') + ';border:1px solid var(--border);')
+      + '">' + m + '</button>';
+  }).join('');
+}
+
+function monthJumpSetYear(delta) {
+  window._mjYear += delta;
+  paintMonthJumpGrid();
+}
+
+function monthJumpPick(year, month) {
+  closeMonthJumpSheet();
+  window._calDate = new Date(year, month, 1);
+  window._calListSelected = null;
+  renderCalendarScreen();
+}
+
+function closeMonthJumpSheet() {
+  const el = document.getElementById('monthJumpSheet');
+  if (el) el.remove();
+}
+window.openMonthJumpSheet = openMonthJumpSheet;
+window.closeMonthJumpSheet = closeMonthJumpSheet;
+window.monthJumpSetYear = monthJumpSetYear;
+window.monthJumpPick = monthJumpPick;
 
 function prevCalendarMonth() {
   const d = new Date(window._calDate);
@@ -19969,10 +20034,12 @@ function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
     if (pinsByDate[iso]) bars.push('var(--info)');
     if (blockedSet.has(iso)) bars.push('var(--text-3)');
     const isToday = iso === todayIso;
+    const isPast = iso < todayIso;
+    const isWeekend = ((firstDow + d - 1) % 7) >= 5;
     cells += `
-      <div class="cal-list-cell" data-date="${iso}" onclick="selectCalListDay('${iso}')" style="aspect-ratio:.95;border-radius:8px;display:flex;flex-direction:column;align-items:center;padding-top:5px;cursor:pointer;">
-        <span style="${isToday ? 'background:var(--accent);color:#000;font-weight:800;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;' : 'color:var(--text);'}font-size:13px;">${d}</span>
-        <div style="display:flex;gap:2px;margin-top:3px;height:4px;">${bars.slice(0, 4).map(c => `<div style="width:9px;height:4px;border-radius:2px;background:${c};"></div>`).join('')}</div>
+      <div class="cal-list-cell" data-date="${iso}" onclick="selectCalListDay('${iso}')" style="aspect-ratio:.95;border-radius:8px;display:flex;flex-direction:column;align-items:center;padding-top:5px;cursor:pointer;${isWeekend ? 'background:rgba(255,255,255,.035);' : ''}">
+        <span style="${isToday ? 'background:var(--accent);color:#000;font-weight:800;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;' : `color:${isPast ? 'var(--text-3)' : 'var(--text)'};`}font-size:13px;">${d}</span>
+        <div style="display:flex;gap:2px;margin-top:3px;height:4px;${isPast ? 'opacity:.5;' : ''}">${bars.slice(0, 4).map(c => `<div style="width:9px;height:4px;border-radius:2px;background:${c};"></div>`).join('')}</div>
       </div>`;
   }
 
@@ -20088,14 +20155,14 @@ function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
   return `
     <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px 2px;">
       <button onclick="prevCalendarMonth()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">&#8249;</button>
-      <span style="font-size:15px;font-weight:700;color:var(--text);">${escapeHtml(monthLabel)}</span>
+      <span onclick="openMonthJumpSheet()" style="font-size:15px;font-weight:700;color:var(--text);cursor:pointer;">${escapeHtml(monthLabel)} <span style="color:var(--text-3);font-size:11px;">&#9662;</span></span>
       <button onclick="nextCalendarMonth()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;">&#8250;</button>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;padding:0 16px 6px;">
       <span style="font-size:11px;color:var(--text-2);">${gigCount} gig${gigCount === 1 ? '' : 's'} · <span style="color:var(--success);font-weight:700;">£${Math.round(confirmedSum).toLocaleString()} confirmed</span></span>
       <span style="font-size:11px;color:var(--text-2);">${blockedDays ? blockedDays + ' day' + (blockedDays === 1 ? '' : 's') + ' blocked' : ''}</span>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:0 12px;">${cells}</div>
+    <div id="calListGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:0 12px;-webkit-user-select:none;user-select:none;">${cells}</div>
     <div style="display:flex;gap:12px;justify-content:center;font-size:10px;color:var(--text-2);padding:8px 0 2px;">
       <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:var(--accent);"></i>Gig</span>
       <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:#A78BFA;"></i>Dep</span>
@@ -20113,9 +20180,9 @@ function buildCalListDayHtml(iso) {
   const label = (iso === todayIso ? 'Today · ' : '') + d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
   let html = `
     <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 6px;border-bottom:1px solid var(--border);">
-      <button onclick="calListShiftDay(-1)" style="background:none;border:none;color:var(--accent);font-size:18px;cursor:pointer;padding:0 8px;">&#8249;</button>
+      <div style="display:flex;align-items:center;"><span style="width:30px;"></span><button onclick="calListShiftDay(-1)" style="background:none;border:none;color:var(--accent);font-size:18px;cursor:pointer;padding:0 8px;">&#8249;</button></div>
       <span style="font-size:12px;font-weight:700;color:${iso === todayIso ? 'var(--accent)' : 'var(--text-2)'};text-transform:uppercase;letter-spacing:.6px;">${escapeHtml(label)}${iso !== todayIso ? ` <span onclick="event.stopPropagation();calListGoToday()" style="color:#000;background:var(--accent);border-radius:8px;padding:2px 8px;font-size:10px;font-weight:800;cursor:pointer;margin-left:6px;letter-spacing:0;text-transform:none;">Today</span>` : ''}</span>
-      <button onclick="calListShiftDay(1)" style="background:none;border:none;color:var(--accent);font-size:18px;cursor:pointer;padding:0 8px;">&#8250;</button>
+      <div style="display:flex;align-items:center;"><button onclick="calListShiftDay(1)" style="background:none;border:none;color:var(--accent);font-size:18px;cursor:pointer;padding:0 8px;">&#8250;</button><button onclick="window._prefillGigDate='${iso}';openGigWizard();" aria-label="Add gig on this day" style="background:none;border:none;color:var(--accent);font-size:20px;font-weight:600;cursor:pointer;padding:0 8px;width:30px;">+</button></div>
     </div>`;
   if (items.length === 0) {
     html += `
@@ -20191,5 +20258,46 @@ function initCalListBehaviour() {
       const dy = e.changedTouches[0].clientY - sy;
       if (Math.abs(dx) > 56 && Math.abs(dy) < 48) calListShiftDay(dx < 0 ? 1 : -1);
     }, { passive: true });
+  }
+  // On the grid itself: sideways swipe flips the month, long-press a day
+  // opens its options sheet. A fired long-press swallows the click that
+  // follows pointerup so the day doesn't also get selected.
+  const grid = document.getElementById('calListGrid');
+  if (grid && !grid._gesturesWired) {
+    grid._gesturesWired = true;
+    let gsx = 0, gsy = 0;
+    grid.addEventListener('touchstart', (e) => {
+      gsx = e.touches[0].clientX; gsy = e.touches[0].clientY;
+    }, { passive: true });
+    grid.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - gsx;
+      const dy = e.changedTouches[0].clientY - gsy;
+      if (Math.abs(dx) > 56 && Math.abs(dy) < 48) (dx < 0 ? nextCalendarMonth : prevCalendarMonth)();
+    }, { passive: true });
+    let lpTimer = null, lpX = 0, lpY = 0;
+    const cancelLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+    grid.addEventListener('pointerdown', (e) => {
+      const cell = e.target.closest('.cal-list-cell');
+      if (!cell) return;
+      lpX = e.clientX; lpY = e.clientY;
+      cancelLp();
+      lpTimer = setTimeout(() => {
+        lpTimer = null;
+        grid._lpFired = true;
+        openDayActionSheet(cell.dataset.date);
+      }, 500);
+    });
+    grid.addEventListener('pointermove', (e) => {
+      if (lpTimer && (Math.abs(e.clientX - lpX) > 10 || Math.abs(e.clientY - lpY) > 10)) cancelLp();
+    });
+    grid.addEventListener('pointerup', cancelLp);
+    grid.addEventListener('pointercancel', cancelLp);
+    grid.addEventListener('click', (e) => {
+      if (grid._lpFired) {
+        grid._lpFired = false;
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
   }
 }

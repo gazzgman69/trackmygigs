@@ -1,3 +1,19 @@
+# Calendar polish wave (2026-06-10, all 6 ideas approved + 1 bug)
+
+Approved in chat: "all sound perfect additions". All in public/js/app.js list view.
+
+- [ ] BUG: Day-options sheet recognises blocked days only by first date; use
+      expanded_dates / start_date so mid-run days show Blocked + Manage block
+- [ ] Tap month name -> month/year jump sheet (year stepper + 12-month grid)
+- [ ] Sideways swipe on the grid changes month (day-panel swipe stays per-day)
+- [ ] Dim past days in the grid (number + bars), Apple style
+- [ ] Subtle weekend tint on SA/SU cells
+- [ ] Small + on the day header: add gig prefilled to selected date
+      (reuses window._prefillGigDate + openGigWizard, same as Day options)
+- [ ] Long-press a grid day opens Day options directly (with click suppression
+      + no text selection on the grid)
+- [ ] node --check, one commit, deploy, grep new symbols, browser verify, console clean
+
 # Landing page refresh + premium purchase check (2026-06-10)
 
 ## Phase 1 — Purchase flow
