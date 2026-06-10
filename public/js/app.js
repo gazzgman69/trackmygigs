@@ -15000,8 +15000,16 @@ async function openChatInbox() {
   const body = document.getElementById('chatInboxBody');
   if (!body) return;
 
+  // Re-entrancy latch. openPanel('panel-chat-inbox') has a hook that calls
+  // renderChatInbox, which delegates straight back here: without the latch,
+  // ONE inbox open recursed 50+ times, firing a thread fetch per cycle
+  // (measured live 2026-06-10; under a failing fetch it logged 1000+
+  // errors). The latch only needs to cover the synchronous openPanel call.
+  if (window._chatInboxOpening) return;
+  window._chatInboxOpening = true;
   body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading messages...</div>';
   openPanel('panel-chat-inbox');
+  window._chatInboxOpening = false;
 
   // 2026-04-29 — bind the static search input once. The input lives in the
   // panel HTML (not the body's innerHTML) so it never gets destroyed by a
