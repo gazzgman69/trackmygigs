@@ -528,13 +528,20 @@ function setupTextScaling() {
       document.body.removeChild(probe);
       if (preferredSize > 0 && Math.abs(preferredSize - 16) > 0.5) scale = preferredSize / 16;
     }
-    if (scale && Math.abs(scale - 1) > 0.02) {
-      // Clamped so extreme settings can't shatter layouts.
-      var z = Math.min(1.35, Math.max(0.85, scale));
-      document.body.style.zoom = z;
+    if (scale && scale > 1.02) {
+      // Text-only scaling: -webkit-text-size-adjust grows the WORDS while
+      // the layout keeps its shape (WhatsApp-style), unlike body zoom which
+      // inflated boxes and text together. Mobile engines honour it; desktop
+      // ignores it, which is fine - this is a phone feature. Clamped at
+      // 135% so dense layouts wrap rather than break.
+      var pct = Math.round(Math.min(1.35, scale) * 100) + '%';
+      document.documentElement.style.webkitTextSizeAdjust = pct;
+      document.documentElement.style.textSizeAdjust = pct;
     } else {
-      document.body.style.zoom = '';
+      document.documentElement.style.webkitTextSizeAdjust = '100%';
+      document.documentElement.style.textSizeAdjust = '100%';
     }
+    document.body.style.zoom = '';
     if (typeof setAppHeight === 'function') setAppHeight();
   } catch (e) { /* default 1x */ }
 }
@@ -562,7 +569,7 @@ function openTextSizePicker() {
     + opt('Auto (follow my phone)', null, 14)
     + opt('Default', 1, 14)
     + opt('Large', 1.15, 16)
-    + opt('Extra large', 1.3, 18)
+    + opt('Extra large', 1.35, 19)
     + '<button onclick="document.getElementById(\'textSizeSheet\').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Close</button>'
     + '</div>';
   sheet.addEventListener('click', (ev) => { if (ev.target === sheet) sheet.remove(); });
@@ -573,9 +580,9 @@ function setTextSize(val) {
   if (val === null) localStorage.removeItem('tmg_text_scale');
   else localStorage.setItem('tmg_text_scale', String(val));
   setupTextScaling();
-  const sheet = document.getElementById('textSizeSheet');
-  if (sheet) sheet.remove();
-  showToast(val === null ? 'Following your phone\u2019s text size.' : 'Text size updated.');
+  // Re-render the sheet in place so the change shows immediately while
+  // the options are still on screen.
+  openTextSizePicker();
 }
 window.openTextSizePicker = openTextSizePicker;
 window.setTextSize = setTextSize;
@@ -5126,7 +5133,7 @@ function buildProfileHTML(content, profile) {
         <div onclick="openTextSizePicker()" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
           <span style="color:var(--text);font-size:14px;">Text size</span>
           <span style="display:flex;align-items:center;gap:8px;">
-            <span style="font-size:12px;color:var(--text-2);">${(() => { const v = parseFloat(localStorage.getItem('tmg_text_scale')); return !v ? 'Auto' : v === 1 ? 'Default' : v === 1.15 ? 'Large' : v === 1.3 ? 'Extra large' : v + 'x'; })()}</span>
+            <span style="font-size:12px;color:var(--text-2);">${(() => { const v = parseFloat(localStorage.getItem('tmg_text_scale')); return !v ? 'Auto' : v === 1 ? 'Default' : v === 1.15 ? 'Large' : v >= 1.3 ? 'Extra large' : v + 'x'; })()}</span>
             <span style="color:var(--accent);font-size:16px;">\u203A</span>
           </span>
         </div>
