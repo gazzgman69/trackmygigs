@@ -134,6 +134,10 @@ body {
 .greeting {
   font-size: var(--font-size-base);
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 52vw;
 }
 
 .header-right {

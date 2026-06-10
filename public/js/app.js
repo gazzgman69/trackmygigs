@@ -545,6 +545,11 @@ function setupNavigation() {
       if (screen === 'receipt') {
         openPanel('panel-receipt');
         if (typeof initReceiptPanel === 'function') initReceiptPanel();
+        // Receipts lives in an overlay, not a screen, but the nav should
+        // still behave like a tab: highlight it. showScreen() clears the
+        // active class again when any other tab is tapped.
+        document.querySelectorAll('.nav-item').forEach((n) => n.classList.remove('active'));
+        item.classList.add('active');
         return;
       }
       showScreen(screen);
@@ -4401,10 +4406,7 @@ function buildOffersHTML(content, offers) {
 
   let html = `
     <div class="ph" style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <button onclick="showScreen('home')" style="color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;background:none;border:none;">‹ Back</button>
-        <div class="pht" style="font-size:22px;font-weight:700;color:var(--text);">Offers</div>
-      </div>
+      <div class="pht" style="font-size:22px;font-weight:700;color:var(--text);">Offers</div>
       <div style="display:flex;align-items:center;gap:6px;">
         <div onclick="showAcceptedOffers()" title="Accepted offers" style="display:flex;align-items:center;gap:4px;background:var(--success-dim);border:1px solid rgba(63,185,80,.3);border-radius:12px;padding:5px 10px;cursor:pointer;">
           <span style="font-size:12px;font-weight:700;color:var(--success);">${acceptedN}</span>
