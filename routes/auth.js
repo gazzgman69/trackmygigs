@@ -636,8 +636,12 @@ router.get('/dev-set-premium', async (req, res) => {
     const userId = sess.rows[0].user_id;
     const on = String(req.query.on || '1') === '1';
     const until = on ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : null;
+    // Both premium flags move together: `premium` (Stripe bookkeeping) and
+    // `subscription_tier` (what every feature gate and the client read).
     await db.query(
-      'UPDATE users SET premium = $1, premium_until = $2 WHERE id = $3',
+      `UPDATE users SET premium = $1, premium_until = $2,
+              subscription_tier = CASE WHEN $1 THEN 'premium' ELSE 'free' END
+        WHERE id = $3`,
       [on, until, userId]
     );
     return res.json({ ok: true, premium: on, premium_until: until });

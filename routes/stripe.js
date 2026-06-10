@@ -269,6 +269,7 @@ async function webhookHandler(req, res) {
              SET stripe_customer_id = COALESCE(stripe_customer_id, $1),
                  stripe_subscription_id = $2,
                  premium = TRUE,
+                 subscription_tier = 'premium',
                  premium_until = $3,
                  stripe_cancel_at_period_end = $4,
                  trial_consumed_at = COALESCE(trial_consumed_at, NOW()),
@@ -338,6 +339,7 @@ async function webhookHandler(req, res) {
         await db.query(
           `UPDATE users
              SET premium = $1,
+                 subscription_tier = CASE WHEN $1 THEN 'premium' ELSE 'free' END,
                  premium_until = $2,
                  stripe_cancel_at_period_end = $3,
                  trial_consumed_at = COALESCE(trial_consumed_at, NOW()),

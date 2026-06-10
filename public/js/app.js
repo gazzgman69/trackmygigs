@@ -8708,6 +8708,14 @@ window.startGroupChat = startGroupChat;
 
 async function startChatWith(userId) {
   if (!userId) return;
+  // Panel-stacking fix (June 2026): panels later in the DOM win when two are
+  // open, so a thread opened from Find Musicians or the marketplace appeared
+  // BEHIND the panel that launched it and looked like a dead tap. Close every
+  // other open overlay (keep the inbox: it sits before the thread in DOM
+  // order, so back-navigation still works).
+  document.querySelectorAll('.panel-overlay.open').forEach(p => {
+    if (p.id !== 'panel-chat-thread' && p.id !== 'panel-chat-inbox') closePanel(p.id);
+  });
   try {
     const resp = await fetch('/api/chat/threads', {
       method: 'POST',

@@ -46,14 +46,20 @@ router.get('/status', async (req, res) => {
   try {
     const r = await db.query(
       `SELECT google_sheets_id, google_sheets_tab, google_sheets_last_pulled_at,
-              google_access_token IS NOT NULL AS has_token
+              google_access_token IS NOT NULL AS has_token,
+              google_connection_state
          FROM users WHERE id = $1`,
       [req.user.id]
     );
     const row = r.rows[0] || {};
+    // needs_reconnect mirrors the calendar status: a token can exist but be
+    // revoked (google_connection_state holds the failure marker). Reporting
+    // has_google_token alone made a dead token look healthy.
+    const needsReconnect = !!row.google_connection_state;
     res.json({
       connected: !!row.google_sheets_id,
-      has_google_token: !!row.has_token,
+      has_google_token: !!row.has_token && !needsReconnect,
+      needs_reconnect: needsReconnect,
       spreadsheet_id: row.google_sheets_id || null,
       tab_name: row.google_sheets_tab || null,
       last_pulled_at: row.google_sheets_last_pulled_at || null,

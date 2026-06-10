@@ -216,8 +216,8 @@ async function upsertContactPair(client, userIdA, userIdB, contextNote, fallback
         }
       } else {
         await client.query(
-          `INSERT INTO contacts (owner_id, name, instruments, notes, location, linked_user_id)
-           VALUES ($1, $2, $3::text[], $4, $5, $6)`,
+          `INSERT INTO contacts (owner_id, name, instruments, notes, location, linked_user_id, contact_user_id)
+           VALUES ($1, $2, $3::text[], $4, $5, $6, $6)`,
           [owner, target.name, target.instruments, stamp, target.outward, other]
         );
       }
@@ -2408,7 +2408,7 @@ router.post('/dep-offers', async (req, res) => {
         if (rows[0]) {
           recipientId = rows[0].id;
           await db.query(
-            'UPDATE contacts SET contact_user_id = $1 WHERE id = $2 AND owner_id = $3',
+            'UPDATE contacts SET contact_user_id = $1, linked_user_id = COALESCE(linked_user_id, $1) WHERE id = $2 AND owner_id = $3',
             [recipientId, c.id, req.user.id]
           );
         }
@@ -2422,7 +2422,7 @@ router.post('/dep-offers', async (req, res) => {
         if (rows[0]) {
           recipientId = rows[0].id;
           await db.query(
-            'UPDATE contacts SET contact_user_id = $1 WHERE id = $2 AND owner_id = $3',
+            'UPDATE contacts SET contact_user_id = $1, linked_user_id = COALESCE(linked_user_id, $1) WHERE id = $2 AND owner_id = $3',
             [recipientId, c.id, req.user.id]
           );
         }
@@ -3428,8 +3428,8 @@ router.post('/contacts', async (req, res) => {
     }
 
     const result = await db.query(
-      `INSERT INTO contacts (owner_id, name, email, phone, instruments, notes, location, is_favourite, linked_user_id)
-       VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8, $9)
+      `INSERT INTO contacts (owner_id, name, email, phone, instruments, notes, location, is_favourite, linked_user_id, contact_user_id)
+       VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8, $9, $9)
        RETURNING *`,
       [req.user.id, name, email || null, phone || null, instrumentsArr, notes || null, location || null, !!is_favourite, verifiedLinkedId]
     );

@@ -1274,6 +1274,24 @@ async function runMigrations() {
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS origin_offer_id UUID`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS origin_marketplace_id INTEGER`);
 
+    // Premium flag reconciliation (June 2026). Stripe + dev-set-premium wrote
+    // users.premium while every gate reads users.subscription_tier; the two
+    // drifted. Writers now set both; this backfills anyone stranded with a
+    // live premium flag but a free tier. Idempotent.
+    await db.query(`
+      UPDATE users SET subscription_tier = 'premium'
+       WHERE premium IS TRUE
+         AND (premium_until IS NULL OR premium_until > NOW())
+         AND subscription_tier IS DISTINCT FROM 'premium'
+    `);
+
+    // Contacts column reconciliation (June 2026). POST /contacts wrote
+    // linked_user_id while dep-offer resolution wrote contact_user_id, and
+    // different features read different columns. Writers now set both; this
+    // backfills each from the other. Idempotent.
+    await db.query(`UPDATE contacts SET contact_user_id = linked_user_id WHERE contact_user_id IS NULL AND linked_user_id IS NOT NULL`);
+    await db.query(`UPDATE contacts SET linked_user_id = contact_user_id WHERE linked_user_id IS NULL AND contact_user_id IS NOT NULL`);
+
     // Invoice line items (June 2026). Optional JSONB array of
     // { description, qty, rate, amount }; when present the invoice amount is
     // the server-computed sum. Single-amount invoices keep line_items NULL.
