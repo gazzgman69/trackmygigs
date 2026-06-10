@@ -4612,9 +4612,30 @@ router.post('/setlists/save-shared', async (req, res) => {
     }
     const snap = att.snapshot;
     const songsIn = Array.isArray(snap.songs) ? snap.songs.slice(0, 100) : [];
+    // Charts are stored out-of-band with a 14-day expiry; merge them back in
+    // by song index. Messages sent before the split carried lyrics inline,
+    // so each song falls back to its own lyrics field.
+    let chartsByIndex = {};
+    let chartsExpired = false;
+    if (snap.chart_ref && /^[0-9a-f-]{36}$/i.test(String(snap.chart_ref))) {
+      try {
+        const cr = await db.query(
+          `SELECT charts FROM setlist_share_charts WHERE id = $1 AND expires_at > NOW()`,
+          [snap.chart_ref]
+        );
+        if (cr.rows.length > 0) chartsByIndex = cr.rows[0].charts || {};
+        else chartsExpired = true;
+      } catch (e) {
+        chartsExpired = true;
+      }
+    }
     const songIds = [];
-    for (const s of songsIn) {
+    for (let i = 0; i < songsIn.length; i++) {
+      const s = songsIn[i];
       if (!s || !s.title) continue;
+      const chart = (typeof chartsByIndex[i] === 'string' && chartsByIndex[i])
+        ? chartsByIndex[i].slice(0, 16 * 1024)
+        : (s.lyrics ? String(s.lyrics).slice(0, 16 * 1024) : null);
       const title = String(s.title).slice(0, 255);
       const artist = s.artist ? String(s.artist).slice(0, 255) : null;
       // Reuse an existing song on title+artist match so repeat saves don't
@@ -4630,7 +4651,7 @@ router.post('/setlists/save-shared', async (req, res) => {
         const ex = existing.rows[0];
         // Backfill chart and tempo only where the receiver has none. Their
         // own version of a song always wins over an incoming snapshot.
-        const fillLyrics = (!ex.lyrics && s.lyrics) ? String(s.lyrics).slice(0, 8 * 1024) : null;
+        const fillLyrics = (!ex.lyrics && chart) ? chart : null;
         const fillTempo = (ex.tempo == null && Number.isFinite(Number(s.tempo))) ? Number(s.tempo) : null;
         if (fillLyrics || fillTempo) {
           await db.query(
@@ -4651,7 +4672,7 @@ router.post('/setlists/save-shared', async (req, res) => {
           s.key ? String(s.key).slice(0, 20) : null,
           Number.isFinite(Number(s.tempo)) ? Number(s.tempo) : null,
           Number.isFinite(Number(s.duration)) ? Number(s.duration) : null,
-          s.lyrics ? String(s.lyrics).slice(0, 8 * 1024) : null
+          chart
         ]
       );
       songIds.push(created.rows[0].id);
@@ -4667,7 +4688,7 @@ router.post('/setlists/save-shared', async (req, res) => {
         Number.isFinite(Number(snap.total_duration)) ? Number(snap.total_duration) : null
       ]
     );
-    res.json({ setlist: created.rows[0], song_count: songIds.length });
+    res.json({ setlist: created.rows[0], song_count: songIds.length, charts_expired: chartsExpired });
   } catch (error) {
     console.error('Save shared setlist error:', error);
     res.status(500).json({ error: 'Failed to save setlist' });

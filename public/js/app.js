@@ -15695,7 +15695,12 @@ async function saveSharedSetlist(msgId) {
     // Invalidate the setlists cache so Repertoire shows the new copy.
     window._cachedSetlists = null;
     closeSharedSetlistSheet();
-    try { toast(`Saved "${(data.setlist && data.setlist.name) || 'setlist'}" to your repertoire`); } catch (_) {}
+    try {
+      const nm = (data.setlist && data.setlist.name) || 'setlist';
+      toast(data.charts_expired
+        ? `Saved "${nm}" — charts expire 14 days after sending, ask for a re-send to get them`
+        : `Saved "${nm}" to your repertoire`);
+    } catch (_) {}
   } catch (err) {
     console.error('Save shared setlist error:', err);
     if (btn) { btn.disabled = false; btn.textContent = 'Save to my repertoire'; btn.style.opacity = ''; }

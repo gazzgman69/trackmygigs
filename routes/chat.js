@@ -114,36 +114,50 @@ async function buildAttachmentSnapshot(attachment, actorId) {
     if (r.rows.length === 0) return null;
     const sl = r.rows[0];
     let songs = [];
+    let chartRef = null;
+    let chartExpiry = null;
     if (Array.isArray(sl.song_ids) && sl.song_ids.length > 0) {
       const sr = await db.query(
         `SELECT id, title, artist, key, tempo, duration, lyrics FROM songs WHERE id = ANY($1) AND user_id = $2`,
         [sl.song_ids, actorId]
       );
       const byId = new Map(sr.rows.map(s => [s.id, s]));
-      // Preserve setlist order, drop any dangling ids. Charts ride along so
-      // the receiver gets playable songs, not just names: capped per song
-      // (8KB) and across the whole snapshot (120KB) so a monster songbook
-      // can't bloat the messages table; metadata always survives the cap.
-      let chartBudget = 120 * 1024;
-      songs = sl.song_ids
+      // Preserve setlist order, drop any dangling ids. The snapshot itself
+      // carries metadata only because it is re-downloaded on every thread
+      // open; full charts are parked in setlist_share_charts (14-day
+      // expiry, no total size cap) and merged back in when the receiver
+      // saves the setlist to their repertoire.
+      const ordered = sl.song_ids
         .map(id => byId.get(id))
         .filter(Boolean)
-        .slice(0, 60)
-        .map(s => {
-          let lyrics = null;
-          if (s.lyrics && chartBudget > 0) {
-            lyrics = String(s.lyrics).slice(0, 8 * 1024);
-            chartBudget -= lyrics.length;
-          }
-          return {
-            title: s.title,
-            artist: s.artist || null,
-            key: s.key || null,
-            tempo: s.tempo != null ? Number(s.tempo) : null,
-            duration: s.duration != null ? Number(s.duration) : null,
-            lyrics,
-          };
-        });
+        .slice(0, 60);
+      const charts = {};
+      songs = ordered.map((s, i) => {
+        if (s.lyrics) charts[i] = String(s.lyrics).slice(0, 16 * 1024);
+        return {
+          title: s.title,
+          artist: s.artist || null,
+          key: s.key || null,
+          tempo: s.tempo != null ? Number(s.tempo) : null,
+          duration: s.duration != null ? Number(s.duration) : null,
+          has_chart: !!s.lyrics,
+        };
+      });
+      if (Object.keys(charts).length > 0) {
+        try {
+          await db.query(`DELETE FROM setlist_share_charts WHERE expires_at < NOW()`);
+          const cr = await db.query(
+            `INSERT INTO setlist_share_charts (charts, expires_at)
+             VALUES ($1::jsonb, NOW() + interval '14 days') RETURNING id, expires_at`,
+            [JSON.stringify(charts)]
+          );
+          chartRef = cr.rows[0].id;
+          chartExpiry = cr.rows[0].expires_at;
+        } catch (e) {
+          // Degrade to a metadata-only share rather than blocking the send.
+          console.error('Setlist chart stash failed, sending without charts:', e.message);
+        }
+      }
     }
     return {
       kind: 'setlist',
@@ -154,6 +168,8 @@ async function buildAttachmentSnapshot(attachment, actorId) {
         description: sl.description || null,
         song_count: Array.isArray(sl.song_ids) ? sl.song_ids.length : 0,
         total_duration: sl.total_duration != null ? Number(sl.total_duration) : null,
+        chart_ref: chartRef,
+        charts_expire_at: chartExpiry,
         songs
       }
     };

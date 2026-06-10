@@ -1999,6 +1999,16 @@ async function runMigrations() {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       PRIMARY KEY (fact_id, user_id)
     )`);
+    // Full song charts for shared setlists live out-of-band so the message
+    // snapshot stays light (it is re-downloaded on every thread open).
+    // Rows expire 14 days after sending; saving copies charts into the
+    // receiver's own songs, which never expire.
+    await db.query(`CREATE TABLE IF NOT EXISTS setlist_share_charts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      charts JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL
+    )`);
     // 2026-04-29 contextual-send batch: messages.attachments was TEXT[] but
     // we now store snapshotted gig/contact objects in there. Promote to
     // JSONB. Existing rows are always NULL (no real users have used the
