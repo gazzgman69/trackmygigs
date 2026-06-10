@@ -3,17 +3,28 @@
 Tapping a From-Google row offers Import as gig / Mark day as busy / Ignore,
 so personal Google events can count as busy without becoming gigs.
 
-- [ ] server.js migration: blocked_dates.source_event_id TEXT (links a block to
+- [x] server.js migration: blocked_dates.source_event_id TEXT (links a block to
       the original Google event WITHOUT touching google_event_id, so unblocking
       can never delete the user's real Google event)
-- [ ] POST /api/blocked-dates accepts source_event_id; skips the Google
+- [x] POST /api/blocked-dates accepts source_event_id; skips the Google
       "Unavailable" push for those rows (the original event already marks it)
-- [ ] GET /api/calendar/pins filters out events claimed by source_event_id
+- [x] GET /api/calendar/pins filters out events claimed by source_event_id
       (pin disappears once marked busy)
-- [ ] Client: openGooglePinSheet(pinId) with Import as gig (existing
+- [x] Client: openGooglePinSheet(pinId) with Import as gig (existing
       /api/calendar/import), Mark day as busy, Ignore + a See-all-imports link
-- [ ] List view pin rows route to the new sheet instead of openGigNudge()
-- [ ] Deploy, verify live on the harmless "Lock up shuts" event, then revert
+- [x] List view pin rows route to the new sheet instead of openGigNudge()
+- [x] Deploy, verify live on the harmless "Lock up shuts" event, then revert
+
+## Review (2026-06-10, commit bf55575)
+
+Live and verified end to end on Gareth's account with the recurring
+"Lock up shuts" event: mark-busy 200 with source_event_id stored and
+google_event_id null (no duplicate Unavailable pushed), the pin
+disappeared from /api/calendar/pins and the nudges list while blocked,
+unblock 200, and the original Google event reappeared as a pin
+afterwards, proving Google was never touched. The nudges candidate
+filter got the same source_event_id treatment so marked-busy events
+stop nagging. Sheet verified rendering in the browser, console clean.
 
 # Calendar polish wave (2026-06-10, all 6 ideas approved + 1 bug)
 
