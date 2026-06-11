@@ -68,3 +68,13 @@ or explicitly confirm.
 
 ## 2026-06-11 — Replit Agent use wedges the deploy pipeline
 Deploy reloads returned 502 for 15+ minutes; console showed EADDRINUSE then `Cannot find module '../lib/sheets-writer'`. Root cause: a Replit Agent session ("Improve receipt snapping") had left an unpushed local commit plus uncommitted tree damage (lib/sheets-writer.js deleted, google-auth.js half-modified), so the reload endpoint's git pull failed silently and nodemon crash-looped on the broken tree. Recovery WITHOUT the Shell: Replit workspace > Git pane (UI, allowed) > Discard All restores the tree and the app boots on HEAD; then Pull cleanly applied origin/main and the stranded Agent commit dropped out. Lessons: (1) when reloads 502 persistently, check the Replit Git pane for a dirty tree or stranded local commits before blaming Replit cold starts; (2) the Git pane is the automation-safe recovery tool, the Shell stays manual; (3) the no-Agent rule is not ceremonial, one Agent session took the whole app down.
+
+## 2026-06-11 (evening) — overlapping reloads dirty the Replit tree
+Second 502 wedge of the day, no Agent involved this time: tight retry loops
+firing /api/admin/reload every ~10s queued overlapping `git reset --hard`
+processes that raced mid-checkout and left app.js modified, blocking pulls.
+Fixed in server.js: reloads are serialized (busy = 429). Deploy-side rules:
+ONE reload call per deploy, then poll the BUNDLE (grep for the new symbol)
+on a 15s+ cadence WITHOUT re-hitting the reload endpoint; only re-trigger
+reload if the bundle is still stale after 60s, and never more than once per
+30s. Recovery when wedged: Replit Git pane (UI) > Discard All > Pull.

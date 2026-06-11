@@ -156,6 +156,12 @@ app.use('/auth', authRoutes);
 // CRITICAL: these routes must be registered BEFORE `app.use('/api', apiRoutes)`
 // so they bypass the auth middleware mounted inside apiRoutes. Otherwise every
 // reload attempt returns 401 from authMiddleware before the handler runs.
+// Reloads must run one at a time. Overlapping `git reset --hard` processes
+// (retry loops hammering the endpoint while Replit is cold) race each other
+// mid-checkout and can leave the working tree dirty, which then blocks every
+// later pull until someone discards the damage by hand. Busy = 429.
+let reloadInFlight = false;
+
 function handleReload(req, res) {
   const expected = process.env.RELOAD_SECRET;
   if (!expected) {
@@ -165,6 +171,10 @@ function handleReload(req, res) {
   if (provided !== expected) {
     return res.status(401).json({ error: 'Invalid reload key' });
   }
+  if (reloadInFlight) {
+    return res.status(429).json({ error: 'Reload already in progress, retry shortly' });
+  }
+  reloadInFlight = true;
   // force=1 resolves the "local changes would be overwritten" case that
   // occasionally appears on Replit when the workspace has uncommitted edits.
   // It runs `git fetch origin && git reset --hard origin/main`, which always
@@ -183,6 +193,7 @@ function handleReload(req, res) {
   const cmd = install ? `${gitCmd} && npm install --no-audit --no-fund` : gitCmd;
   const timeoutMs = install ? 120000 : 30000;
   exec(cmd, { cwd: __dirname, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    reloadInFlight = false;
     if (err) {
       console.error('[reload] ' + cmd + ' failed:', err.message);
       return res.status(500).json({ error: cmd + ' failed', stderr: stderr || err.message });
