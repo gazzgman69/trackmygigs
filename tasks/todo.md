@@ -385,7 +385,8 @@ rendering in the browser; 9 feature blocks total.
       non-today day is selected). Verified live: chip jumps to today and hides.
 
 ## Onboarding wizard wave (2026-06-11, signed off in chat)
-- [ ] Dual Google tokens: sheets_* columns on users; /auth/google/callback writes sheets_* when state=sheets; lib/google-auth.js purpose param ('sheets' prefers sheets token, falls back to shared); sheets status reflects either token
-- [ ] Wizard step 4 becomes a form: bank details + payment link, stamped on every invoice, PATCHed to profile (both optional)
-- [ ] finishOnboarding lands on Profile and pulses the Google Calendar row, Google Sheets row, and Edit button so people learn where settings live
-- [ ] Picker copy: connections live in Profile afterwards
+- [x] Dual Google tokens: sheets_* columns on users; /auth/google/callback writes sheets_* when state=sheets; lib/google-auth.js purpose param ('sheets' prefers sheets token, falls back to shared); sheets status reflects either token
+- [x] Wizard step 4 becomes a form: bank details + payment link, stamped on every invoice, PATCHed to profile (both optional)
+- [x] finishOnboarding lands on Profile and pulses the Google Calendar row, Google Sheets row, and Edit button so people learn where settings live
+- [x] Picker copy: connections live in Profile afterwards
+- [ ] Gareth manual test: connect a Sheet with a second Google account and confirm the calendar connection survives (needs real OAuth, can't be automated)

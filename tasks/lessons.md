@@ -64,3 +64,7 @@ He had set it deliberately and changed it back. Rule: documentation
 describes context, not the user's current choices. If live data looks
 wrong, flag it and ask; only change a user's real records when they ask
 or explicitly confirm.
+
+
+## 2026-06-11 — Replit Agent use wedges the deploy pipeline
+Deploy reloads returned 502 for 15+ minutes; console showed EADDRINUSE then `Cannot find module '../lib/sheets-writer'`. Root cause: a Replit Agent session ("Improve receipt snapping") had left an unpushed local commit plus uncommitted tree damage (lib/sheets-writer.js deleted, google-auth.js half-modified), so the reload endpoint's git pull failed silently and nodemon crash-looped on the broken tree. Recovery WITHOUT the Shell: Replit workspace > Git pane (UI, allowed) > Discard All restores the tree and the app boots on HEAD; then Pull cleanly applied origin/main and the stranded Agent commit dropped out. Lessons: (1) when reloads 502 persistently, check the Replit Git pane for a dirty tree or stranded local commits before blaming Replit cold starts; (2) the Git pane is the automation-safe recovery tool, the Shell stays manual; (3) the no-Agent rule is not ceremonial, one Agent session took the whole app down.
