@@ -15348,8 +15348,18 @@ async function openChatInbox() {
   // errors). The latch only needs to cover the synchronous openPanel call.
   if (window._chatInboxOpening) return;
   window._chatInboxOpening = true;
-  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading messages...</div>';
-  openPanel('panel-chat-inbox');
+  // Stale-while-revalidate: every other list in the app paints from cache
+  // and refreshes behind the scenes; the inbox was the one place that
+  // blanked to "Loading..." and made the user wait a full round-trip
+  // (about 4 seconds on a cold server) on every single open. Paint the
+  // last known list instantly, then let the fetch below swap in fresh rows.
+  if (Array.isArray(window._chatInboxThreads) && window._chatInboxThreads.length) {
+    openPanel('panel-chat-inbox');
+    _renderChatInboxList();
+  } else {
+    body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-2);">Loading messages...</div>';
+    openPanel('panel-chat-inbox');
+  }
   window._chatInboxOpening = false;
 
   // 2026-04-29 — bind the static search input once. The input lives in the

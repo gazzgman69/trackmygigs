@@ -2035,6 +2035,10 @@ async function runMigrations() {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       expires_at TIMESTAMPTZ NOT NULL
     )`);
+    // The chat inbox query reads the latest message per thread; without this
+    // index every thread row re-sorts that thread's messages on each open.
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_messages_thread_created
+      ON messages (thread_id, created_at DESC)`);
     // 2026-04-29 contextual-send batch: messages.attachments was TEXT[] but
     // we now store snapshotted gig/contact objects in there. Promote to
     // JSONB. Existing rows are always NULL (no real users have used the

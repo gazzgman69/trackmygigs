@@ -185,17 +185,27 @@ router.get('/threads', async (req, res) => {
     // S12-07: Fold participant enrichment into the thread query so we issue
     // a single round-trip instead of 1 + N. We aggregate matching users as a
     // JSON array per thread via a LATERAL subquery.
+    // One LATERAL fetch of the latest message per thread instead of four
+    // correlated subqueries (content, attachments, created_at, sender each
+    // re-scanned messages). The ORDER BY reuses the same row. Attachments
+    // are trimmed to kind-only stubs: the inbox preview just says "shared a
+    // setlist", so shipping full snapshots (KBs per thread) was pure waste.
     const result = await db.query(
       `SELECT t.*,
-        (SELECT content FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_message,
-        (SELECT attachments FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_attachments,
-        (SELECT created_at FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_message_at,
-        (SELECT sender_id FROM messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_sender_id,
+        lm.content AS last_message,
+        lm.attachments AS last_attachments,
+        lm.created_at AS last_message_at,
+        lm.sender_id AS last_sender_id,
         (SELECT COUNT(*) FROM messages WHERE thread_id = t.id AND NOT ($1 = ANY(read_by))) AS unread_count,
         g.band_name, g.venue_name, g.date AS gig_date,
         COALESCE(p.participants, '[]'::jsonb) AS participants
        FROM threads t
        LEFT JOIN gigs g ON t.gig_id = g.id
+       LEFT JOIN LATERAL (
+         SELECT content, attachments, created_at, sender_id
+         FROM messages WHERE thread_id = t.id
+         ORDER BY created_at DESC LIMIT 1
+       ) lm ON TRUE
        LEFT JOIN LATERAL (
          SELECT jsonb_agg(jsonb_build_object(
            'id', u.id,
@@ -207,9 +217,16 @@ router.get('/threads', async (req, res) => {
          WHERE u.id = ANY(t.participant_ids)
        ) p ON TRUE
        WHERE $1 = ANY(t.participant_ids)
-       ORDER BY (SELECT MAX(created_at) FROM messages WHERE thread_id = t.id) DESC NULLS LAST`,
+       ORDER BY lm.created_at DESC NULLS LAST`,
       [req.user.id]
     );
+    // Strip attachment payloads down to their kind; the inbox only needs to
+    // know one exists to render the preview line.
+    for (const row of result.rows) {
+      if (Array.isArray(row.last_attachments)) {
+        row.last_attachments = row.last_attachments.map(a => (a && a.kind ? { kind: a.kind } : a));
+      }
+    }
 
     res.json({ threads: result.rows });
   } catch (error) {
