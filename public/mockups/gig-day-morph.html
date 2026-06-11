@@ -3,16 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mockup — Home morphs through gig day</title>
+<title>Mockup — Home morphs through gig day (interactive)</title>
 <style>
 :root{--bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;--text:#E6EDF3;--text-2:#8B949E;--text-3:#6E7681;--accent:#F0A500;--accent-dim:rgba(240,165,0,.15);--success:#3FB950;--danger:#F85149;--info:#58A6FF;--purple:#A78BFA;}
 *{margin:0;padding:0;box-sizing:border-box;}
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;padding-bottom:60px;}
 .note{background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);margin:10px;padding:10px 12px;border-radius:10px;font-size:12px;color:var(--text-2);}
 .note strong{color:var(--accent);}
-.phase{font-size:11px;font-weight:800;color:#000;background:var(--accent);display:inline-block;border-radius:999px;padding:4px 12px;margin:22px 16px 8px;text-transform:uppercase;letter-spacing:.6px;}
-.phase.g{background:var(--success);} .phase.b{background:var(--info);} .phase.p{background:var(--purple);}
-.when{font-size:11px;color:var(--text-3);margin:0 16px 8px;}
+
+/* Phase strip */
+.strip{display:flex;gap:6px;margin:14px 16px 4px;}
+.ph{flex:1;text-align:center;border-radius:10px;padding:8px 4px 7px;border:1px solid var(--border);background:var(--card);cursor:pointer;position:relative;}
+.ph .e{font-size:15px;}
+.ph .l{font-size:9px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-top:2px;}
+.ph.on{border-color:var(--accent);background:var(--accent-dim);}
+.ph.on .l{color:var(--accent);}
+.ph .now{position:absolute;top:-7px;left:50%;transform:translateX(-50%);font-size:8px;font-weight:800;background:var(--success);color:#000;border-radius:999px;padding:1px 7px;letter-spacing:.4px;}
+.striphint{font-size:10px;color:var(--text-3);text-align:center;margin:6px 16px 10px;}
+
+.pane{display:none;}
+.pane.show{display:block;}
 
 .hero{margin:0 16px;border-radius:16px;padding:16px;border:1px solid var(--border);}
 .hero .tag{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;}
@@ -32,73 +42,92 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .mini b{color:var(--text);}
 .mini .go{margin-left:auto;font-size:11px;font-weight:700;color:var(--accent);white-space:nowrap;}
 .countbig{font-size:34px;font-weight:800;color:var(--text);margin-top:8px;letter-spacing:-1px;}
-.dim{font-size:11px;color:var(--text-3);margin:6px 16px 0;text-align:center;}
+.dim{font-size:11px;color:var(--text-3);margin:8px 16px 0;text-align:center;}
 </style>
 </head>
 <body>
-<div class="note"><strong>MOCKUP — not wired.</strong> Gig day isn't one moment, it's four. Home already flips to a "Tonight" card; this hones it into a day that <strong>moves with you</strong>: brief in the morning, countdown to leaving, stage tools at the venue, wrap-up after. Everything below uses data the app already holds (load-in, set times, travel distance, kit checklist, venue notes, weather, leader contact). Noisy cards (rebooking radar, marketplace) sit below the fold all day.</div>
+<div class="note"><strong>MOCKUP — tap the phase strip below, it switches.</strong> The strip is the whole interaction model: Home defaults to whichever phase the clock says, the <strong style="color:var(--success)">NOW</strong> pip marks it, and tapping another phase pins you there (peek ahead at the venue notes, glance back at the day sheet). When the clock crosses into a new phase it takes over again. Setlist access rides in every phase where hands touch instruments: review it in the briefing, one tap from the door, full Stage mode at the venue.</div>
+
+<div class="strip" id="strip">
+  <div class="ph on" data-p="1" onclick="go(1)"><span class="now">NOW</span><div class="e">☕</div><div class="l">Briefing</div></div>
+  <div class="ph" data-p="2" onclick="go(2)"><div class="e">🚗</div><div class="l">Travel</div></div>
+  <div class="ph" data-p="3" onclick="go(3)"><div class="e">🎤</div><div class="l">Venue</div></div>
+  <div class="ph" data-p="4" onclick="go(4)"><div class="e">🌙</div><div class="l">Wrap-up</div></div>
+</div>
+<div class="striphint">NOW follows the clock · tap to peek at any phase · it snaps forward when the next phase starts</div>
 
 <!-- ── PHASE 1 ── -->
-<span class="phase">1 · The briefing</span>
-<div class="when">From waking up until ~2h before leaving</div>
-<div class="hero" style="background:linear-gradient(160deg,#1d2330,var(--card));">
-  <div class="tag" style="color:var(--accent);">🎤 Gig day · The Bullingdon tonight</div>
-  <div class="big">Here's the shape of it</div>
-  <div class="timeline">
-    <div class="tl next"><b>17:40</b> leave Bicester &middot; 45 min + buffer</div>
-    <div class="tl"><b>18:30</b> load-in &middot; rear yard off Cowley Rd</div>
-    <div class="tl"><b>19:15</b> soundcheck</div>
-    <div class="tl"><b>20:00</b> set 1 &middot; <b>21:30</b> set 2</div>
-    <div class="tl"><b>23:30</b> finish &middot; £380 on the night</div>
+<div class="pane show" id="p1">
+  <div class="hero" style="background:linear-gradient(160deg,#1d2330,var(--card));">
+    <div class="tag" style="color:var(--accent);">🎤 Gig day · The Bullingdon tonight</div>
+    <div class="big">Here's the shape of it</div>
+    <div class="timeline">
+      <div class="tl next"><b>17:40</b> leave Bicester &middot; 45 min + buffer</div>
+      <div class="tl"><b>18:30</b> load-in &middot; rear yard off Cowley Rd</div>
+      <div class="tl"><b>19:15</b> soundcheck</div>
+      <div class="tl"><b>20:00</b> set 1 &middot; <b>21:30</b> set 2</div>
+      <div class="tl"><b>23:30</b> finish &middot; £380 on the night</div>
+    </div>
+    <div class="acts"><span class="a1">📄 Day sheet</span><span class="a2">Send to band</span></div>
   </div>
-  <div class="acts"><span class="a1">📄 Day sheet</span><span class="a2">Send to band</span></div>
+  <div class="mini"><span class="ico">🎵</span><span><b>Function Bangers Vol 2</b> · 18 songs · 2 sets mapped</span><span class="go">Review setlist ›</span></div>
+  <div class="mini"><span class="ico">🌧️</span><span><b>Rain from 5pm</b> · cover the load-in, doors are 20m from the van</span></div>
+  <div class="mini"><span class="ico">🎒</span><span>Function rig checklist · <b>6 of 9 packed</b></span><span class="go">Tick off ›</span></div>
+  <div class="mini"><span class="ico">👔</span><span>Dress: <b>all black</b> · Sam Booker leads · 07700 900123</span><span class="go">Call ›</span></div>
 </div>
-<div class="mini"><span class="ico">🌧️</span><span><b>Rain from 5pm</b> · cover the load-in, doors are 20m from the van</span></div>
-<div class="mini"><span class="ico">🎒</span><span>Function rig checklist · <b>6 of 9 packed</b></span><span class="go">Tick off ›</span></div>
-<div class="mini"><span class="ico">👔</span><span>Dress: <b>all black</b> · Sam Booker leads · 07700 900123</span><span class="go">Call ›</span></div>
 
 <!-- ── PHASE 2 ── -->
-<span class="phase g">2 · Get out the door</span>
-<div class="when">From ~90 min before leave-time until you set off</div>
-<div class="hero" style="background:linear-gradient(160deg,#14241a,var(--card));border-color:rgba(63,185,80,.35);">
-  <div class="tag" style="color:var(--success);">⏱️ Leave by 17:40</div>
-  <div class="countbig">1h 12m</div>
-  <div class="sub">45 min drive + 15 min buffer to make 18:30 load-in</div>
-  <div class="acts"><span class="a1" style="background:var(--success);">🧭 Navigate</span><span class="a2">🎒 Kit 8/9</span><span class="a2">Day sheet</span></div>
+<div class="pane" id="p2">
+  <div class="hero" style="background:linear-gradient(160deg,#14241a,var(--card));border-color:rgba(63,185,80,.35);">
+    <div class="tag" style="color:var(--success);">⏱️ Leave by 17:40</div>
+    <div class="countbig">1h 12m</div>
+    <div class="sub">45 min drive + 15 min buffer to make 18:30 load-in</div>
+    <div class="acts"><span class="a1" style="background:var(--success);">🧭 Navigate</span><span class="a2">🎒 Kit 8/9</span></div>
+    <div class="acts" style="margin-top:8px;"><span class="a2">🎵 Setlist in the van · one tap</span></div>
+  </div>
+  <div class="mini"><span class="ico">⛽</span><span>Snap fuel receipts as you go · they file themselves</span><span class="go">Camera ›</span></div>
 </div>
-<div class="mini"><span class="ico">⛽</span><span>Snap fuel receipts as you go · they file themselves</span><span class="go">Camera ›</span></div>
 
 <!-- ── PHASE 3 ── -->
-<span class="phase b">3 · At the venue</span>
-<div class="when">From load-in until the last note</div>
-<div class="hero" style="background:#000;border-color:var(--border);">
-  <div class="tag" style="color:var(--info);">🔵 On site · set 1 in 25 min</div>
-  <div class="big">The Bullingdon</div>
-  <div class="sub">Set 1 &middot; 20:00&ndash;21:00 &nbsp;·&nbsp; Set 2 &middot; 21:30&ndash;22:45</div>
-  <div class="timeline" style="margin-top:10px;">
-    <div class="tl done"><b>18:30</b> loaded in</div>
-    <div class="tl done"><b>19:15</b> soundchecked</div>
-    <div class="tl next"><b>20:00</b> set 1</div>
+<div class="pane" id="p3">
+  <div class="hero" style="background:#000;border-color:var(--border);">
+    <div class="tag" style="color:var(--info);">🔵 On site · set 1 in 25 min</div>
+    <div class="big">The Bullingdon</div>
+    <div class="sub">Set 1 &middot; 20:00&ndash;21:00 &nbsp;·&nbsp; Set 2 &middot; 21:30&ndash;22:45</div>
+    <div class="timeline" style="margin-top:10px;">
+      <div class="tl done"><b>18:30</b> loaded in</div>
+      <div class="tl done"><b>19:15</b> soundchecked</div>
+      <div class="tl next"><b>20:00</b> set 1</div>
+    </div>
+    <div class="acts"><span class="a1">🎵 Stage mode · big text, never sleeps</span></div>
+    <div class="acts" style="margin-top:8px;"><span class="a2">📋 Set 1 list</span><span class="a2">📋 Set 2 list</span><span class="a2">📞 Sam</span></div>
   </div>
-  <div class="acts"><span class="a1">🎵 Stage mode</span><span class="a2">📞 Sam</span></div>
+  <div class="mini"><span class="ico">🏛️</span><span><b>Venue memory:</b> limiter at 95dB · park in rear yard, code 1066 · sticky fire-exit door</span></div>
 </div>
-<div class="mini"><span class="ico">🏛️</span><span><b>Venue memory:</b> sound limiter at 95dB · park in rear yard, code 1066 · sticky door on the fire exit</span></div>
 
 <!-- ── PHASE 4 ── -->
-<span class="phase p">4 · The wrap-up</span>
-<div class="when">After the finish time, and on tomorrow's Home</div>
-<div class="hero" style="background:linear-gradient(160deg,#231d30,var(--card));border-color:rgba(167,139,250,.35);">
-  <div class="tag" style="color:var(--purple);">🌙 That's a wrap</div>
-  <div class="big">How was The Bullingdon?</div>
-  <div class="sub">Three taps before you forget, then bed.</div>
-  <div class="acts" style="flex-direction:column;gap:8px;">
-    <span class="a1" style="background:var(--purple);">🧾 Invoice it · £380, ready-filled</span>
-    <span class="a2">⛽ Log tonight's fuel &amp; food</span>
-    <span class="a2">⭐ Ask Sam for a testimonial tomorrow morning</span>
+<div class="pane" id="p4">
+  <div class="hero" style="background:linear-gradient(160deg,#231d30,var(--card));border-color:rgba(167,139,250,.35);">
+    <div class="tag" style="color:var(--purple);">🌙 That's a wrap</div>
+    <div class="big">How was The Bullingdon?</div>
+    <div class="sub">Three taps before you forget, then bed.</div>
+    <div class="acts" style="flex-direction:column;gap:8px;">
+      <span class="a1" style="background:var(--purple);">🧾 Invoice it · £380, ready-filled</span>
+      <span class="a2">⛽ Log tonight's fuel &amp; food</span>
+      <span class="a2">⭐ Ask Sam for a testimonial tomorrow morning</span>
+    </div>
   </div>
+  <div class="dim">Tomorrow's Home leads with the follow-up nudge instead, once the adrenaline's worn off.</div>
 </div>
-<div class="dim">Tomorrow's Home leads with the follow-up nudge instead, once the adrenaline's worn off.</div>
 
-<div class="note" style="margin-top:20px;"><strong>How it knows the phase:</strong> leave-by = load-in minus drive time (from the gig's mileage) minus a 15-minute buffer; phases switch on plain clock comparisons against load-in, set times, and finish, all already on the gig. No new data entry. <strong>Open questions for Gareth:</strong> does phase 2's big countdown earn its place? Should phase 3 hide the bottom nav entirely (full focus) or stay normal? Should the wrap-up persist until dismissed or quietly become tomorrow's follow-up nudge?</div>
+<div class="note" style="margin-top:20px;"><strong>How it knows the phase:</strong> leave-by = load-in minus drive time (from the gig's mileage) minus a 15-minute buffer; phase boundaries are plain clock comparisons against leave-by, load-in, and finish, all already on the gig. Tapping pins a phase; the pin clears the moment a boundary passes so you're never stuck looking backwards. No new data entry anywhere.</div>
+
+<script>
+function go(n) {
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('show'));
+  document.getElementById('p' + n).classList.add('show');
+  document.querySelectorAll('.ph').forEach(p => p.classList.toggle('on', p.dataset.p == n));
+}
+</script>
 </body>
 </html>
