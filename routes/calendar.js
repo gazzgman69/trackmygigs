@@ -665,7 +665,20 @@ router.get('/events', async (req, res) => {
       if (b.source_event_id) importedIds.add(b.source_event_id);
     }
 
-    const candidates = items.filter(ev => !importedIds.has(ev.id));
+    // Dismissed suggestions stay dismissed. The dismiss endpoint has been
+    // recording these all along; nothing read them back, so every dismissed
+    // event re-surfaced on the next visit. Recurring instances are matched
+    // via their parent recurringEventId too.
+    const dismissedRows = await db.query(
+      `SELECT calendar_id FROM calendar_syncs
+        WHERE user_id = $1 AND provider = 'google' AND sync_direction = 'dismissed'`,
+      [req.user.id]
+    );
+    const dismissedIds = new Set(dismissedRows.rows.map(r => r.calendar_id));
+    const candidates = items.filter(ev =>
+      !importedIds.has(ev.id) &&
+      !dismissedIds.has(ev.id) &&
+      !(ev.recurringEventId && dismissedIds.has(ev.recurringEventId)));
 
     // Recurring-event dedup (2026-04-23). A weekly teaching slot for 2 years
     // expands into 104 candidates via singleEvents:true. The AI classifier
@@ -1381,6 +1394,10 @@ function buildEventResource(gig) {
     summary: title,
     description: descLines.join('\n'),
     location: gig.venue_address || gig.venue_name || undefined,
+    // Private marker (invisible in Google's UI) linking the event back to
+    // its gig. Lets a re-push find an event whose id never made it into the
+    // database, instead of creating a duplicate.
+    extendedProperties: { private: { tmg_gig_id: String(gig.id || '') } },
   };
 
   if (gig.start_time) {
@@ -1477,7 +1494,34 @@ async function pushGigToGoogle(userId, gig) {
       return resolvedId;
     }
 
-    // Create new event
+    // Create new event. Two guards first:
+    // (1) this is usually fire-and-forget — the gig may have been deleted
+    //     while the push was in flight, and an insert now would orphan an
+    //     event on Google with no local row pointing at it;
+    // (2) a previous push may have inserted the event but died before the
+    //     id reached the database — find it by our private marker and adopt
+    //     it instead of creating a twin.
+    const stillThere = await db.query(
+      'SELECT 1 FROM gigs WHERE id = $1 AND user_id = $2', [gig.id, userId]
+    );
+    if (stillThere.rows.length === 0) return null;
+    try {
+      const found = await calendar.events.list({
+        calendarId,
+        privateExtendedProperty: `tmg_gig_id=${gig.id}`,
+        maxResults: 1,
+        showDeleted: false,
+      });
+      const orphan = found.data.items && found.data.items[0];
+      if (orphan && orphan.id) {
+        const adopted = await calendar.events.update({
+          calendarId, eventId: orphan.id, requestBody: resource,
+        });
+        const adoptedId = adopted.data.id || orphan.id;
+        await db.query('UPDATE gigs SET google_event_id = $1 WHERE id = $2 AND user_id = $3', [adoptedId, gig.id, userId]);
+        return adoptedId;
+      }
+    } catch (_) { /* marker lookup is best-effort; fall through to insert */ }
     const resp = await calendar.events.insert({
       calendarId,
       requestBody: resource,

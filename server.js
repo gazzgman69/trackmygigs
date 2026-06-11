@@ -1252,6 +1252,10 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sheets_google_email TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sheets_connection_state TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sheets_connection_error TEXT`);
+    // Layout-drift guard: when the linked sheet's header row or tab changes,
+    // sync pauses instead of writing into the wrong columns. NULL = healthy,
+    // 'headers_changed' | 'tab_missing' = paused until re-link.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sheets_drift TEXT`);
     // Store the Google account email whose calendar is linked. Can differ from
     // the user's app login email (e.g. a shared band-admin account holding the
     // gig calendar). Shown in Profile so users know which account to

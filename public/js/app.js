@@ -5286,6 +5286,21 @@ async function hydrateSheetsProfileRow() {
       </div>`;
     return;
   }
+  if (status.connected && status.drift) {
+    const why = status.drift === 'tab_missing'
+      ? 'The linked tab was renamed or deleted'
+      : 'The sheet layout changed (columns moved or renamed)';
+    row.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+        <span style="color:var(--text);font-size:14px;">Google Sheets</span>
+        <span style="color:var(--warning, #f0a500);font-size:11px;">${why} — sync paused so nothing gets scrambled</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        <button onclick="reopenImportPickerForSheets()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;">Re-link</button>
+        <button onclick="disconnectSheet()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--danger);font-size:12px;font-weight:600;cursor:pointer;">Disconnect</button>
+      </div>`;
+    return;
+  }
   if (status.connected) {
     const lastPull = status.last_pulled_at
       ? new Date(status.last_pulled_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
@@ -5347,6 +5362,9 @@ async function pullFromSheet() {
   } catch (err) {
     console.error('Pull from sheet failed:', err);
     if (typeof showToast === 'function') showToast('Pull failed: ' + (err.message || 'unknown error'));
+    // A layout-drift 409 changes the row's state — repaint so the
+    // "sync paused, re-link" affordance shows immediately.
+    if (typeof hydrateSheetsProfileRow === 'function') hydrateSheetsProfileRow();
   }
   // Re-fetch status to refresh last-pulled timestamp.
   hydrateSheetsProfileRow();

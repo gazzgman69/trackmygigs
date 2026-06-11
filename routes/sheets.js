@@ -27,6 +27,7 @@ const { google } = require('googleapis');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const { getGoogleAuthClient, extractSpreadsheetId } = require('../lib/google-auth');
+const sheetsWriter = require('../lib/sheets-writer');
 const { withGoogleRetry } = require('../lib/google-retry');
 
 const router = express.Router();
@@ -50,7 +51,7 @@ router.get('/status', async (req, res) => {
               CASE WHEN sheets_access_token IS NOT NULL
                    THEN sheets_connection_state
                    ELSE google_connection_state END AS google_connection_state,
-              sheets_google_email
+              sheets_google_email, google_sheets_drift
          FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -66,6 +67,7 @@ router.get('/status', async (req, res) => {
       spreadsheet_id: row.google_sheets_id || null,
       tab_name: row.google_sheets_tab || null,
       last_pulled_at: row.google_sheets_last_pulled_at || null,
+      drift: row.google_sheets_drift || null,
     });
   } catch (err) {
     console.error('[sheets] status error:', err.message);
@@ -236,7 +238,8 @@ router.post('/import', async (req, res) => {
                 google_sheets_tab = $2,
                 google_sheets_last_pulled_at = NOW(),
                 google_sheets_column_map = $3::jsonb,
-                google_sheets_headers = $4
+                google_sheets_headers = $4,
+                google_sheets_drift = NULL
           WHERE id = $5`,
         [spreadsheetId, tabName, JSON.stringify(columnMap), headerRow, req.user.id]
       );
@@ -432,7 +435,8 @@ router.post('/pull', async (req, res) => {
       return res.status(401).json({ error: 'Google account not connected', needs_connect: true });
     }
     const link = await db.query(
-      `SELECT google_sheets_id, google_sheets_tab, google_sheets_column_map
+      `SELECT google_sheets_id, google_sheets_tab, google_sheets_column_map,
+              google_sheets_headers
          FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -447,6 +451,36 @@ router.post('/pull', async (req, res) => {
       return res.status(400).json({ error: 'Sheet column map is incomplete. Re-link the sheet via the import flow.' });
     }
     const safeTab = linkRow.google_sheets_tab.replace(/'/g, "''");
+
+    // Layout-drift guard: verify the header row still matches what was
+    // captured at link time before trusting any column index. A renamed tab
+    // or inserted column would otherwise scramble fields silently.
+    const storedHeaders = linkRow.google_sheets_headers || [];
+    if (Array.isArray(storedHeaders) && storedHeaders.some(h => String(h || '').trim() !== '')) {
+      let currentHeaders;
+      try {
+        const headResp = await withGoogleRetry(() => sheetsClient.spreadsheets.values.get({
+          spreadsheetId: linkRow.google_sheets_id,
+          range: `'${safeTab}'!A1:Z1`,
+          valueRenderOption: 'FORMATTED_VALUE',
+        }));
+        currentHeaders = (headResp.data.values && headResp.data.values[0]) || [];
+      } catch (err) {
+        await db.query(`UPDATE users SET google_sheets_drift = 'tab_missing' WHERE id = $1`, [req.user.id]);
+        return res.status(409).json({
+          error: 'Sheet tab not found. It may have been renamed or deleted. Re-link the sheet to resume sync.',
+          drift: 'tab_missing',
+        });
+      }
+      if (!sheetsWriter.headersMatch(storedHeaders, currentHeaders)) {
+        await db.query(`UPDATE users SET google_sheets_drift = 'headers_changed' WHERE id = $1`, [req.user.id]);
+        return res.status(409).json({
+          error: 'The sheet layout has changed since it was linked (columns added, removed, or renamed). Re-link the sheet to resume sync. Nothing was changed.',
+          drift: 'headers_changed',
+        });
+      }
+      await db.query(`UPDATE users SET google_sheets_drift = NULL WHERE id = $1 AND google_sheets_drift IS NOT NULL`, [req.user.id]);
+    }
 
     // Pull every row past the header.
     const valuesResp = await withGoogleRetry(() => sheetsClient.spreadsheets.values.get({
