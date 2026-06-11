@@ -2513,8 +2513,8 @@ function renderImportsBarHtml(toReview) {
           <div style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${title}</div>
           <div style="font-size:10px;color:var(--text-3);">${dateLabel ? dateLabel + ' · ' : ''}${src}</div>
         </div>
-        <button onclick="event.stopPropagation();quickImportNudge(${i})" style="font-size:11px;font-weight:600;color:var(--success);background:none;border:1px solid rgba(63,185,80,.3);border-radius:10px;padding:3px 10px;cursor:pointer;">Gig</button>
-        <button onclick="event.stopPropagation();dismissNudge(${i})" style="font-size:11px;color:var(--text-3);background:none;border:1px solid var(--border);border-radius:10px;padding:3px 8px;cursor:pointer;">Skip</button>
+        <button onclick="event.stopPropagation();barImportNudge('${escapeAttr(e.id)}')" style="font-size:11px;font-weight:600;color:var(--success);background:none;border:1px solid rgba(63,185,80,.3);border-radius:10px;padding:3px 10px;cursor:pointer;">Gig</button>
+        <button onclick="event.stopPropagation();barSkipNudge('${escapeAttr(e.id)}')" style="font-size:11px;color:var(--text-3);background:none;border:1px solid var(--border);border-radius:10px;padding:3px 8px;cursor:pointer;">Skip</button>
       </div>
     `;
   }).join('');
@@ -2549,6 +2549,73 @@ function toggleImportsBar() {
   }
 }
 window.toggleImportsBar = toggleImportsBar;
+
+// Bar-specific Gig/Skip handlers, keyed by event id. The panel handlers
+// (quickImportNudge/dismissNudge) are index-based and update panel-only DOM,
+// so taps in the bar used to fire with no visible result. These remove the
+// row optimistically, toast, and repaint whatever the bar sits above.
+function _removeNudgeFromBar(eventId) {
+  window._calendarNudges = (window._calendarNudges || []).filter(x => x.id !== eventId);
+  if (window._calendarNudgesById) delete window._calendarNudgesById[eventId];
+  _nudgeEvents = window._calendarNudges;
+  const bar = document.getElementById('calendarNudgeBar');
+  if (!bar) return;
+  if (!window._calendarNudges.length) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+  } else {
+    bar.innerHTML = renderImportsBarHtml(window._calendarNudges);
+  }
+}
+
+async function barImportNudge(eventId) {
+  const e = (window._calendarNudgesById || {})[eventId];
+  if (!e) return;
+  _removeNudgeFromBar(eventId);
+  try {
+    const resp = await fetch('/api/calendar/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_id: e.id,
+        title: e.title,
+        location: e.location,
+        start: e.start,
+        end: e.end,
+        fee: e.fee || null,
+        band_name: e.band_name || null,
+      }),
+    });
+    if (!resp.ok) throw new Error('import failed');
+    recordNudgeFeedback('calendar_import', 'imported', eventId);
+    showToast('Gig added — fee and times are a tap away in the list');
+    const r = await fetch('/api/gigs');
+    if (r.ok) {
+      window._cachedGigs = await r.json();
+      persistCachedCalendar();
+      if (typeof _gigsPaintAll === 'function') _gigsPaintAll();
+    }
+  } catch (err) {
+    console.error('Bar import error:', err);
+    showToast('Could not import that one. Pull down to retry.');
+  }
+}
+window.barImportNudge = barImportNudge;
+
+async function barSkipNudge(eventId) {
+  _removeNudgeFromBar(eventId);
+  try {
+    await fetch('/api/calendar/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_id: eventId }),
+    });
+    recordNudgeFeedback('calendar_import', 'dismissed', eventId);
+  } catch (err) {
+    console.error('Bar skip error:', err);
+  }
+}
+window.barSkipNudge = barSkipNudge;
 
 // Parse a gig date safely - handles both "YYYY-MM-DD" and full ISO "YYYY-MM-DDTHH:mm:ss.sssZ"
 function parseGigDate(dateStr) {
