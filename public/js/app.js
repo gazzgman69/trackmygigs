@@ -1861,8 +1861,8 @@ function _gigsBuildTasks() {
       if (!_gpSnoozed(key)) tasks.push({
         key, ico: '🧾', color: 'var(--success)',
         title: `${name} played, not invoiced`,
-        sub: `${fmtD(g)} · £${_gpFee(g).toLocaleString()} · the invoice builds itself from the gig`,
-        cta: 'Invoice it', onclick: `openGigDetail('${escapeAttr(g.id)}')`,
+        sub: `${fmtD(g)} · £${_gpFee(g).toLocaleString()} · opens ready-filled from the gig`,
+        cta: 'Invoice it', onclick: `createInvoiceForGig('${escapeAttr(g.id)}')`,
         snoozeDays: 7,
       });
     }
