@@ -1241,6 +1241,17 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_access_token TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_refresh_token TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_token_expires_at TIMESTAMP`);
+    // Dedicated Google Sheets connection. Function-band leaders often keep
+    // the shared booking sheet on a band Gmail while their calendar lives on
+    // a personal one, so Sheets gets its own token set. Sheets API calls
+    // prefer these and fall back to the shared google_* token for users who
+    // connected before the split.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sheets_access_token TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sheets_refresh_token TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sheets_token_expires_at TIMESTAMP`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sheets_google_email TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sheets_connection_state TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sheets_connection_error TEXT`);
     // Store the Google account email whose calendar is linked. Can differ from
     // the user's app login email (e.g. a shared band-admin account holding the
     // gig calendar). Shown in Profile so users know which account to

@@ -5022,7 +5022,7 @@ function buildProfileHTML(content, profile) {
       <div style="padding:16px 20px 8px;display:flex;align-items:center;justify-content:space-between;">
         <button onclick="closePanel('profile-panel')" style="background:none;border:none;color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;padding:0;min-width:60px;text-align:left;">&#8249; Back</button>
         <div style="font-size:16px;font-weight:700;color:var(--text);">Profile</div>
-        <button onclick="editProfile()" style="background:none;border:none;color:var(--accent);font-size:14px;cursor:pointer;font-weight:600;">Edit</button>
+        <button id="profileEditBtn" onclick="editProfile()" style="background:none;border:none;color:var(--accent);font-size:14px;cursor:pointer;font-weight:600;">Edit</button>
       </div>
       <div style="padding:0 16px 12px;">
         <div style="text-align:center;">
@@ -5154,7 +5154,7 @@ function buildProfileHTML(content, profile) {
           const who = window._googleCalendarEmail || prof.google_calendar_email || prof.calendar_email || null;
           if (connected) {
             return `
-        <div style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div id="profileCalendarRow" style="padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;">
           <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
             <span style="color:var(--text);font-size:14px;">Google Calendar</span>
             <span style="color:var(--text-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${who ? 'Connected as ' + escapeHtml(who) : 'Connected'}</span>
@@ -5163,7 +5163,7 @@ function buildProfileHTML(content, profile) {
         </div>`;
           }
           return `
-        <div onclick="window.location.href='/auth/google/calendar'" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
+        <div id="profileCalendarRow" onclick="window.location.href='/auth/google/calendar'" style="padding:12px 14px;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">
           <span style="color:var(--text);font-size:14px;">Google Calendar</span>
           <span style="color:var(--accent);font-size:12px;font-weight:600;">Connect \u203A</span>
         </div>`;
@@ -20086,10 +20086,32 @@ const ONBOARDING_STEPS = [
     },
   },
   {
-    kind: 'info',
+    kind: 'form',
+    id: 'getting-paid',
     emoji: '💷',
     title: 'Get paid, stay sane',
-    body: "Every gig can turn into an invoice with one tap. Overdue invoices show up on your home screen so nothing slips.",
+    render: (profile) => `
+      <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:14px;text-align:left;">Every gig can turn into an invoice with one tap. Add these once and they're stamped on every invoice you send. Both optional, both editable later in Profile.</div>
+      <div style="text-align:left;margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Bank details for transfers</label>
+        <textarea id="onbBankDetails" rows="3" placeholder="e.g. Sort code: 12-34-56&#10;Account: 12345678&#10;Your name" style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;font-family:inherit;">${escapeHtml(profile.bank_details || '')}</textarea>
+      </div>
+      <div style="text-align:left;margin-bottom:4px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Payment link</label>
+        <input id="onbPayLink" type="url" value="${escapeHtml(profile.payment_link_url || '')}" placeholder="Stripe, PayPal.me, Monzo.me..." style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;box-sizing:border-box;">
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Becomes a "Pay now" button on your invoices, so clients can pay by card.</div>
+      </div>`,
+    collect: () => {
+      const body = {};
+      const bank = (document.getElementById('onbBankDetails')?.value || '').trim();
+      let link = (document.getElementById('onbPayLink')?.value || '').trim();
+      if (bank) body.bank_details = bank;
+      if (link) {
+        if (!/^https?:\/\//i.test(link)) link = 'https://' + link;
+        body.payment_link_url = link;
+      }
+      return body;
+    },
     cta: 'Next',
   },
   {
@@ -20321,7 +20343,7 @@ function renderImportPicker(stepIndex, opts) {
     ? (allDone
         ? "Everything imported. Hit done to land on your home screen, and you can pull more in later from Profile."
         : "You can chain as many imports as you want. Hit done when you're finished.")
-    : "Importing what you've already got is the fastest way to make TrackMyGigs useful. Pick a source: calendar, spreadsheet, or Google Sheet. You can do more than one. Plan for 15 to 20 minutes total if you want everything in.";
+    : "Importing what you've already got is the fastest way to make TrackMyGigs useful. Pick a source: calendar, spreadsheet, or Google Sheet. You can do more than one, and your Sheet can live on a different Google account than your calendar. Everything you connect here is managed from Profile afterwards. Plan for 15 to 20 minutes total if you want everything in.";
 
   const cardsHtml = remaining.map(src => {
     const usedTag = completed.includes(src.key)
@@ -20916,13 +20938,32 @@ async function finishOnboarding(opts) {
   // Reset session state so a re-fired tour starts clean.
   window._onboardingState = { completed: [] };
   // The picker has its own "log a gig manually" affordance which sets
-  // openGigWizard=true. All other paths just land on the home screen.
+  // openGigWizard=true.
   if (opts && opts.openGigWizard) {
     try {
       if (typeof openGigWizard === 'function') setTimeout(() => openGigWizard(), 200);
     } catch (err) {
       console.error('Auto-open gig wizard failed (non-fatal):', err);
     }
+    return;
+  }
+  // All other paths land on Profile with the rows the wizard just touched
+  // pulsing, so people learn where their connections and payment details
+  // live before they ever need to change them.
+  try {
+    openPanel('profile-panel');
+    if (typeof renderProfileScreen === 'function') renderProfileScreen();
+    setTimeout(() => {
+      ['profileCalendarRow', 'profileSheetsRow', 'profileEditBtn'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.add('onb-pulse');
+        setTimeout(() => el.classList.remove('onb-pulse'), 4000);
+      });
+      try { showToast('Your Google connections and payment details live here in Profile'); } catch (_) {}
+    }, 500);
+  } catch (err) {
+    console.error('Onboarding settings tour failed (non-fatal):', err);
   }
 }
 window.finishOnboarding = finishOnboarding;

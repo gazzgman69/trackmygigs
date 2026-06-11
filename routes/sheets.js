@@ -36,7 +36,7 @@ router.use(authMiddleware);
 // connected or refresh failed; callers should respond 401-ish so the UI
 // can prompt a reconnect.
 async function getSheetsClient(userId) {
-  const auth = await getGoogleAuthClient(userId);
+  const auth = await getGoogleAuthClient(userId, 'sheets');
   if (!auth) return null;
   return google.sheets({ version: 'v4', auth });
 }
@@ -46,8 +46,11 @@ router.get('/status', async (req, res) => {
   try {
     const r = await db.query(
       `SELECT google_sheets_id, google_sheets_tab, google_sheets_last_pulled_at,
-              google_access_token IS NOT NULL AS has_token,
-              google_connection_state
+              (sheets_access_token IS NOT NULL OR google_access_token IS NOT NULL) AS has_token,
+              CASE WHEN sheets_access_token IS NOT NULL
+                   THEN sheets_connection_state
+                   ELSE google_connection_state END AS google_connection_state,
+              sheets_google_email
          FROM users WHERE id = $1`,
       [req.user.id]
     );

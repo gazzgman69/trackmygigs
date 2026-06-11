@@ -488,15 +488,25 @@ router.get('/google/callback', async (req, res) => {
       } catch (e) {
         console.warn('[oauth] link-mode userinfo fetch failed:', e.message);
       }
+      // The sheets flow fills the dedicated Sheets token set so a band
+      // Gmail's booking sheet can coexist with a personal calendar. The
+      // calendar flow keeps the shared google_* set (which Sheets also
+      // falls back to when no dedicated connection exists).
+      const colset = flow === 'sheets'
+        ? `sheets_access_token = $1,
+           sheets_refresh_token = COALESCE($2, sheets_refresh_token),
+           sheets_token_expires_at = $3,
+           sheets_google_email = COALESCE($4, sheets_google_email),
+           sheets_connection_state = NULL,
+           sheets_connection_error = NULL`
+        : `google_access_token = $1,
+           google_refresh_token = COALESCE($2, google_refresh_token),
+           google_token_expires_at = $3,
+           google_calendar_email = COALESCE($4, google_calendar_email),
+           google_connection_state = NULL,
+           google_connection_error = NULL`;
       await db.query(
-        `UPDATE users SET
-          google_access_token = $1,
-          google_refresh_token = COALESCE($2, google_refresh_token),
-          google_token_expires_at = $3,
-          google_calendar_email = COALESCE($4, google_calendar_email),
-          google_connection_state = NULL,
-          google_connection_error = NULL
-         WHERE id = $5`,
+        `UPDATE users SET ${colset} WHERE id = $5`,
         [
           tokens.access_token,
           tokens.refresh_token || null,
@@ -534,6 +544,25 @@ router.get('/google/callback', async (req, res) => {
         user.id,
       ]
     );
+    // Sign-in arrived through the Sheets connect button: this Google account
+    // is also their Sheets account, so fill the dedicated set too.
+    if (flow === 'sheets') {
+      await db.query(
+        `UPDATE users SET
+          sheets_access_token = $1,
+          sheets_refresh_token = COALESCE($2, sheets_refresh_token),
+          sheets_token_expires_at = $3,
+          sheets_google_email = COALESCE($4, sheets_google_email)
+         WHERE id = $5`,
+        [
+          tokens.access_token,
+          tokens.refresh_token || null,
+          tokens.expiry_date ? new Date(tokens.expiry_date) : null,
+          email || null,
+          user.id,
+        ]
+      );
+    }
 
     await createSession(res, user.id);
     res.redirect('/?' + successQuery);
