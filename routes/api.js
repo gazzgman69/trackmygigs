@@ -2937,6 +2937,26 @@ router.post('/rebooking-suggestions/dismiss', async (req, res) => {
   }
 });
 
+// Active snoozes for the Gigs needs-attention stack. Rides on the same
+// rebook_dismissals table as the rebooking radar, namespaced by key prefix.
+router.get('/gig-task-snoozes', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT key, snooze_until FROM rebook_dismissals
+        WHERE user_id = $1 AND key LIKE 'gigtask:%'`,
+      [req.user.id]
+    );
+    const today = new Date();
+    const keys = r.rows
+      .filter(d => !d.snooze_until || new Date(d.snooze_until) > today)
+      .map(d => d.key);
+    res.json({ keys });
+  } catch (error) {
+    console.error('Gig task snoozes error:', error);
+    res.status(500).json({ error: 'Failed to load snoozes' });
+  }
+});
+
 router.post('/blocked-dates', async (req, res) => {
   try {
     const { mode, date, from, to, reason, days, source_event_id } = req.body;

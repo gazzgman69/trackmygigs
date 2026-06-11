@@ -1618,64 +1618,501 @@ async function hydrateNext7DaysStrip() {
 }
 window.hydrateNext7DaysStrip = hydrateNext7DaysStrip;
 
-// Current gig view state
-let gigViewMode = 'week';
-let gigWeekOffset = 0;  // 0 = current week, +1 = next week, -1 = prev week
-let gigMonthOffset = 0; // 0 = current month
-let gigYearOffset = 0;  // 0 = current tax year
+// Gigs screen view state: status filter + month + search, not week arithmetic.
+window._gigsView = window._gigsView || { filter: 'upcoming', month: 'all', q: '' };
 
 async function renderGigsScreen() {
   const content = document.getElementById('gigsScreen');
-  const cached = window._cachedGigs;
+  if (!content) return;
+  const v = window._gigsView;
 
   content.innerHTML = `
     <div style="margin-top:-8px;padding:0 20px 4px;display:flex;align-items:center;justify-content:space-between;">
-      <div style="font-size:22px;font-weight:700;color:var(--text);">My Gigs</div>
+      <div style="font-size:22px;font-weight:700;color:var(--text);">Gigs</div>
       <button style="background:var(--accent);color:#000;border:none;border-radius:24px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer;" onclick="openGigWizard()">+ New</button>
     </div>
-    <div style="padding:0 16px 8px;">
-      <input type="text" class="form-input" id="gigSearchInput" placeholder="Search gigs - band, venue, date..." oninput="filterGigsList()" style="font-size:14px;padding:10px 14px;">
-    </div>
-    <div style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;overflow-x:auto;" id="gigTabBar">
-      <div class="gig-tab active" onclick="switchGigTab(this,'week')">Weekly</div>
-      <div class="gig-tab" onclick="switchGigTab(this,'month')">Monthly</div>
-      <div class="gig-tab" onclick="switchGigTab(this,'year')">Yearly</div>
-    </div>
     <div id="calendarNudgeBar" style="display:none;"></div>
+    <div id="gigsHeroSlot" style="padding:4px 16px 0;"></div>
+    <div id="gigsTasksSlot"></div>
+    <div id="gigsMonthStrip" style="padding:0 16px;"></div>
+    <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.8px;margin:18px 16px 8px;">All gigs</div>
+    <div style="padding:0 16px 8px;">
+      <input type="text" class="form-input" id="gigSearchInput" placeholder="Search band, venue, anything..." value="${escapeHtml(v.q || '')}" oninput="_gigsSetQuery(this.value)" style="font-size:14px;padding:10px 14px;">
+    </div>
+    <div id="gigsFilterRow" style="display:flex;gap:6px;margin:0 16px 8px;overflow-x:auto;padding-bottom:2px;"></div>
+    <div id="gigsMonthRow" style="display:flex;gap:6px;margin:0 16px 10px;overflow-x:auto;padding-bottom:2px;"></div>
     <div style="padding:0 16px;" id="gigsListContent">
-      ${cached ? '' : '<div style="text-align:center;padding:40px;color:var(--text-2);">Loading...</div>'}
+      ${window._cachedGigs ? '' : '<div style="text-align:center;padding:40px;color:var(--text-2);">Loading...</div>'}
     </div>
   `;
 
-  if (cached) {
-    renderGigsList(cached);
-  }
-
-  // Check for calendar imports to review (non-blocking)
   checkCalendarNudges();
+  if (window._cachedGigs) _gigsPaintAll();
 
+  const jobs = [
+    fetch('/api/gigs').then(r => r.ok ? r.json() : null).then(g => {
+      if (g) { window._cachedGigs = g; persistCachedCalendar(); }
+    }),
+    fetch('/api/invoices').then(r => r.ok ? r.json() : null).then(inv => {
+      if (inv) { window._cachedInvoices = inv; window._cachedInvoicesTime = Date.now(); }
+    }),
+    fetch('/api/followup-suggestions').then(r => r.ok ? r.json() : null).then(d => {
+      if (d) window._followupData = d;
+    }),
+    fetch('/api/gig-task-snoozes').then(r => r.ok ? r.json() : null).then(d => {
+      if (d && Array.isArray(d.keys)) window._gigTaskSnoozes = new Set(d.keys);
+    }),
+  ];
+  try { await Promise.allSettled(jobs); } catch (_) {}
+  _gigsPaintAll();
+}
+
+// ── Gigs pipeline helpers ────────────────────────────────────────────────────
+// The screen is organised by gig lifecycle (pencilled → confirmed → played →
+// invoiced → paid), not by week. Time questions belong to the Calendar.
+
+const GIG_PENCILLED_STATUSES = ['tentative', 'enquiry', 'pending'];
+
+function _gpToday() { const t = new Date(); t.setHours(0, 0, 0, 0); return t; }
+function _gpIsCancelled(g) { return g.status === 'cancelled'; }
+function _gpIsPencilled(g) { return GIG_PENCILLED_STATUSES.includes(g.status); }
+function _gpIsPast(g) { const d = parseGigDate(g.date); return d && d < _gpToday(); }
+function _gpDaysUntil(g) {
+  const d = parseGigDate(g.date);
+  return d ? Math.round((d - _gpToday()) / 86400000) : null;
+}
+function _gpFee(g) { const f = parseFloat(g.fee); return Number.isFinite(f) ? f : 0; }
+function _gpMonthKey(g) { return (g.date || '').substring(0, 7); }
+
+function _gpInvoiceMaps() {
+  const byId = new Map(), byGig = new Map();
+  (window._cachedInvoices || []).forEach(inv => {
+    byId.set(String(inv.id), inv);
+    if (inv.gig_id) byGig.set(String(inv.gig_id), inv);
+  });
+  return { byId, byGig };
+}
+function _gpInvoiceFor(g, maps) {
+  return (g.invoice_id && maps.byId.get(String(g.invoice_id))) || maps.byGig.get(String(g.id)) || null;
+}
+function _gpInvoiceOverdueDays(inv) {
+  if (!inv || inv.status === 'paid' || inv.status === 'draft' || !inv.due_date) return 0;
+  const due = parseGigDate(inv.due_date);
+  if (!due) return 0;
+  const days = Math.round((_gpToday() - due) / 86400000);
+  return days > 0 ? days : 0;
+}
+
+// Money sub-state shown on each row, derived from the gig + its invoice.
+function _gpMoneyState(g, maps) {
+  if (_gpIsCancelled(g)) return { label: 'cancelled', color: 'var(--text-3)' };
+  if (_gpIsPencilled(g)) {
+    return _gpFee(g) > 0
+      ? { label: 'quoted', color: 'var(--text-3)' }
+      : { label: 'no fee yet', color: 'var(--text-3)' };
+  }
+  const inv = _gpInvoiceFor(g, maps);
+  if (inv) {
+    if (inv.status === 'paid') return { label: 'paid', color: 'var(--info)' };
+    const late = _gpInvoiceOverdueDays(inv);
+    if (late > 0) return { label: late + (late === 1 ? ' day late' : ' days late'), color: 'var(--danger)' };
+    if (inv.status === 'draft') return { label: 'draft invoice', color: 'var(--text-3)' };
+    return { label: 'invoiced', color: 'var(--text-2)' };
+  }
+  if (_gpIsPast(g) && _gpFee(g) > 0) return { label: 'invoice it', color: 'var(--danger)' };
+  if (_gpFee(g) > 0) return { label: 'not invoiced', color: 'var(--text-3)' };
+  return { label: '', color: 'var(--text-3)' };
+}
+
+function _gpSnoozed(key) {
+  return window._gigTaskSnoozes instanceof Set && window._gigTaskSnoozes.has(key);
+}
+
+async function snoozeGigTask(key, days) {
+  window._gigTaskSnoozes = window._gigTaskSnoozes || new Set();
+  window._gigTaskSnoozes.add(key);
+  _gigsPaintAll();
   try {
-    const response = await fetch('/api/gigs');
-    if (!response.ok) throw new Error('Failed to fetch');
-    const gigs = await response.json();
-    window._cachedGigs = gigs;
-    persistCachedCalendar();
-    renderGigsList(gigs);
-  } catch (err) {
-    console.error('Load gigs error:', err);
-    if (!cached) {
-      const listContent = document.getElementById('gigsListContent');
-      if (listContent) {
-        listContent.innerHTML = `
-          <div style="text-align:center;padding:40px;">
-            <div style="font-size:32px;margin-bottom:8px;">📋</div>
-            <div style="font-weight:600;color:var(--text);margin-bottom:4px;">Couldn't load gigs</div>
-            <div style="font-size:13px;color:var(--text-2);">Check your connection and try again</div>
-          </div>
-        `;
+    await fetch('/api/rebooking-suggestions/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, snooze_days: days }),
+    });
+  } catch (_) {}
+}
+window.snoozeGigTask = snoozeGigTask;
+
+function _gigsPaintAll() {
+  if (!document.getElementById('gigsHeroSlot')) return; // navigated away
+  _gigsPaintHero();
+  _gigsPaintTasks();
+  _gigsPaintMonthStrip();
+  _gigsPaintFilters();
+  _gigsPaintList();
+}
+
+// ── 1. Next gig hero ──
+function _gigsPaintHero() {
+  const slot = document.getElementById('gigsHeroSlot');
+  if (!slot) return;
+  const gigs = window._cachedGigs || [];
+  const upcoming = gigs
+    .filter(g => !_gpIsCancelled(g) && !_gpIsPast(g))
+    .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.start_time || '').localeCompare(b.start_time || ''));
+  const g = upcoming[0];
+  if (!g) {
+    slot.innerHTML = `
+      <div style="background:var(--card);border:1px dashed var(--border);border-radius:16px;padding:18px;text-align:center;">
+        <div style="font-size:26px;margin-bottom:6px;">🎷</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);">No upcoming gigs</div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:3px;">Time to fill the diary. Log one, or check the marketplace for open slots.</div>
+      </div>`;
+    return;
+  }
+  const days = _gpDaysUntil(g);
+  const dObj = parseGigDate(g.date);
+  const weekday = dObj ? dObj.toLocaleDateString('en-GB', { weekday: 'long' }) : '';
+  const whenBit = days === 0 ? 'today' : days === 1 ? 'tomorrow' : `${weekday}, in ${days} days`;
+  const dateLabel = dObj ? dObj.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long' }) : '';
+  const times = [g.start_time, g.end_time].filter(Boolean).map(t => String(t).slice(0, 5)).join(' – ');
+  const title = g.band_name || g.venue_name || 'Gig';
+  const sub = [dateLabel, times, g.band_name && g.venue_name ? g.venue_name : (g.venue_address || '')].filter(Boolean).join(' · ');
+  const maps = _gpInvoiceMaps();
+
+  const chips = [];
+  if (_gpFee(g) > 0) chips.push(`<span style="font-size:11px;font-weight:600;color:var(--text-2);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:5px 10px;">💷 <b style="color:var(--text);">£${_gpFee(g).toLocaleString()}</b> ${_gpIsPencilled(g) ? 'quoted' : 'confirmed'}</span>`);
+  if (_gpIsPencilled(g)) chips.push(`<span style="font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:999px;padding:5px 10px;">PENCILLED</span>`);
+  if (Array.isArray(g.checklist) && g.checklist.length > 0) {
+    const done = g.checklist.filter(c => c && c.done).length;
+    chips.push(`<span style="font-size:11px;font-weight:600;color:var(--text-2);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:5px 10px;">🎒 Kit <b style="color:var(--text);">${done}/${g.checklist.length}</b></span>`);
+  }
+  if (g.mileage_miles) chips.push(`<span style="font-size:11px;font-weight:600;color:var(--text-2);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:5px 10px;">🚗 <b style="color:var(--text);">${Math.round(g.mileage_miles)} mi</b></span>`);
+
+  const acts = [`<span onclick="openGigPack('${escapeAttr(g.id)}')" style="flex:1;text-align:center;background:var(--accent);color:#000;border-radius:10px;padding:11px 0;font-size:13px;font-weight:800;cursor:pointer;">📄 Gig pack</span>`];
+  if (g.venue_address) acts.push(`<span onclick="openDirections('${escapeAttr(g.venue_address)}')" style="flex:1;text-align:center;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:11px 0;font-size:13px;font-weight:600;cursor:pointer;">🗺️ Directions</span>`);
+  if (g.setlist_id && typeof openSetlistDetail === 'function') acts.push(`<span onclick="openSetlistDetail('${escapeAttr(g.setlist_id)}')" style="flex:1;text-align:center;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:11px 0;font-size:13px;font-weight:600;cursor:pointer;">🎵 Setlist</span>`);
+
+  slot.innerHTML = `
+    <div onclick="openGigDetail('${escapeAttr(g.id)}')" style="background:linear-gradient(160deg,#1d2330,var(--card));border:1px solid var(--border);border-radius:16px;padding:16px;cursor:pointer;">
+      <div style="font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:0.6px;">Next gig · ${escapeHtml(whenBit)}</div>
+      <div style="font-size:19px;font-weight:800;margin-top:6px;line-height:1.25;color:var(--text);">${escapeHtml(title)}</div>
+      <div style="font-size:13px;color:var(--text-2);margin-top:3px;">${escapeHtml(sub)}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;">${chips.join('')}</div>
+      <div id="gigsHeroWeather" style="display:none;font-size:12px;color:var(--text-2);margin-top:10px;"></div>
+      <div style="display:flex;gap:8px;margin-top:14px;" onclick="event.stopPropagation()">${acts.join('')}</div>
+    </div>`;
+  if (typeof loadGigWeather === 'function') loadGigWeather(g.id, 'gigsHeroWeather');
+}
+
+// ── 2. Needs attention ──
+function _gigsBuildTasks() {
+  const gigs = window._cachedGigs || [];
+  const maps = _gpInvoiceMaps();
+  const tasks = [];
+  const fmtD = (g) => {
+    const d = parseGigDate(g.date);
+    return d ? d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+  };
+
+  for (const g of gigs) {
+    if (_gpIsCancelled(g)) continue;
+    const name = g.band_name || g.venue_name || 'Gig';
+
+    // Pencilled, awaiting an answer. Quiet by default: nags when the gig is
+    // inside 30 days, or after it's been sitting un-answered for a month.
+    if (!_gpIsPast(g) && _gpIsPencilled(g)) {
+      const days = _gpDaysUntil(g);
+      const ageDays = g.created_at ? Math.round((Date.now() - new Date(g.created_at)) / 86400000) : 0;
+      if ((days != null && days <= 30) || ageDays >= 30) {
+        const key = 'gigtask:pencilled:' + g.id;
+        if (!_gpSnoozed(key)) tasks.push({
+          key, ico: '🤝', color: 'var(--accent)',
+          title: `${name} still pencilled`,
+          sub: `${fmtD(g)}${ageDays > 0 ? ' · sitting ' + ageDays + ' days' : ''}${days != null && days <= 30 ? ' · only ' + days + ' days away' : ''}`,
+          cta: 'Chase / confirm', onclick: `openGigDetail('${escapeAttr(g.id)}')`,
+          snoozeDays: (days != null && days <= 30) ? 7 : 30,
+        });
       }
+      continue;
+    }
+
+    // Upcoming but missing the basics.
+    if (!_gpIsPast(g)) {
+      const missing = [];
+      if (!(_gpFee(g) > 0)) missing.push('fee');
+      if (!g.start_time) missing.push('times');
+      if (missing.length) {
+        const key = 'gigtask:details:' + g.id;
+        if (!_gpSnoozed(key)) tasks.push({
+          key, ico: '✍️', color: 'var(--accent)',
+          title: `${name} has no ${missing.join(' or ')} set`,
+          sub: fmtD(g),
+          cta: 'Fill in', onclick: `openGigDetail('${escapeAttr(g.id)}')`,
+          snoozeDays: 14,
+        });
+      }
+      continue;
+    }
+
+    // Played, money not started.
+    const inv = _gpInvoiceFor(g, maps);
+    if (_gpIsPast(g) && _gpFee(g) > 0 && !inv) {
+      const key = 'gigtask:invoiceit:' + g.id;
+      if (!_gpSnoozed(key)) tasks.push({
+        key, ico: '🧾', color: 'var(--success)',
+        title: `${name} played, not invoiced`,
+        sub: `${fmtD(g)} · £${_gpFee(g).toLocaleString()} · the invoice builds itself from the gig`,
+        cta: 'Invoice it', onclick: `openGigDetail('${escapeAttr(g.id)}')`,
+        snoozeDays: 7,
+      });
     }
   }
+
+  // Invoices overdue (gig-linked or not).
+  for (const inv of (window._cachedInvoices || [])) {
+    const late = _gpInvoiceOverdueDays(inv);
+    if (late <= 0) continue;
+    const key = 'gigtask:invoice:' + inv.id;
+    if (_gpSnoozed(key)) continue;
+    const amount = parseFloat(inv.amount || 0);
+    tasks.push({
+      key, ico: '💷', color: 'var(--danger)',
+      title: `${inv.band_name || inv.invoice_number || 'Invoice'} ${late} day${late === 1 ? '' : 's'} overdue`,
+      sub: `£${amount.toLocaleString()} · one polite nudge ready to go`,
+      cta: 'Chase', onclick: `chaseInvoicePayment('${escapeAttr(inv.id)}')`,
+      snoozeDays: 7,
+    });
+  }
+
+  // Post-gig follow-ups (their own skip handles suppression server-side).
+  ((window._followupData && window._followupData.gigs) || []).forEach(g => {
+    tasks.push({
+      key: 'followup:' + g.id, ico: '⭐', color: 'var(--purple, #A78BFA)',
+      title: `Ask ${g.title || 'the client'} for a testimonial`,
+      sub: 'Played recently · strike while it’s warm',
+      cta: 'Send follow-up', onclick: `askForTestimonial('${escapeAttr(g.id)}')`,
+      skipOnclick: `skipFollowup('${escapeAttr(g.id)}')`,
+    });
+  });
+
+  return tasks;
+}
+
+function _gigsPaintTasks() {
+  const slot = document.getElementById('gigsTasksSlot');
+  if (!slot) return;
+  const tasks = _gigsBuildTasks();
+  if (!tasks.length) {
+    slot.innerHTML = `
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.8px;margin:18px 16px 8px;">Needs attention</div>
+      <div style="margin:0 16px;background:var(--card);border:1px dashed var(--border);border-radius:12px;padding:14px;text-align:center;font-size:12px;color:var(--text-3);">All clear. Nothing waiting on you. 🎉</div>`;
+    return;
+  }
+  const expanded = !!window._gigsTasksExpanded;
+  const visible = expanded ? tasks : tasks.slice(0, 5);
+  const cards = visible.map(t => `
+    <div style="margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-left:3px solid ${t.color};border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;">
+      <span style="font-size:18px;flex-shrink:0;">${t.ico}</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(t.title)}</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${escapeHtml(t.sub)}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">
+        <span onclick="${t.onclick}" style="font-size:12px;font-weight:700;color:#000;background:${t.color};border-radius:999px;padding:7px 12px;white-space:nowrap;cursor:pointer;">${escapeHtml(t.cta)}</span>
+        <span onclick="${t.skipOnclick || `snoozeGigTask('${escapeAttr(t.key)}', ${t.snoozeDays || 7})`}" style="font-size:10px;color:var(--text-3);cursor:pointer;padding:2px 6px;">later</span>
+      </div>
+    </div>`).join('');
+  const more = (!expanded && tasks.length > 5)
+    ? `<div onclick="window._gigsTasksExpanded=true;_gigsPaintTasks();" style="margin:0 16px;text-align:center;font-size:12px;color:var(--accent);font-weight:600;padding:8px;cursor:pointer;">Show ${tasks.length - 5} more</div>`
+    : '';
+  slot.innerHTML = `
+    <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.8px;margin:18px 16px 8px;display:flex;justify-content:space-between;">Needs attention <span style="color:var(--accent);">${tasks.length} thing${tasks.length === 1 ? '' : 's'}</span></div>
+    ${cards}${more}`;
+}
+
+// ── 3. This month strip ──
+function _gigsPaintMonthStrip() {
+  const slot = document.getElementById('gigsMonthStrip');
+  if (!slot) return;
+  const gigs = window._cachedGigs || [];
+  const now = new Date();
+  const mk = now.toISOString().slice(0, 7);
+  const inMonth = gigs.filter(g => _gpMonthKey(g) === mk && !_gpIsCancelled(g));
+  const real = inMonth.filter(g => !_gpIsPencilled(g));
+  const played = real.filter(g => _gpIsPast(g)).length;
+  const money = real.reduce((s, g) => s + _gpFee(g), 0);
+  const pencilled = inMonth.length - real.length;
+  const monthName = now.toLocaleDateString('en-GB', { month: 'long' });
+  slot.innerHTML = `
+    <div style="margin-top:16px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-size:12px;color:var(--text-2);">${escapeHtml(monthName)} gigs<b style="color:var(--text);font-size:15px;display:block;margin-top:2px;">${real.length} confirmed${played ? ' · ' + played + ' played' : ''}</b></div>
+      <div style="text-align:right;font-size:12px;color:var(--text-2);">Confirmed money<b style="color:var(--success);font-size:15px;display:block;margin-top:2px;">£${money.toLocaleString()}</b>${pencilled ? `<div style="font-size:10px;color:var(--text-3);margin-top:3px;">+ ${pencilled} pencilled · never counted until confirmed</div>` : ''}</div>
+    </div>`;
+}
+
+// ── 4. Ledger: filters, month picker, list ──
+function _gigsFilterSet(filter) {
+  const gigs = window._cachedGigs || [];
+  const maps = _gpInvoiceMaps();
+  switch (filter) {
+    case 'upcoming': return gigs.filter(g => !_gpIsCancelled(g) && !_gpIsPast(g));
+    case 'pencilled': return gigs.filter(g => !_gpIsCancelled(g) && !_gpIsPast(g) && _gpIsPencilled(g));
+    case 'money': return gigs.filter(g => {
+      if (_gpIsCancelled(g) || !_gpIsPast(g) || _gpIsPencilled(g)) return false;
+      if (!(_gpFee(g) > 0)) return false;
+      const inv = _gpInvoiceFor(g, maps);
+      return !inv || inv.status !== 'paid';
+    });
+    case 'played': return gigs.filter(g => !_gpIsCancelled(g) && _gpIsPast(g));
+    default: return gigs.slice();
+  }
+}
+
+function _gigsApplyQuery(list) {
+  const q = (window._gigsView.q || '').toLowerCase().trim();
+  if (!q) return list;
+  return list.filter(g =>
+    (g.band_name || '').toLowerCase().includes(q) ||
+    (g.venue_name || '').toLowerCase().includes(q) ||
+    (g.venue_address || '').toLowerCase().includes(q) ||
+    (g.date || '').includes(q)
+  );
+}
+
+function _gigsSetFilter(f) {
+  window._gigsView.filter = f;
+  window._gigsView.month = 'all';
+  _gigsPaintFilters();
+  _gigsPaintList();
+}
+window._gigsSetFilter = _gigsSetFilter;
+
+function _gigsSetMonth(m) {
+  window._gigsView.month = m;
+  _gigsPaintFilters();
+  _gigsPaintList();
+}
+window._gigsSetMonth = _gigsSetMonth;
+
+function _gigsSetQuery(q) {
+  window._gigsView.q = q;
+  _gigsPaintList();
+}
+window._gigsSetQuery = _gigsSetQuery;
+
+function _gigsPaintFilters() {
+  const row = document.getElementById('gigsFilterRow');
+  const monthRow = document.getElementById('gigsMonthRow');
+  if (!row || !monthRow) return;
+  const v = window._gigsView;
+  const defs = [
+    ['upcoming', 'Upcoming'], ['pencilled', 'Pencilled'],
+    ['money', 'Awaiting money'], ['played', 'Played'], ['all', 'Everything'],
+  ];
+  row.innerHTML = defs.map(([key, label]) => {
+    const n = _gigsApplyQuery(_gigsFilterSet(key)).length;
+    const on = v.filter === key;
+    return `<span onclick="_gigsSetFilter('${key}')" style="font-size:12px;font-weight:600;white-space:nowrap;padding:7px 13px;border-radius:999px;cursor:pointer;${on ? 'background:var(--accent);color:#000;border:1px solid var(--accent);' : 'background:var(--card);color:var(--text-2);border:1px solid var(--border);'}">${label}${n ? ` <span style="opacity:.7;">${n}</span>` : ''}</span>`;
+  }).join('');
+
+  // Month picker: built from the months actually present in the current
+  // filter so it never offers an empty month.
+  const list = _gigsApplyQuery(_gigsFilterSet(v.filter));
+  const months = [...new Set(list.map(_gpMonthKey).filter(Boolean))];
+  const asc = v.filter === 'upcoming' || v.filter === 'pencilled';
+  months.sort(); if (!asc) months.reverse();
+  if (months.length < 2) { monthRow.innerHTML = ''; return; }
+  const nowYear = String(new Date().getFullYear());
+  const chips = [`<span onclick="_gigsSetMonth('all')" style="font-size:11px;font-weight:600;white-space:nowrap;padding:6px 11px;border-radius:999px;cursor:pointer;${v.month === 'all' ? 'background:var(--surface);color:var(--text);border:1px solid var(--text-3);' : 'background:var(--card);color:var(--text-3);border:1px solid var(--border);'}">All dates</span>`];
+  months.slice(0, 18).forEach(m => {
+    const d = new Date(m + '-15T12:00:00');
+    const label = d.toLocaleDateString('en-GB', { month: 'short' }) + (m.slice(0, 4) !== nowYear ? ' ' + m.slice(2, 4) : '');
+    const on = v.month === m;
+    chips.push(`<span onclick="_gigsSetMonth('${m}')" style="font-size:11px;font-weight:600;white-space:nowrap;padding:6px 11px;border-radius:999px;cursor:pointer;${on ? 'background:var(--surface);color:var(--text);border:1px solid var(--text-3);' : 'background:var(--card);color:var(--text-3);border:1px solid var(--border);'}">${label}</span>`);
+  });
+  monthRow.innerHTML = chips.join('');
+}
+
+function _gigsRow(g, maps) {
+  const d = parseGigDate(g.date);
+  const dn = d ? d.toLocaleDateString('en-GB', { weekday: 'short' }) : '';
+  const dd = d ? d.getDate() : '?';
+  const money = _gpMoneyState(g, maps);
+  const past = _gpIsPast(g);
+  let chip;
+  if (_gpIsCancelled(g)) chip = '<span style="font-size:9px;font-weight:800;border-radius:5px;padding:2px 6px;text-transform:uppercase;color:var(--text-3);background:var(--surface);">Cancelled</span>';
+  else if (_gpIsPencilled(g)) chip = '<span style="font-size:9px;font-weight:800;border-radius:5px;padding:2px 6px;text-transform:uppercase;color:var(--accent);background:var(--accent-dim);">Pencilled</span>';
+  else if (past) chip = '<span style="font-size:9px;font-weight:800;border-radius:5px;padding:2px 6px;text-transform:uppercase;color:var(--text-2);background:var(--surface);">Played</span>';
+  else chip = '<span style="font-size:9px;font-weight:800;border-radius:5px;padding:2px 6px;text-transform:uppercase;color:var(--success);background:rgba(63,185,80,.12);">Confirmed</span>';
+  const title = g.band_name || g.venue_name || 'Gig';
+  const subBits = [g.start_time ? String(g.start_time).slice(0, 5) : null, g.band_name ? g.venue_name : null].filter(Boolean).join(' · ');
+  const fee = _gpFee(g);
+  return `
+    <div onclick="openGigDetail('${escapeAttr(g.id)}')" style="margin-bottom:8px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;${past || _gpIsCancelled(g) ? 'opacity:.7;' : ''}">
+      <div style="flex-shrink:0;text-align:center;width:38px;">
+        <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;">${dn}</div>
+        <div style="font-size:17px;font-weight:800;color:var(--text);">${dd}</div>
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(title)}</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:2px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${chip}${subBits ? ' ' + escapeHtml(subBits) : ''}</div>
+      </div>
+      <div style="flex-shrink:0;text-align:right;">
+        <div style="font-size:14px;font-weight:700;color:${fee > 0 ? 'var(--text)' : 'var(--text-3)'};">${fee > 0 ? '£' + fee.toLocaleString() : '—'}</div>
+        ${money.label ? `<div style="font-size:10px;color:${money.color};margin-top:1px;">${escapeHtml(money.label)}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+function _gigsPaintList() {
+  const el = document.getElementById('gigsListContent');
+  if (!el) return;
+  const v = window._gigsView;
+  const maps = _gpInvoiceMaps();
+  let list = _gigsApplyQuery(_gigsFilterSet(v.filter));
+  if (v.month !== 'all') list = list.filter(g => _gpMonthKey(g) === v.month);
+
+  if (!list.length) {
+    el.innerHTML = `<div style="text-align:center;padding:30px;color:var(--text-3);font-size:13px;">${v.q ? `Nothing matches "${escapeHtml(v.q)}"` : 'Nothing here yet.'}</div>`;
+    return;
+  }
+
+  const asc = v.filter === 'upcoming' || v.filter === 'pencilled';
+  list.sort((a, b) => (asc ? 1 : -1) * ((a.date || '').localeCompare(b.date || '')));
+
+  const monthHdr = (m) => {
+    const d = new Date(m + '-15T12:00:00');
+    return `<div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.8px;margin:14px 0 6px;">${d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</div>`;
+  };
+  // Year headers carry totals so the old Yearly tab's job survives here:
+  // played, non-pencilled money only (the confirmed-money rule).
+  const yearHdr = (y, yearGigs) => {
+    const real = yearGigs.filter(g => !_gpIsCancelled(g) && !_gpIsPencilled(g));
+    const money = real.reduce((s, g) => s + _gpFee(g), 0);
+    return `<div style="display:flex;justify-content:space-between;align-items:baseline;margin:18px 0 6px;border-bottom:1px solid var(--border);padding-bottom:6px;">
+      <span style="font-size:14px;font-weight:800;color:var(--text);">${y}</span>
+      <span style="font-size:11px;color:var(--text-2);">${real.length} gig${real.length === 1 ? '' : 's'} · <b style="color:var(--success);">£${money.toLocaleString()}</b></span>
+    </div>`;
+  };
+
+  let html = '';
+  const thisYear = String(new Date().getFullYear());
+  const byYear = new Map();
+  list.forEach(g => {
+    const y = (g.date || '').slice(0, 4) || '????';
+    if (!byYear.has(y)) byYear.set(y, []);
+    byYear.get(y).push(g);
+  });
+  for (const [y, yearGigs] of byYear) {
+    if (y !== thisYear || v.filter === 'played' || v.filter === 'all') html += yearHdr(y, yearGigs);
+    let lastMonth = null;
+    for (const g of yearGigs) {
+      const m = _gpMonthKey(g);
+      if (m !== lastMonth) { html += monthHdr(m); lastMonth = m; }
+      html += _gigsRow(g, maps);
+    }
+  }
+  el.innerHTML = html;
 }
 
 async function pullGoogleCalendarChanges() {
@@ -2113,403 +2550,11 @@ function toggleImportsBar() {
 }
 window.toggleImportsBar = toggleImportsBar;
 
-function switchGigTab(el, mode) {
-  gigViewMode = mode;
-  gigWeekOffset = 0;
-  gigMonthOffset = 0;
-  gigYearOffset = 0;
-  document.querySelectorAll('.gig-tab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  if (window._cachedGigs) renderGigsList(window._cachedGigs);
-}
-
-function navigateGigView(direction) {
-  if (gigViewMode === 'week') gigWeekOffset += direction;
-  else if (gigViewMode === 'month') gigMonthOffset += direction;
-  else if (gigViewMode === 'year') gigYearOffset += direction;
-  if (window._cachedGigs) renderGigsList(window._cachedGigs);
-}
-
-function filterGigsList() {
-  if (window._cachedGigs) renderGigsList(window._cachedGigs);
-}
-
 // Parse a gig date safely - handles both "YYYY-MM-DD" and full ISO "YYYY-MM-DDTHH:mm:ss.sssZ"
 function parseGigDate(dateStr) {
   if (!dateStr) return null;
   const iso = dateStr.substring(0, 10); // always grab YYYY-MM-DD
   return new Date(iso + 'T12:00:00');
-}
-
-function renderGigsList(gigs) {
-  const listContent = document.getElementById('gigsListContent');
-  if (!listContent) return;
-
-  // Apply search filter
-  const searchQuery = (document.getElementById('gigSearchInput')?.value || '').toLowerCase().trim();
-  let filtered = gigs;
-  if (searchQuery) {
-    filtered = gigs.filter(g =>
-      (g.band_name || '').toLowerCase().includes(searchQuery) ||
-      (g.venue_name || '').toLowerCase().includes(searchQuery) ||
-      (g.date || '').includes(searchQuery)
-    );
-  }
-
-  const now = new Date();
-  let headerHtml = '';
-  let viewFiltered = filtered;
-
-  if (gigViewMode === 'week') {
-    // Calculate week range with offset
-    // getDay(): 0=Sun..6=Sat. We want Monday as week start.
-    // On Sunday, naive "date - getDay() + 1" rolls FORWARD a day; instead subtract ((getDay()+6)%7).
-    const weekStart = new Date(now);
-    const dowMonday = (weekStart.getDay() + 6) % 7; // 0=Mon, 6=Sun
-    weekStart.setDate(weekStart.getDate() - dowMonday + (gigWeekOffset * 7));
-    weekStart.setHours(0, 0, 0, 0);
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekEnd.getDate() + 6);
-    weekEnd.setHours(23, 59, 59, 999);
-
-    const weekGigs = filtered.filter(g => {
-      const d = parseGigDate(g.date);
-      return d >= weekStart && d <= weekEnd;
-    });
-    viewFiltered = weekGigs;
-
-    // Week summary stats
-    const weekTotal = weekGigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
-    const startDay = weekStart.getDate();
-    const endDay = weekEnd.getDate();
-    const monthLabel = weekStart.toLocaleDateString('en-GB', { month: 'long' });
-    const endMonthLabel = weekEnd.toLocaleDateString('en-GB', { month: 'long' });
-    const rangeLabel = monthLabel === endMonthLabel
-      ? `${startDay} - ${endDay} ${monthLabel}`
-      : `${startDay} ${monthLabel} - ${endDay} ${endMonthLabel}`;
-
-    const isThisWeek = gigWeekOffset === 0;
-    const weekLabel = isThisWeek ? 'This week' : (gigWeekOffset === 1 ? 'Next week' : (gigWeekOffset === -1 ? 'Last week' : `${Math.abs(gigWeekOffset)} weeks ${gigWeekOffset > 0 ? 'ahead' : 'ago'}`));
-
-    // Build day strip
-    const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-    let dayStripHtml = '';
-    for (let i = 0; i < 7; i++) {
-      const dayDate = new Date(weekStart);
-      dayDate.setDate(dayDate.getDate() + i);
-      const dayNum = dayDate.getDate();
-      const isToday = dayDate.toDateString() === now.toDateString();
-      const hasGig = weekGigs.some(g => {
-        const d = parseGigDate(g.date);
-        return d.toDateString() === dayDate.toDateString();
-      });
-
-      if (isToday) {
-        dayStripHtml += `<div style="flex:1;text-align:center;padding:6px 0;border-radius:8px;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);">
-          <div style="font-size:10px;color:var(--accent);">${dayNames[i]}</div>
-          <div style="font-size:14px;font-weight:700;color:var(--accent);">${dayNum}</div>
-          ${hasGig ? '<div style="width:4px;height:4px;border-radius:2px;background:var(--accent);margin:3px auto 0;"></div>' : ''}
-        </div>`;
-      } else if (hasGig) {
-        dayStripHtml += `<div style="flex:1;text-align:center;padding:6px 0;border-radius:8px;">
-          <div style="font-size:10px;color:var(--text-3);">${dayNames[i]}</div>
-          <div style="font-size:14px;font-weight:600;color:var(--success);">${dayNum}</div>
-          <div style="width:4px;height:4px;border-radius:2px;background:var(--success);margin:3px auto 0;"></div>
-        </div>`;
-      } else {
-        dayStripHtml += `<div style="flex:1;text-align:center;padding:6px 0;border-radius:8px;">
-          <div style="font-size:10px;color:var(--text-3);">${dayNames[i]}</div>
-          <div style="font-size:14px;color:var(--text-2);">${dayNum}</div>
-        </div>`;
-      }
-    }
-
-    headerHtml = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-top:8px;">
-        <button onclick="navigateGigView(-1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&lsaquo;</button>
-        <div style="text-align:center;">
-          <div style="font-size:15px;font-weight:700;color:var(--text);">${rangeLabel}</div>
-          <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${weekLabel} &middot; ${weekGigs.length} gig${weekGigs.length !== 1 ? 's' : ''}${weekTotal > 0 ? ' &middot; &pound;' + weekTotal.toFixed(0) : ''}</div>
-        </div>
-        <button onclick="navigateGigView(1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&rsaquo;</button>
-      </div>
-      <div style="display:flex;gap:2px;margin-bottom:12px;">${dayStripHtml}</div>
-    `;
-
-  } else if (gigViewMode === 'month') {
-    const targetDate = new Date(now.getFullYear(), now.getMonth() + gigMonthOffset, 1);
-    const monthStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
-    const monthEnd = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
-    const monthName = targetDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-
-    const monthGigs = filtered.filter(g => {
-      const d = parseGigDate(g.date);
-      return d >= monthStart && d <= monthEnd;
-    });
-    viewFiltered = monthGigs;
-
-    const monthTotal = monthGigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
-    const unpaidTotal = monthGigs.filter(g => g.status !== 'paid' && g.invoice_status !== 'paid').reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
-
-    // Build mini calendar grid (Monday-first; 0..6 where 0=Mon, 6=Sun)
-    const firstDayOfMonth = (monthStart.getDay() + 6) % 7;
-    const daysInMonth = monthEnd.getDate();
-    const gigDateSet = {};
-    monthGigs.forEach(g => {
-      const d = parseGigDate(g.date);
-      const day = d.getDate();
-      if (!gigDateSet[day]) gigDateSet[day] = [];
-      gigDateSet[day].push(g);
-    });
-
-    let calGridHtml = '<div style="display:grid;grid-template-columns:repeat(7,1fr);text-align:center;gap:2px;">';
-    // Day headers
-    ['Mo','Tu','We','Th','Fr','Sa','Su'].forEach(d => {
-      calGridHtml += `<div style="font-size:9px;color:var(--text-3);padding:4px;">${d}</div>`;
-    });
-    // Empty cells before first day
-    for (let i = 0; i < firstDayOfMonth; i++) {
-      calGridHtml += '<div style="padding:4px;"></div>';
-    }
-    // Day cells
-    for (let day = 1; day <= daysInMonth; day++) {
-      const isToday = day === now.getDate() && targetDate.getMonth() === now.getMonth() && targetDate.getFullYear() === now.getFullYear();
-      const dayGigs = gigDateSet[day];
-      if (dayGigs) {
-        // Determine color based on payment status
-        const allPaid = dayGigs.every(g => g.status === 'paid' || g.invoice_status === 'paid');
-        const isUpcoming = dayGigs.some(g => parseGigDate(g.date) >= now);
-        let bgColor, textColor;
-        if (allPaid) {
-          bgColor = 'var(--success-dim)'; textColor = 'var(--success)';
-        } else if (isUpcoming) {
-          bgColor = 'var(--accent-dim)'; textColor = 'var(--accent)';
-        } else {
-          bgColor = 'var(--warning-dim)'; textColor = 'var(--warning)';
-        }
-        calGridHtml += `<div style="padding:4px;font-size:11px;border-radius:6px;background:${bgColor};color:${textColor};font-weight:700;cursor:pointer;">${day}</div>`;
-      } else if (isToday) {
-        calGridHtml += `<div style="padding:4px;font-size:11px;border-radius:6px;border:1px solid var(--accent);color:var(--accent);font-weight:600;">${day}</div>`;
-      } else {
-        calGridHtml += `<div style="padding:4px;font-size:11px;color:var(--text-2);">${day}</div>`;
-      }
-    }
-    calGridHtml += '</div>';
-    // Legend
-    calGridHtml += `<div style="display:flex;gap:10px;justify-content:center;margin-top:8px;padding-top:6px;border-top:1px solid var(--border);">
-      <div style="display:flex;align-items:center;gap:4px;"><div style="width:6px;height:6px;border-radius:3px;background:var(--success);"></div><span style="font-size:9px;color:var(--text-3);">Paid</span></div>
-      <div style="display:flex;align-items:center;gap:4px;"><div style="width:6px;height:6px;border-radius:3px;background:var(--warning);"></div><span style="font-size:9px;color:var(--text-3);">Unpaid</span></div>
-      <div style="display:flex;align-items:center;gap:4px;"><div style="width:6px;height:6px;border-radius:3px;background:var(--accent);"></div><span style="font-size:9px;color:var(--text-3);">Upcoming</span></div>
-    </div>`;
-
-    headerHtml = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-top:8px;">
-        <button onclick="navigateGigView(-1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&lsaquo;</button>
-        <div style="text-align:center;">
-          <div style="font-size:15px;font-weight:700;color:var(--text);">${monthName}</div>
-          <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${monthGigs.length} gig${monthGigs.length !== 1 ? 's' : ''} &middot; <span style="color:var(--accent);font-weight:600;">&pound;${monthTotal.toFixed(0)}</span>${unpaidTotal > 0 ? ' &middot; <span style="color:var(--warning);">&pound;' + unpaidTotal.toFixed(0) + ' unpaid</span>' : ''}</div>
-        </div>
-        <button onclick="navigateGigView(1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&rsaquo;</button>
-      </div>
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px;margin-bottom:12px;">
-        ${calGridHtml}
-      </div>
-    `;
-
-  } else if (gigViewMode === 'year') {
-    // Tax year runs April to March
-    const currentTaxYearStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-    const taxYearStart = currentTaxYearStart + gigYearOffset;
-    const taxYearEnd = taxYearStart + 1;
-    const startDate = new Date(taxYearStart, 3, 1); // 1 April
-    const endDate = new Date(taxYearEnd, 2, 31, 23, 59, 59); // 31 March
-
-    const yearGigs = filtered.filter(g => {
-      const d = parseGigDate(g.date);
-      return d >= startDate && d <= endDate;
-    });
-    viewFiltered = yearGigs;
-
-    const yearTotal = yearGigs.reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
-    const paidTotal = yearGigs.filter(g => g.status === 'paid' || g.invoice_status === 'paid').reduce((s, g) => s + (parseFloat(g.fee) || 0), 0);
-    const dueTotal = yearTotal - paidTotal;
-
-    // Monthly bar chart data (Apr-Mar)
-    const monthNames = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar'];
-    const monthTotals = new Array(12).fill(0);
-    yearGigs.forEach(g => {
-      const d = parseGigDate(g.date);
-      const m = d.getMonth(); // 0-11
-      // Map to tax year index: Apr(3)=0, May(4)=1, ... Mar(2)=11
-      const idx = m >= 3 ? m - 3 : m + 9;
-      monthTotals[idx] += (parseFloat(g.fee) || 0);
-    });
-    const maxMonthTotal = Math.max(...monthTotals, 1);
-
-    let barChartHtml = '<div style="display:flex;align-items:flex-end;gap:4px;height:60px;margin-bottom:6px;">';
-    monthTotals.forEach((total, i) => {
-      const height = Math.max(4, Math.round((total / maxMonthTotal) * 60));
-      const isFuture = (() => {
-        const barMonth = i < 9 ? i + 3 : i - 9;
-        const barYear = i < 9 ? taxYearStart : taxYearEnd;
-        return new Date(barYear, barMonth, 1) > now;
-      })();
-      const color = isFuture ? 'var(--accent);opacity:.3' : 'var(--accent)';
-      barChartHtml += `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;">
-        <div style="width:100%;background:${color};border-radius:3px 3px 0 0;height:${height}px;"></div>
-      </div>`;
-    });
-    barChartHtml += '</div>';
-    barChartHtml += '<div style="display:flex;gap:4px;">';
-    monthNames.forEach(m => {
-      barChartHtml += `<div style="flex:1;text-align:center;font-size:8px;color:var(--text-3);">${m}</div>`;
-    });
-    barChartHtml += '</div>';
-
-    // Paid/due progress bar
-    const paidPct = yearTotal > 0 ? Math.round((paidTotal / yearTotal) * 100) : 0;
-    const paidBarHtml = yearTotal > 0 ? `
-      <div style="display:flex;gap:1px;border-radius:8px;overflow:hidden;margin-bottom:12px;">
-        <div style="background:var(--success-dim);color:var(--success);flex:${paidPct || 1};padding:6px;font-size:11px;font-weight:600;text-align:center;">&pound;${paidTotal.toFixed(0)} paid</div>
-        ${dueTotal > 0 ? `<div style="background:var(--warning-dim);color:var(--warning);flex:${100 - paidPct || 1};padding:6px;font-size:11px;font-weight:600;text-align:center;">&pound;${dueTotal.toFixed(0)} due</div>` : ''}
-      </div>` : '';
-
-    headerHtml = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-top:8px;">
-        <button onclick="navigateGigView(-1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&lsaquo;</button>
-        <div style="text-align:center;">
-          <div style="font-size:15px;font-weight:700;color:var(--text);">Tax Year ${taxYearStart}-${String(taxYearEnd).slice(2)}</div>
-          <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${yearGigs.length} gig${yearGigs.length !== 1 ? 's' : ''} &middot; <span style="color:var(--accent);font-weight:600;">&pound;${yearTotal.toFixed(0)}</span></div>
-        </div>
-        <button onclick="navigateGigView(1)" style="width:28px;height:28px;border-radius:14px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;">&rsaquo;</button>
-      </div>
-      ${paidBarHtml}
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px;">
-        ${barChartHtml}
-      </div>
-      <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">All gigs &middot; upcoming first</div>
-    `;
-  }
-
-  // Sort filtered gigs
-  if (gigViewMode === 'year') {
-    // Yearly: date order starting from today.
-    // Upcoming (today onwards) soonest-first, then past below (most recent first).
-    const todayKey = (() => {
-      const n = new Date();
-      const y = n.getFullYear();
-      const m = String(n.getMonth() + 1).padStart(2, '0');
-      const d = String(n.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    })();
-    viewFiltered.sort((a, b) => {
-      const ad = (a.date || '').substring(0, 10);
-      const bd = (b.date || '').substring(0, 10);
-      const aFuture = ad >= todayKey;
-      const bFuture = bd >= todayKey;
-      if (aFuture !== bFuture) return aFuture ? -1 : 1; // upcoming block first
-      if (aFuture) return ad.localeCompare(bd);         // upcoming: ascending
-      return bd.localeCompare(ad);                      // past: descending
-    });
-  } else {
-    viewFiltered.sort((a, b) => (a.date || '').localeCompare(b.date || '')); // oldest first for week/month
-  }
-
-  // Render empty state
-  if (viewFiltered.length === 0 && !searchQuery) {
-    const emptyMsg = gigViewMode === 'week' ? 'No gigs this week' : (gigViewMode === 'month' ? 'No gigs this month' : 'No gigs this tax year');
-    listContent.innerHTML = headerHtml + `
-      <div style="text-align:center;padding:30px;">
-        <div style="font-size:28px;margin-bottom:8px;">🎸</div>
-        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">${emptyMsg}</div>
-        <div style="font-size:13px;color:var(--text-2);">Tap + New to add a gig</div>
-      </div>
-    `;
-    return;
-  }
-
-  if (viewFiltered.length === 0 && searchQuery) {
-    listContent.innerHTML = headerHtml + `
-      <div style="text-align:center;padding:30px;">
-        <div style="font-size:28px;margin-bottom:8px;">🔍</div>
-        <div style="font-weight:600;color:var(--text);margin-bottom:4px;">No gigs matching "${escapeHtml(searchQuery)}"</div>
-      </div>
-    `;
-    return;
-  }
-
-  // Separate regular gigs from depped-out gigs
-  const regularGigs = viewFiltered.filter(g => g.status !== 'depped_out');
-  const deppedGigs = viewFiltered.filter(g => g.status === 'depped_out');
-
-  const gigCardsHtml = regularGigs.map(gig => renderGigCard(gig)).join('');
-  const deppedHtml = deppedGigs.length > 0
-    ? `<div style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;margin:12px 0 6px;">Depped out</div>` + deppedGigs.map(gig => `<div style="opacity:.55;">${renderGigCard(gig)}</div>`).join('')
-    : '';
-
-  // Task #291: persistent "fill in fees" entry. Counted from the FULL gigs
-  // argument (not viewFiltered) so the banner is consistent across Weekly /
-  // Monthly / Yearly tabs — the work-to-do count isn't view-scoped.
-  const missingFeeCount = (gigs || []).filter(g => {
-    const src = g.source || '';
-    const fee = g.fee;
-    return src.startsWith('gcal:') && (fee == null || Number(fee) === 0);
-  }).length;
-  const missingFeeBanner = missingFeeCount > 0 ? `
-    <div onclick="window.openFeeReviewWizard && window.openFeeReviewWizard()" style="margin:0 0 10px;padding:9px 12px;background:linear-gradient(135deg,rgba(240,165,0,.14),rgba(240,165,0,.04));border:1px solid rgba(240,165,0,.32);border-radius:12px;cursor:pointer;display:flex;align-items:center;gap:10px;">
-      <div style="font-size:15px;">&#x1F4B7;</div>
-      <div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--text);">${missingFeeCount} imported gig${missingFeeCount === 1 ? '' : 's'} missing a fee</div>
-      <div style="font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0;">Fill in &rsaquo;</div>
-    </div>` : '';
-
-  listContent.innerHTML = missingFeeBanner + headerHtml + gigCardsHtml + deppedHtml;
-}
-
-function renderGigCard(gig) {
-  const dateObj = gig.date ? new Date(gig.date.substring(0, 10) + 'T12:00:00') : null;
-  const dayNum = dateObj ? dateObj.getDate() : '?';
-  const monthAbbr = dateObj ? dateObj.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase() : '';
-
-  // Mini badges
-  let badges = '';
-  if (!gig.fee || parseFloat(gig.fee) === 0) {
-    badges += '<span style="font-size:9px;background:var(--info-dim);color:var(--info);border-radius:6px;padding:2px 6px;font-weight:600;">Draft inv</span>';
-  }
-  if (gig.dress_code) {
-    badges += '<span style="font-size:9px;background:var(--success-dim);color:var(--success);border-radius:6px;padding:2px 6px;font-weight:600;">Pack ready</span>';
-  }
-
-  // Payment badge for monthly/yearly views
-  let payBadge = '';
-  if (gigViewMode !== 'week') {
-    if (gig.status === 'paid' || gig.invoice_status === 'paid') {
-      payBadge = '<span class="badge badge-success" style="font-size:9px;">Paid</span>';
-    } else if (gig.invoice_status === 'sent' || gig.invoice_status === 'overdue') {
-      payBadge = '<span class="badge badge-warning" style="font-size:9px;">Unpaid</span>';
-    }
-  }
-
-  return `
-  <div class="gi" onclick="openGigDetail('${gig.id}')">
-    <div style="display:flex;align-items:flex-start;gap:14px;">
-      <div class="gdb">
-        <div class="gdd">${dayNum}</div>
-        <div class="gdm">${monthAbbr}</div>
-      </div>
-      <div style="flex:1;min-width:0;">
-        <div class="gt">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
-        <div class="gv">${escapeHtml(gig.venue_name || 'No venue')}${gig.start_time ? ' \u00B7 ' + formatTime(gig.start_time) + (gig.end_time ? '\u2013' + formatTime(gig.end_time) : '') : ''}</div>
-        ${gig.load_in_time ? `<div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">Load-in ${formatTime(gig.load_in_time)}</div>` : ''}
-        ${gig.mileage_miles ? `<div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">\uD83D\uDE97 ${Math.round(parseFloat(gig.mileage_miles))} miles from home</div>` : ''}
-        <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
-          <span class="badge badge-${statusBadgeClass(gig.status)}" style="font-size:11px;">${statusLabel(gig.status)}</span>
-          ${gig.fee ? `<span class="gf">\u00A3${parseFloat(gig.fee).toFixed(0)}</span>` : ''}
-          ${payBadge}
-          ${badges ? `<div style="display:flex;gap:4px;margin-left:auto;">${badges}</div>` : ''}
-        </div>
-      </div>
-    </div>
-  </div>`;
 }
 
 function statusBadgeClass(status) {
@@ -10852,7 +10897,7 @@ async function saveEditGig(gigId) {
     window._cachedStats = null;
     persistCachedCalendar();
     closePanel('panel-edit-gig');
-    renderGigsList(window._cachedGigs);
+    if (typeof _gigsPaintAll === 'function') _gigsPaintAll();
     // S1-04 / #84: if the gig detail panel is still open underneath the edit panel,
     // it is rendered from the pre-edit gig payload. Re-fetch and re-open so the user
     // sees the new fee / date / venue immediately instead of the stale figures.
