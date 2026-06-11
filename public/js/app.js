@@ -6953,8 +6953,13 @@ function openPanel(id) {
   //  - Clicking a top-level nav target (profile, notifications, finance, chat) while
   //    on a keep-header panel would load that screen UNDERNEATH the keep-header panel,
   //    because both share z-index 100 and DOM order would win.
+  // Child panels that legitimately stack ON TOP of a keep-header parent.
+  // The sweep must leave the parent open underneath, or "back" from the
+  // child lands on the bare screen instead of the form the user was in
+  // (the invoice PDF preview's Back-to-edit bug).
+  const keepHeaderChildren = { 'panel-invoice-pdf': 'panel-invoice' };
   document.querySelectorAll('.panel-overlay.panel-keep-header.open').forEach(function (other) {
-    if (other !== el) other.classList.remove('open');
+    if (other !== el && keepHeaderChildren[id] !== other.id) other.classList.remove('open');
   });
   el.classList.add('open');
   // Trigger render for panels that need dynamic content
