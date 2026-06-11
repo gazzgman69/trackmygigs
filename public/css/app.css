@@ -1852,3 +1852,14 @@ body.theme-teal {
   color: var(--text-2);
   font-size: 12px;
 }
+
+/* Emoji-replacement outline icons (see js/icons.js). Sized to the text they
+   sit in; colour is set per-instance (accent in plain text, inherited where
+   the surroundings have an explicit colour, e.g. black on accent buttons). */
+.tmgi {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  vertical-align: -0.12em;
+  flex-shrink: 0;
+}
