@@ -674,10 +674,19 @@ router.get('/events', async (req, res) => {
         WHERE user_id = $1 AND provider = 'google' AND sync_direction = 'dismissed'`,
       [req.user.id]
     );
-    const dismissedIds = new Set(dismissedRows.rows.map(r => r.calendar_id));
+    // Recurring instances carry ids like parent_20260620; normalise both the
+    // dismissed list and the candidates so dismissing any one instance hides
+    // the whole series (series are collapsed to one suggestion anyway).
+    const seriesBase = (id) => String(id || '').replace(/_\d{8}(T\d{6}Z?)?$/, '');
+    const dismissedIds = new Set();
+    for (const r of dismissedRows.rows) {
+      dismissedIds.add(r.calendar_id);
+      dismissedIds.add(seriesBase(r.calendar_id));
+    }
     const candidates = items.filter(ev =>
       !importedIds.has(ev.id) &&
       !dismissedIds.has(ev.id) &&
+      !dismissedIds.has(seriesBase(ev.id)) &&
       !(ev.recurringEventId && dismissedIds.has(ev.recurringEventId)));
 
     // Recurring-event dedup (2026-04-23). A weekly teaching slot for 2 years
