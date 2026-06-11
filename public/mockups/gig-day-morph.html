@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Home morphs through gig day</title>
+<style>
+:root{--bg:#0D1117;--surface:#161B22;--card:#21262D;--border:#30363D;--text:#E6EDF3;--text-2:#8B949E;--text-3:#6E7681;--accent:#F0A500;--accent-dim:rgba(240,165,0,.15);--success:#3FB950;--danger:#F85149;--info:#58A6FF;--purple:#A78BFA;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;padding-bottom:60px;}
+.note{background:var(--accent-dim);border:1px solid rgba(240,165,0,.4);margin:10px;padding:10px 12px;border-radius:10px;font-size:12px;color:var(--text-2);}
+.note strong{color:var(--accent);}
+.phase{font-size:11px;font-weight:800;color:#000;background:var(--accent);display:inline-block;border-radius:999px;padding:4px 12px;margin:22px 16px 8px;text-transform:uppercase;letter-spacing:.6px;}
+.phase.g{background:var(--success);} .phase.b{background:var(--info);} .phase.p{background:var(--purple);}
+.when{font-size:11px;color:var(--text-3);margin:0 16px 8px;}
+
+.hero{margin:0 16px;border-radius:16px;padding:16px;border:1px solid var(--border);}
+.hero .tag{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;}
+.hero .big{font-size:20px;font-weight:800;margin-top:6px;line-height:1.2;}
+.hero .sub{font-size:13px;color:var(--text-2);margin-top:3px;}
+.timeline{margin-top:12px;border-left:2px solid var(--border);padding-left:14px;display:flex;flex-direction:column;gap:9px;}
+.tl{position:relative;font-size:13px;color:var(--text-2);}
+.tl b{color:var(--text);}
+.tl::before{content:'';position:absolute;left:-20px;top:4px;width:9px;height:9px;border-radius:50%;background:var(--border);}
+.tl.next::before{background:var(--accent);box-shadow:0 0 0 3px var(--accent-dim);}
+.tl.done{opacity:.5;} .tl.done::before{background:var(--success);}
+.acts{display:flex;gap:8px;margin-top:14px;}
+.a1{flex:1.3;text-align:center;background:var(--accent);color:#000;border-radius:10px;padding:12px 0;font-size:13px;font-weight:800;}
+.a2{flex:1;text-align:center;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px 0;font-size:13px;font-weight:600;}
+.mini{margin:8px 16px 0;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:11px;font-size:12px;color:var(--text-2);}
+.mini .ico{font-size:16px;}
+.mini b{color:var(--text);}
+.mini .go{margin-left:auto;font-size:11px;font-weight:700;color:var(--accent);white-space:nowrap;}
+.countbig{font-size:34px;font-weight:800;color:var(--text);margin-top:8px;letter-spacing:-1px;}
+.dim{font-size:11px;color:var(--text-3);margin:6px 16px 0;text-align:center;}
+</style>
+</head>
+<body>
+<div class="note"><strong>MOCKUP — not wired.</strong> Gig day isn't one moment, it's four. Home already flips to a "Tonight" card; this hones it into a day that <strong>moves with you</strong>: brief in the morning, countdown to leaving, stage tools at the venue, wrap-up after. Everything below uses data the app already holds (load-in, set times, travel distance, kit checklist, venue notes, weather, leader contact). Noisy cards (rebooking radar, marketplace) sit below the fold all day.</div>
+
+<!-- ── PHASE 1 ── -->
+<span class="phase">1 · The briefing</span>
+<div class="when">From waking up until ~2h before leaving</div>
+<div class="hero" style="background:linear-gradient(160deg,#1d2330,var(--card));">
+  <div class="tag" style="color:var(--accent);">🎤 Gig day · The Bullingdon tonight</div>
+  <div class="big">Here's the shape of it</div>
+  <div class="timeline">
+    <div class="tl next"><b>17:40</b> leave Bicester &middot; 45 min + buffer</div>
+    <div class="tl"><b>18:30</b> load-in &middot; rear yard off Cowley Rd</div>
+    <div class="tl"><b>19:15</b> soundcheck</div>
+    <div class="tl"><b>20:00</b> set 1 &middot; <b>21:30</b> set 2</div>
+    <div class="tl"><b>23:30</b> finish &middot; £380 on the night</div>
+  </div>
+  <div class="acts"><span class="a1">📄 Day sheet</span><span class="a2">Send to band</span></div>
+</div>
+<div class="mini"><span class="ico">🌧️</span><span><b>Rain from 5pm</b> · cover the load-in, doors are 20m from the van</span></div>
+<div class="mini"><span class="ico">🎒</span><span>Function rig checklist · <b>6 of 9 packed</b></span><span class="go">Tick off ›</span></div>
+<div class="mini"><span class="ico">👔</span><span>Dress: <b>all black</b> · Sam Booker leads · 07700 900123</span><span class="go">Call ›</span></div>
+
+<!-- ── PHASE 2 ── -->
+<span class="phase g">2 · Get out the door</span>
+<div class="when">From ~90 min before leave-time until you set off</div>
+<div class="hero" style="background:linear-gradient(160deg,#14241a,var(--card));border-color:rgba(63,185,80,.35);">
+  <div class="tag" style="color:var(--success);">⏱️ Leave by 17:40</div>
+  <div class="countbig">1h 12m</div>
+  <div class="sub">45 min drive + 15 min buffer to make 18:30 load-in</div>
+  <div class="acts"><span class="a1" style="background:var(--success);">🧭 Navigate</span><span class="a2">🎒 Kit 8/9</span><span class="a2">Day sheet</span></div>
+</div>
+<div class="mini"><span class="ico">⛽</span><span>Snap fuel receipts as you go · they file themselves</span><span class="go">Camera ›</span></div>
+
+<!-- ── PHASE 3 ── -->
+<span class="phase b">3 · At the venue</span>
+<div class="when">From load-in until the last note</div>
+<div class="hero" style="background:#000;border-color:var(--border);">
+  <div class="tag" style="color:var(--info);">🔵 On site · set 1 in 25 min</div>
+  <div class="big">The Bullingdon</div>
+  <div class="sub">Set 1 &middot; 20:00&ndash;21:00 &nbsp;·&nbsp; Set 2 &middot; 21:30&ndash;22:45</div>
+  <div class="timeline" style="margin-top:10px;">
+    <div class="tl done"><b>18:30</b> loaded in</div>
+    <div class="tl done"><b>19:15</b> soundchecked</div>
+    <div class="tl next"><b>20:00</b> set 1</div>
+  </div>
+  <div class="acts"><span class="a1">🎵 Stage mode</span><span class="a2">📞 Sam</span></div>
+</div>
+<div class="mini"><span class="ico">🏛️</span><span><b>Venue memory:</b> sound limiter at 95dB · park in rear yard, code 1066 · sticky door on the fire exit</span></div>
+
+<!-- ── PHASE 4 ── -->
+<span class="phase p">4 · The wrap-up</span>
+<div class="when">After the finish time, and on tomorrow's Home</div>
+<div class="hero" style="background:linear-gradient(160deg,#231d30,var(--card));border-color:rgba(167,139,250,.35);">
+  <div class="tag" style="color:var(--purple);">🌙 That's a wrap</div>
+  <div class="big">How was The Bullingdon?</div>
+  <div class="sub">Three taps before you forget, then bed.</div>
+  <div class="acts" style="flex-direction:column;gap:8px;">
+    <span class="a1" style="background:var(--purple);">🧾 Invoice it · £380, ready-filled</span>
+    <span class="a2">⛽ Log tonight's fuel &amp; food</span>
+    <span class="a2">⭐ Ask Sam for a testimonial tomorrow morning</span>
+  </div>
+</div>
+<div class="dim">Tomorrow's Home leads with the follow-up nudge instead, once the adrenaline's worn off.</div>
+
+<div class="note" style="margin-top:20px;"><strong>How it knows the phase:</strong> leave-by = load-in minus drive time (from the gig's mileage) minus a 15-minute buffer; phases switch on plain clock comparisons against load-in, set times, and finish, all already on the gig. No new data entry. <strong>Open questions for Gareth:</strong> does phase 2's big countdown earn its place? Should phase 3 hide the bottom nav entirely (full focus) or stay normal? Should the wrap-up persist until dismissed or quietly become tomorrow's follow-up nudge?</div>
+</body>
+</html>
