@@ -14,6 +14,18 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
+// MVP cut: seal the entire marketplace surface server-side so a hidden client
+// button is not the only thing stopping a direct API call. One config-driven
+// guard covers every /marketplace* route (post, browse, apply, pick, etc.).
+// Flip config/features.json marketplace.mvp back to true to restore it whole.
+router.use((req, res, next) => {
+  if ((req.path === '/marketplace' || req.path.startsWith('/marketplace/')) &&
+      !features.isVisible('marketplace')) {
+    return res.status(404).json({ error: 'not_found' });
+  }
+  next();
+});
+
 // Coerce a client-supplied value into a Postgres text[] compatible array.
 // Accepts an array (returned as-is), a comma-separated string (split on ,),
 // or null/undefined (returned as null so COALESCE preserves existing value).
