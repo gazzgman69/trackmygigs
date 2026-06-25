@@ -1062,7 +1062,7 @@ function buildHomeHeroQuiet(daysUntil) {
     <div style="margin:0 16px 10px;background:var(--card);border:1px dashed var(--border);border-radius:14px;padding:18px 16px;text-align:center;">
       <div style="font-size:28px;margin-bottom:8px;">🎷</div>
       <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">${titleLine}</div>
-      <div style="font-size:12px;color:var(--text-2);margin-bottom:12px;">Diary's clear. Add the next one or check the marketplace.</div>
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:12px;">Diary's clear. Log your next gig to get it on the board.</div>
       <button onclick="openQuickLogSheet()" style="background:var(--accent);color:#000;border:none;font-size:12px;font-weight:700;padding:9px 18px;border-radius:999px;cursor:pointer;">+ Log a gig</button>
     </div>`;
 }
@@ -1784,7 +1784,7 @@ function _gigsPaintHero() {
       <div style="background:var(--card);border:1px dashed var(--border);border-radius:16px;padding:18px;text-align:center;">
         <div style="font-size:26px;margin-bottom:6px;">🎷</div>
         <div style="font-size:14px;font-weight:600;color:var(--text);">No upcoming gigs</div>
-        <div style="font-size:12px;color:var(--text-2);margin-top:3px;">Time to fill the diary. Log one, or check the marketplace for open slots.</div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:3px;">Time to fill the diary. Log your next gig to get started.</div>
       </div>`;
     return;
   }
