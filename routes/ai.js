@@ -12,6 +12,7 @@ const express = require('express');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const { callHaiku, isEnabled } = require('../lib/ai');
+const features = require('../lib/features');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -532,7 +533,7 @@ Rules:
 // of webm/opus) which covers any realistic in-the-moment voice note.
 router.post('/transcribe', async (req, res) => {
   try {
-    if (req.user.subscription_tier !== 'premium') {
+    if (!features.isPremiumUser(req.user)) {
       return res.status(402).json({
         error: 'premium_only',
         message: 'Server transcription is a Premium feature. Free users get browser-native voice notes.',

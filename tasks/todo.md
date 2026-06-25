@@ -475,3 +475,11 @@ the tier map below is the source of truth, not commitment #6.
 - P2 GATE: paid gating + tasteful locked states on newly-paid features (Repertoire/setlists/Stage, EPK media, Documents, AI features, Monthly Insight, AI import extract). Drop voice notes.
 - P3 RIDE-ALONGS (no new screens): mileage venue cache + finance round-trip fix; clash detection extended to import paths (deterministic); auto-guess column mapping with manual override.
 - P4 NET-NEW (MOCKUP FIRST per CLAUDE.md #10): custom invoice branding toggle; Find Musicians invite-link flow; dep cascade quiet-hours + confirm-mode relay build-out.
+
+### Baseline multi-tenant audit (2026-06-11, commit 347399e)
+- 27 flags raised, adversarially verified. ZERO confirmed cross-tenant data leaks in core (expenses, chat reads, save-shared charts, AI endpoints all properly scoped; 15 false positives refuted).
+- ONE real leak found + FIXED + deployed: GET /setlists/:id expanded song_ids with no owner filter while PATCH stores arbitrary ids -> could read another user's song rows (lyrics/charts) if you knew their song UUIDs. Scoped the read to user_id. Verified own setlists still expand.
+- The 4 "confirmed" gate findings (marketplace post/browse, EPK publish) are MOOT under new tiering: marketplace is CUT (Phase 1 seals routes), EPK basic is now FREE. EPK media + AI writer get server gates in Phase 2.
+- AI endpoints ungated by documented design (all-AI-free-until-flag-flip in routes/ai.js) -> Phase 2 flips them.
+- TAKEAWAY: config layer must be the SERVER enforcement point (requirePremium driven by feature config), preventing all gate gaps in one place.
+- TO RE-CHECK post-build: chat.js message-read queries scope by thread_id relying on a prior participant guard (chat.js:268-281, 857-870) - confirm guard fires before read. Full re-audit after gates land.

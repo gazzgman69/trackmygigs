@@ -6,6 +6,7 @@ const calendarRouter = require('./calendar');
 const { writeGigToSheets } = require('../lib/sheets-writer');
 const { lookupPostcode, normalise: normalisePostcode } = require('../lib/postcodes');
 const { haversineMiles } = require('../lib/geo');
+const features = require('../lib/features');
 const { normaliseE164 } = require('../lib/phone');
 const { renderInvoicePdfBuffer, buildInvoiceFilename } = require('../lib/invoicePdf');
 
@@ -4540,8 +4541,7 @@ const LINEUP_STATUSES = new Set(['pending', 'confirmed', 'declined']);
 // numbers; the client does the arithmetic, the server just refuses junk.
 router.patch('/gigs/:id/splits', async (req, res) => {
   try {
-    const tierR = await db.query('SELECT subscription_tier FROM users WHERE id = $1', [req.user.id]);
-    if ((tierR.rows[0] || {}).subscription_tier !== 'premium') {
+    if (!features.isPremiumUser(req.user)) {
       return res.status(403).json({ error: 'premium_required', message: 'The fee splitter is a premium feature.' });
     }
     const s = req.body.splits;
@@ -4579,8 +4579,7 @@ router.patch('/gigs/:id/splits', async (req, res) => {
 
 router.patch('/gigs/:id/lineup', async (req, res) => {
   try {
-    const tierR = await db.query('SELECT subscription_tier FROM users WHERE id = $1', [req.user.id]);
-    if ((tierR.rows[0] || {}).subscription_tier !== 'premium') {
+    if (!features.isPremiumUser(req.user)) {
       return res.status(403).json({ error: 'premium_required', message: 'Lineup management is a premium feature.' });
     }
     const incoming = Array.isArray(req.body.lineup) ? req.body.lineup.slice(0, 20) : null;

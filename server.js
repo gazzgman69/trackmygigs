@@ -122,6 +122,29 @@ app.use((req, res, next) => {
   if (req.path === '/sw.js') return next(); // skip static, hit our custom route below
   next();
 });
+// Feature flags handed to the client: the SAME config/features.json the server
+// gates read. Served as a tiny script so window.TMG_FEATURES exists before
+// app.js runs, letting the UI hide cut features and show locked paid states.
+// Read fresh each request so a deploy reflects immediately. No secrets here.
+app.get('/js/features.js', (req, res) => {
+  let cfg = {};
+  try {
+    cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'features.json'), 'utf8'));
+  } catch (e) {
+    console.error('[features] client config read failed:', e.message);
+  }
+  delete cfg._doc;
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(
+    'window.TMG_FEATURES=' + JSON.stringify(cfg) + ';\n' +
+    'window.tmgFeatureTier=function(k){var c=window.TMG_FEATURES[k];return (c&&c.tier)||"free";};\n' +
+    'window.tmgFeatureVisible=function(k){var c=window.TMG_FEATURES[k];return !c||c.mvp!==false;};\n' +
+    'window.tmgIsPremium=function(){var u=window._currentUser||{};if(u.subscription_tier!=="premium")return false;if(u.premium_until&&new Date(u.premium_until)<new Date())return false;return true;};\n' +
+    'window.tmgEntitled=function(k){return window.tmgFeatureTier(k)==="free"||window.tmgIsPremium();};\n'
+  );
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   index: false, // prevent express.static from serving index.html for /
   setHeaders: (res, filePath) => {
@@ -1533,6 +1556,11 @@ async function runMigrations() {
     // is the current active subscription, cleared when cancelled.
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS premium BOOLEAN NOT NULL DEFAULT FALSE`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP`);
+    // subscription_tier is the column every feature gate reads, but it was
+    // only ever written via CASE statements, never explicitly created. The
+    // baseline audit flagged the schema-drift risk: a fresh DB would have no
+    // column and reads would fail. Create it idempotently here.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(32) NOT NULL DEFAULT 'free'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`);
     // 2026-04-26: when the user cancels via Stripe Billing Portal, Stripe
