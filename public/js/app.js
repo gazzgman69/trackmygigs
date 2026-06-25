@@ -1,6 +1,25 @@
 let currentUser = null;
 let currentScreen = 'home';
 
+// MVP feature cuts. Reads the config served at /js/features.js. Fail-closed:
+// if that script is missing, cut features stay hidden (the server seals cut
+// routes anyway). Only ever called on cut/gated surfaces, so it can never
+// wrongly hide a core feature. Simple element hides ride on body classes +
+// CSS (.feat-marketplace / .feat-directory / .feat-voice) so even
+// late-rendered panels pick them up.
+function featureVisible(key) {
+  return window.tmgFeatureVisible ? !!window.tmgFeatureVisible(key) : false;
+}
+function applyFeatureCuts() {
+  if (!document.body) return;
+  document.body.classList.toggle('feat-hide-marketplace', !featureVisible('marketplace'));
+  document.body.classList.toggle('feat-hide-directory', !featureVisible('find_musicians_directory'));
+  document.body.classList.toggle('feat-hide-voice', !featureVisible('voice_notes'));
+}
+window.applyFeatureCuts = applyFeatureCuts;
+if (document.body) applyFeatureCuts();
+else document.addEventListener('DOMContentLoaded', applyFeatureCuts);
+
 // Pre-production diagnostic: surface uncaught JS errors as a visible banner
 // so device-only failures (iOS quirks, stale bundles) report themselves
 // instead of taps silently doing nothing. Remove before launch.
@@ -1224,7 +1243,7 @@ function buildHomeActionGrid() {
         <div style="font-size:11px;font-weight:700;color:var(--text);">New invoice</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">From gig or blank</div>
       </div>
-      <div onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
+      <div class="feat-marketplace" onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         <div style="font-size:11px;font-weight:700;color:var(--text);">Find dep</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Marketplace</div>
@@ -4663,7 +4682,7 @@ function buildOffersHTML(content, offers) {
     <div class="tbar" style="display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;gap:0;">
       <div class="tb${isReceived ? ' ac' : ''}" onclick="showOffersTab('received')" style="cursor:pointer;">Received (${pending.length})</div>
       <div class="tb${isSent ? ' ac' : ''}" onclick="showOffersTab('sent')" style="cursor:pointer;">Sent</div>
-      <div class="tb" onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="cursor:pointer;display:flex;align-items:center;gap:6px;">
+      <div class="tb feat-marketplace" onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="cursor:pointer;display:flex;align-items:center;gap:6px;">
         <span>Marketplace &#x26A1;</span>
         <span id="marketplaceMenuBadge" style="display:none;background:var(--accent);color:#000;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;min-width:18px;text-align:center;line-height:1;">0</span>
       </div>
@@ -5167,6 +5186,7 @@ function buildProfileHTML(content, profile) {
         </div>
       </div>
       ${(() => {
+        if (!featureVisible('find_musicians_directory')) return '';
         // Phase IX-E: Directory profile summary. Only render if user has
         // engaged with the feature (discoverable flag set, bio written, or
         // genres chosen) so the panel doesn't shout at users who haven't
@@ -10880,7 +10900,7 @@ async function openEditGig(gigId) {
         <div class="form-group">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
             <div class="form-label" style="margin-bottom:0;">Notes</div>
-            <button type="button" id="editNotesMicBtn" onclick="toggleGigNoteVoice('editNotes', this)" style="background:transparent;border:1px solid var(--border);color:var(--text-2);padding:5px 10px;border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;">
+            <button type="button" class="feat-voice" id="editNotesMicBtn" onclick="toggleGigNoteVoice('editNotes', this)" style="background:transparent;border:1px solid var(--border);color:var(--text-2);padding:5px 10px;border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;">
               <span class="tmg-mic-icon">🎤</span><span class="tmg-mic-label">Voice note</span>
             </button>
           </div>
@@ -11255,7 +11275,7 @@ function editProfile() {
         <input id="editInstruments" type="text" value="${escapeHtml(instrumentsStr)}" placeholder="Guitar, Vocals, Keys" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Comma separated</div>
       </div>
-      ${buildDirectoryProfileEditor(profile)}
+      ${featureVisible('find_musicians_directory') ? buildDirectoryProfileEditor(profile) : ''}
       <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Home Postcode</label>
         <input id="editHomePostcode" type="text" value="${escapeHtml(profile.home_postcode || '')}" placeholder="e.g. CF10 1AA" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;" />
@@ -11891,7 +11911,7 @@ async function openNetworkPanel() {
       <button onclick="openPanel('panel-add-contact')" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
     </div>
     <div class="net-tabs">
-      <button class="net-tab ${window._netTab === 'find' ? 'ac' : ''}" onclick="switchNetTab('find')">Find musicians</button>
+      <button class="net-tab feat-directory ${window._netTab === 'find' ? 'ac' : ''}" onclick="switchNetTab('find')">Find musicians</button>
       <button class="net-tab ${window._netTab === 'contacts' ? 'ac' : ''}" onclick="switchNetTab('contacts')">My contacts</button>
     </div>
     <div id="netTabBody"></div>`;

@@ -483,3 +483,13 @@ the tier map below is the source of truth, not commitment #6.
 - AI endpoints ungated by documented design (all-AI-free-until-flag-flip in routes/ai.js) -> Phase 2 flips them.
 - TAKEAWAY: config layer must be the SERVER enforcement point (requirePremium driven by feature config), preventing all gate gaps in one place.
 - TO RE-CHECK post-build: chat.js message-read queries scope by thread_id relying on a prior participant guard (chat.js:268-281, 857-870) - confirm guard fires before read. Full re-audit after gates land.
+
+### Phase 1 progress (2026-06-11)
+DONE + VERIFIED:
+- SPINE: config/features.json (single source of truth) + lib/features.js (isVisible/isEntitled/isPremiumUser/requireFeature) + /js/features.js served to client (window.TMG_FEATURES + tmgFeatureVisible/tmgIsPremium/tmgEntitled helpers, loads before app.js). subscription_tier migration added (audit schema-drift fix). isPremiumUser honours premium_until expiry (audit fix). 3 existing gates (splits/lineup/transcribe) refactored onto helper. Verified: features.js served, premium passes lineup gate (200), free blocked (403).
+- SERVER SEAL: one config-driven guard in routes/api.js 404s every /marketplace* route while marketplace.mvp=false. Verified GET /api/marketplace -> 404, /api/gigs -> 200.
+
+NEXT (Phase 1 remainder):
+- CLIENT HIDING (surgical, browser-verify): hide marketplace entry points (Find dep home card app.js:1227, Marketplace tab in Offers app.js:4666, marketplace panels in index.html) WHILE KEEPING the dep-offers screen + chat + contacts. Hide open Find Musicians tab (app.js:11894 switchNetTab('find')) + renderFindTab/renderDiscoverEmptyState guards. Hide voice-note button (app.js:10883) + directory-profile editor section (buildDirectoryProfileEditor call app.js:11258). Hide Apple Wallet button. All config-driven via tmgFeatureVisible(), NOT deleted.
+- DECISION MADE: /discover server routes (6020/6442/6639) NOT sealed in Phase 1 — they also serve kept contextual lookups and the P4 reframed search+invite will reuse them. Seal/scope properly in P4.
+- Discovery map saved: 53 surfaces in workflow output wuz67p6za.
