@@ -4405,11 +4405,14 @@ router.get('/setlists/:id', async (req, res) => {
 
     const setlist = result.rows[0];
 
-    // Expand songs if song_ids array exists
+    // Expand songs if song_ids array exists. Scope to the owner: PATCH stores
+    // whatever song_ids it's given, so without this an attacker could stuff
+    // another user's song UUIDs into their own setlist and read back the full
+    // rows (lyrics, charts) here. Foreign ids now simply don't expand.
     if (setlist.song_ids && setlist.song_ids.length > 0) {
       const songsResult = await db.query(
-        'SELECT * FROM songs WHERE id = ANY($1)',
-        [setlist.song_ids]
+        'SELECT * FROM songs WHERE id = ANY($1) AND user_id = $2',
+        [setlist.song_ids, req.user.id]
       );
       setlist.songs = songsResult.rows;
     } else {

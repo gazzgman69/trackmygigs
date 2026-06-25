@@ -390,3 +390,88 @@ rendering in the browser; 9 feature blocks total.
 - [x] finishOnboarding lands on Profile and pulses the Google Calendar row, Google Sheets row, and Edit button so people learn where settings live
 - [x] Picker copy: connections live in Profile afterwards
 - [ ] Gareth manual test: connect a Sheet with a second Google account and confirm the calendar connection survives (needs real OAuth, can't be automated)
+
+---
+
+## MVP Tiering Spec (2026-06-11, IN PROGRESS — awaiting final sign-off, then build)
+
+Free-core commitment (CLAUDE.md #6) is being RETIRED for this rendition. Gareth
+will reword CLAUDE.md + landing copy once the tier map is locked. Until then,
+the tier map below is the source of truth, not commitment #6.
+
+### Mechanism
+- ONE feature->tier config (visible-in-MVP? + free|paid). Single layer does BOTH
+  the MVP "cut" (hide) and the free/paid split. No code deleted; reversible.
+- Built on existing entitlement: users.subscription_tier + full Stripe (live;
+  gates already on lineup, fee-splitter, Whisper). Cleanup needed: explicit
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier` migration;
+  add premium_until expiry check to gates; centralise scattered isPremium checks.
+- Nudges: gate at the feature, prompt at the moment of friction, never block the
+  free core. Tasteful "Part of Premium" locked states + occasional contextual prompts.
+
+### FREE
+- All gig tracking: list/pipeline, detail, wizard, quick-add, edit, cancel, delete, status, import
+- Calendar (all views) + Google Calendar sync + Google Sheets sync + blocked dates/availability + CSV import
+- Mileage (real Google Routes driving distance; venue cache to add — see below)
+- All invoicing (create, line items, send, PDF/print, pay link, chase ACTION, fields, teaching bundler). FREE invoices carry TMG branding.
+- Manual expenses (entry, snap-photo no-AI, categories, edit/delete) + accountant ZIP export
+- Finance: earnings totals, monthly breakdown, tax-year overview, ALL CSV/PDF/MTD exports
+- Chat (1-1 + group/band), attachments, availability polls
+- Find Musicians REFRAMED: search existing users by name/email/phone + invite-link for those not on app (BUILD the invite link)
+- Availability sharing (all variants), sat-nav, reminders/nudges, review prompts
+- Profile basics, rate card, pay link, photo; safety (block/report/DM); accessibility (text size, theme)
+- Voice notes: browser speech-to-text path
+- Calendar import gig-detection KEYWORD scorer (deterministic) — stays free
+- Clash/double-booking warning: extend to import paths (deterministic for imports, keep AI sanity-check for manual) — FREE
+- Manual dep send: pick ONE connection and send
+
+### PAID
+- Custom invoice branding / remove TMG footer — NEEDS BUILDING (no toggle today)
+- AI receipt scanner; EPK AI bio writer; Documents & Certs wallet (+ expiry reminders + sharing)
+- Setlists/Repertoire WHOLE module (song library + setlist building + Stage Mode)
+- EPK media: gallery, video, audio (free EPK = bio + hero photo + testimonials)
+- Dep auto-cascade fallback (the relay)
+- Lineup + fee splitter (already gated)
+- Finance AI "Monthly Insight" narrative
+- AI extract on calendar/email import (auto-fill fee/band from prose)
+- All other AI generation: smart-paste, AI chordpro normaliser, AI setlist generator, AI invoice-chase & thank-you drafts, server Whisper
+
+### CUT FOR MVP (hidden, not deleted)
+- Open marketplace (browse/post/apply/pick/FCFS) entirely
+- Open Find Musicians discovery (browse strangers nearby/by instrument) — replaced by search-known + invite
+- Directory-only profile fields (discoverable toggle, directory bio, available-now pulse, min-fee/free-gig filters)
+- Apple Wallet pass (external blocker: Apple Developer cert)
+
+### Dep cascade spec (PAID)
+- Setup from a gig: pick connections, drag to RANK fallback order, choose advance mode
+- Offers ONE at a time (not a blast); private 1-1 dep thread + push to current holder; band leader notified SEPARATELY
+- Auto-advance on decline OR timed-window lapse
+- Quiet hours: hold overnight (~9pm-8am), resume 9am; "urgent, ignore quiet hours" override for same-day scrambles
+- Confirm-mode toggle: DEFAULT OFF (first yes auto-locks, hands-off). ON = holds each yes for sender approval
+- First yes wins -> cascade stops -> gig stamps into dep's diary -> sender + leader notified
+- Live "Sent" status with nudge/skip/stop; recipient-side snooze stays FREE
+
+### Setlist-in-chat edge
+- Free user receiving a shared setlist: sees song TITLES + blurb "Upgrade to see the charts,
+  save to your repertoire, perform in Stage Mode." Save-to-repertoire shows the upgrade nudge.
+
+### Mileage details
+- Stays FREE. Real driving distance via Google Routes API (paid Google API; ~1 lookup per gig, cached on gig row, persisted via PATCH).
+- ADD venue cache: before calling Google, reuse an existing gig's stored distance for the same (home postcode -> venue). Repeat venue = 1 lookup ever.
+- FIX finance bug: per-gig card claims round-trip (miles x2 x0.45) but finance dashboard total uses one-way (miles x0.45). Under-reports return journey. Reconcile to round-trip.
+
+### Loose ends to close before building
+1. Auto-guess column mapping on Sheet/CSV import (FREE, no-AI, pre-select dropdowns from header names)? — offered, not yet answered
+2. Voice notes in MVP at all, or drop? Leaning keep as-is (free browser + paid Whisper)
+3. Confirm the round-trip finance mileage fix is wanted
+
+### Loose ends — RESOLVED (2026-06-11)
+1. Auto-guess column mapping on Sheet/CSV import: YES, deterministic guess from header names pre-selects dropdowns, user can still manually change any. Free, no AI.
+2. Voice notes: DROP from MVP entirely (free browser speech AND paid Whisper both hidden). Keep lean. Reversible later.
+3. Finance mileage round-trip fix: YES. Reconcile finance dashboard total to round-trip (miles x2 x0.45) to match the per-gig card.
+
+### Build phases (proposed)
+- P1 SPINE: entitlement cleanup (explicit subscription_tier migration + premium_until expiry check) + lib/features.js single config + wire client nav/menus to HIDE cut features + server 404s cut routes. No new screens, reversible. Makes it an MVP.
+- P2 GATE: paid gating + tasteful locked states on newly-paid features (Repertoire/setlists/Stage, EPK media, Documents, AI features, Monthly Insight, AI import extract). Drop voice notes.
+- P3 RIDE-ALONGS (no new screens): mileage venue cache + finance round-trip fix; clash detection extended to import paths (deterministic); auto-guess column mapping with manual override.
+- P4 NET-NEW (MOCKUP FIRST per CLAUDE.md #10): custom invoice branding toggle; Find Musicians invite-link flow; dep cascade quiet-hours + confirm-mode relay build-out.
