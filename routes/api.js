@@ -292,13 +292,96 @@ function syncBlockedDateSafely(action, userId, payload) {
 router.get('/gigs', async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT * FROM gigs WHERE user_id = $1 ORDER BY date DESC',
+      `SELECT g.*, COALESCE((SELECT SUM(amount) FROM gig_payments gp WHERE gp.gig_id = g.id), 0) AS paid_so_far
+       FROM gigs g WHERE g.user_id = $1 ORDER BY g.date DESC`,
       [req.user.id]
     );
     res.json(result.rows);
   } catch (error) {
     console.error('Get gigs error:', error);
     res.status(500).json({ error: 'Failed to fetch gigs' });
+  }
+});
+
+// ── Per-gig payment tracking ────────────────────────────────────────────────
+// gig_payments is an append-only ledger of client money RECEIVED. Roll-up:
+// paid_so_far = SUM(amount); outstanding = fee - paid. The gig is the single
+// source of truth; the linked invoice's paid state is kept in sync both ways
+// (here when payments cover the fee, and in PATCH /invoices/:id for the reverse).
+async function gigPaymentRollup(gigId, userId) {
+  const gigR = await db.query('SELECT id, fee FROM gigs WHERE id = $1 AND user_id = $2', [gigId, userId]);
+  if (gigR.rows.length === 0) return null;
+  const fee = parseFloat(gigR.rows[0].fee || 0) || 0;
+  const payR = await db.query(
+    `SELECT id, amount, paid_at, method, kind, note, created_at
+     FROM gig_payments WHERE gig_id = $1 ORDER BY paid_at ASC NULLS LAST, created_at ASC`,
+    [gigId]
+  );
+  const paid = Math.round(payR.rows.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0) * 100) / 100;
+  const outstanding = Math.max(0, Math.round((fee - paid) * 100) / 100);
+  const status = fee <= 0 ? 'no_fee' : (paid <= 0 ? 'unpaid' : (paid + 0.005 >= fee ? 'paid' : 'part'));
+  return { gig_id: gigId, fee, paid_so_far: paid, outstanding, status, payments: payR.rows };
+}
+
+// When recorded payments cover the fee, mark the linked invoice paid (one-way;
+// the reverse, invoice -> balancing payment, is in PATCH /invoices/:id).
+async function syncInvoicePaidFromGig(gigId, userId) {
+  const roll = await gigPaymentRollup(gigId, userId);
+  if (!roll || roll.status !== 'paid') return;
+  await db.query(
+    `UPDATE invoices SET status = 'paid', paid_at = COALESCE(paid_at, NOW())
+     WHERE user_id = $1 AND gig_id = $2 AND status <> 'paid'`,
+    [userId, gigId]
+  );
+}
+
+router.get('/gigs/:id/payments', async (req, res) => {
+  try {
+    const roll = await gigPaymentRollup(req.params.id, req.user.id);
+    if (!roll) return res.status(404).json({ error: 'Gig not found' });
+    res.json(roll);
+  } catch (err) {
+    console.error('Get gig payments error:', err);
+    res.status(500).json({ error: 'Failed to fetch payments' });
+  }
+});
+
+router.post('/gigs/:id/payments', async (req, res) => {
+  try {
+    const gigR = await db.query('SELECT id FROM gigs WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    if (gigR.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
+    const amount = Math.round((parseFloat(req.body.amount) || 0) * 100) / 100;
+    if (!(amount > 0)) return res.status(400).json({ error: 'Amount must be greater than 0' });
+    const kind = ['deposit', 'balance', 'other'].includes(req.body.kind) ? req.body.kind : 'other';
+    const method = req.body.method ? String(req.body.method).slice(0, 32) : null;
+    const note = req.body.note ? String(req.body.note).slice(0, 500) : null;
+    const paidAt = req.body.paid_at || new Date().toISOString().slice(0, 10);
+    await db.query(
+      `INSERT INTO gig_payments (gig_id, user_id, amount, paid_at, method, kind, note)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [req.params.id, req.user.id, amount, paidAt, method, kind, note]
+    );
+    await syncInvoicePaidFromGig(req.params.id, req.user.id);
+    const roll = await gigPaymentRollup(req.params.id, req.user.id);
+    res.json({ success: true, ...roll });
+  } catch (err) {
+    console.error('Add gig payment error:', err);
+    res.status(500).json({ error: 'Failed to record payment' });
+  }
+});
+
+router.delete('/gigs/:id/payments/:pid', async (req, res) => {
+  try {
+    const del = await db.query(
+      'DELETE FROM gig_payments WHERE id = $1 AND gig_id = $2 AND user_id = $3 RETURNING id',
+      [req.params.pid, req.params.id, req.user.id]
+    );
+    if (del.rows.length === 0) return res.status(404).json({ error: 'Payment not found' });
+    const roll = await gigPaymentRollup(req.params.id, req.user.id);
+    res.json({ success: true, ...roll });
+  } catch (err) {
+    console.error('Delete gig payment error:', err);
+    res.status(500).json({ error: 'Failed to delete payment' });
   }
 });
 
@@ -5356,7 +5439,27 @@ router.patch('/invoices/:id', async (req, res) => {
        overrideProvided, overrideValue]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
-    res.json(result.rows[0]);
+    const updatedInv = result.rows[0];
+    // Reverse sync: marking an invoice paid records a balancing gig payment so
+    // the linked gig also reads fully paid (gig = source of truth). This is a
+    // direct insert, not the POST endpoint, so it never re-triggers the
+    // gig -> invoice sync; no loop.
+    if (updatedInv.status === 'paid' && updatedInv.gig_id) {
+      try {
+        const roll = await gigPaymentRollup(updatedInv.gig_id, req.user.id);
+        if (roll && roll.outstanding > 0) {
+          const when = updatedInv.paid_at
+            ? new Date(updatedInv.paid_at).toISOString().slice(0, 10)
+            : new Date().toISOString().slice(0, 10);
+          await db.query(
+            `INSERT INTO gig_payments (gig_id, user_id, amount, paid_at, kind, note)
+             VALUES ($1, $2, $3, $4, 'balance', 'Invoice marked paid')`,
+            [updatedInv.gig_id, req.user.id, roll.outstanding, when]
+          );
+        }
+      } catch (e) { console.error('invoice->gig payment sync failed:', e.message); }
+    }
+    res.json(updatedInv);
   } catch (error) {
     console.error('Update invoice error:', error);
     res.status(500).json({ error: 'Failed to update invoice' });

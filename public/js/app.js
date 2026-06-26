@@ -1730,6 +1730,14 @@ function _gpMoneyState(g, maps) {
       ? { label: 'quoted', color: 'var(--text-3)' }
       : { label: 'no fee yet', color: 'var(--text-3)' };
   }
+  // Recorded payments take priority over invoice status (they are kept in sync,
+  // and they also cover uninvoiced cash gigs).
+  const _mfee = _gpFee(g);
+  const _mpaid = parseFloat(g.paid_so_far || 0) || 0;
+  if (_mfee > 0 && _mpaid > 0) {
+    if (_mpaid + 0.005 >= _mfee) return { label: 'paid', color: 'var(--info)' };
+    return { label: '£' + Math.round(_mfee - _mpaid).toLocaleString('en-GB') + ' to collect', color: 'var(--warning)' };
+  }
   const inv = _gpInvoiceFor(g, maps);
   if (inv) {
     if (inv.status === 'paid') return { label: 'paid', color: 'var(--info)' };
@@ -1979,6 +1987,8 @@ function _gigsFilterSet(filter) {
     case 'money': return gigs.filter(g => {
       if (_gpIsCancelled(g) || !_gpIsPast(g) || _gpIsPencilled(g)) return false;
       if (!(_gpFee(g) > 0)) return false;
+      const paid = parseFloat(g.paid_so_far || 0) || 0;
+      if (paid + 0.005 >= _gpFee(g)) return false;
       const inv = _gpInvoiceFor(g, maps);
       return !inv || inv.status !== 'paid';
     });
@@ -10052,6 +10062,11 @@ async function openGigDetail(gigId) {
         ${buildChecklistHTML(gig)}
       </div>
     </div>
+    <!-- Payment -->
+    <div style="padding:16px 20px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Payment</div>
+      <div id="gigPaymentSection" style="font-size:13px;color:var(--text-3);">Loading…</div>
+    </div>
     <!-- Actions -->
     <div style="padding:16px 20px;border-top:1px solid var(--border);">
       <button style="width:100%;background:var(--card);color:var(--accent);border:1px solid var(--accent);border-radius:24px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:8px;" onclick="openGigChat('${gig.id}')">💬 Message band</button>
@@ -10095,6 +10110,9 @@ async function openGigDetail(gigId) {
   // Lineup section renders sync from the gig row.
   renderGigLineupSection(gig);
   renderGigSplitsSection(gig);
+
+  // Payment section renders async (fetches the gig_payments rollup).
+  loadGigPaymentSection(gig);
 
   // Show mileage: use stored value first, then fetch in background if needed
   const mileageEl = document.getElementById('gigDetailMileage');
@@ -12792,6 +12810,174 @@ async function openStandaloneInvoice() {
   // itself and the screen-level "+ New" button skipped it).
   if (typeof initInvoicePanel === 'function') initInvoicePanel();
 }
+
+// ── Per-gig payment tracking (client) ───────────────────────────────────────
+function _gpFmtMoney(n) {
+  const v = Math.round((parseFloat(n) || 0) * 100) / 100;
+  return '£' + v.toLocaleString('en-GB', { minimumFractionDigits: v % 1 ? 2 : 0, maximumFractionDigits: 2 });
+}
+function _gpFmtDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return String(d).slice(0, 10);
+  return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+async function loadGigPaymentSection(gig) {
+  const el = document.getElementById('gigPaymentSection');
+  if (!el) return;
+  try {
+    const res = await fetch(`/api/gigs/${encodeURIComponent(gig.id)}/payments`);
+    if (!res.ok) throw new Error('load failed');
+    renderGigPaymentSection(gig.id, await res.json());
+  } catch (_) {
+    el.innerHTML = '<div style="color:var(--text-3);">Could not load payment info.</div>';
+  }
+}
+function renderGigPaymentSection(gigId, d) {
+  const el = document.getElementById('gigPaymentSection');
+  if (!el) return;
+  if (!d || d.status === 'no_fee') {
+    el.innerHTML = '<div style="color:var(--text-3);font-size:13px;">Set a fee on this gig to track payment.</div>';
+    return;
+  }
+  const fee = d.fee || 0, paid = d.paid_so_far || 0, out = d.outstanding || 0;
+  const pct = fee > 0 ? Math.min(100, Math.round((paid / fee) * 100)) : 0;
+  const pill = d.status === 'paid'
+    ? '<span style="font-size:11px;font-weight:600;color:var(--success);background:var(--success-dim);padding:3px 10px;border-radius:999px;">Paid</span>'
+    : (d.status === 'part'
+      ? '<span style="font-size:11px;font-weight:600;color:var(--warning);background:var(--card);border:1px solid var(--warning);padding:2px 9px;border-radius:999px;">Part paid</span>'
+      : '<span style="font-size:11px;font-weight:600;color:var(--text-2);background:var(--card);border:1px solid var(--border);padding:2px 9px;border-radius:999px;">Unpaid</span>');
+  const rows = (d.payments || []).map(p => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border);">
+      <span style="font-size:15px;">${p.kind === 'deposit' ? '🟣' : (p.kind === 'balance' ? '🟢' : '💷')}</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;color:var(--text);text-transform:capitalize;">${escapeHtml(p.kind || 'payment')}</div>
+        <div style="font-size:11px;color:var(--text-3);">${_gpFmtDate(p.paid_at)}${p.method ? ' · ' + escapeHtml(String(p.method).replace(/_/g, ' ')) : ''}</div>
+      </div>
+      <span style="font-size:13px;font-weight:600;color:var(--text);">${_gpFmtMoney(p.amount)}</span>
+      <span onclick="deleteGigPayment('${gigId}','${p.id}')" style="font-size:13px;color:var(--text-3);cursor:pointer;padding:0 4px;" title="Remove">✕</span>
+    </div>`).join('');
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div><span style="font-size:20px;font-weight:700;color:var(--text);">${d.status === 'paid' ? _gpFmtMoney(fee) : _gpFmtMoney(out)}</span>
+      <span style="font-size:12px;color:var(--text-2);margin-left:6px;">${d.status === 'paid' ? 'paid in full' : 'to collect'}</span></div>
+      ${pill}
+    </div>
+    <div style="height:8px;border-radius:999px;background:var(--card);overflow:hidden;margin-bottom:6px;border:1px solid var(--border);">
+      <div style="width:${pct}%;height:100%;background:${d.status === 'paid' ? 'var(--success)' : '#A78BFA'};"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-3);">
+      <span>${_gpFmtMoney(paid)} received</span><span>Fee ${_gpFmtMoney(fee)}</span>
+    </div>
+    ${rows}
+    ${d.status !== 'paid' ? `
+      <button onclick="openRecordPaymentSheet('${gigId}', ${out}, ${fee})" style="width:100%;margin-top:12px;background:#A78BFA;color:#1a1a1a;border:none;border-radius:24px;padding:11px;font-size:14px;font-weight:700;cursor:pointer;">+ Record payment</button>
+      <div style="text-align:center;margin-top:8px;"><span onclick="markGigFullyPaid('${gigId}', ${out})" style="font-size:12px;color:var(--text-2);cursor:pointer;">Mark fully paid</span></div>
+    ` : ''}`;
+}
+function openRecordPaymentSheet(gigId, outstanding, fee) {
+  document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  const today = new Date().toISOString().slice(0, 10);
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;max-height:85vh;overflow-y:auto;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:14px;">Record payment</div>
+      <label class="fl">Amount</label>
+      <input id="rpAmount" type="number" inputmode="decimal" class="fi" value="${outstanding > 0 ? outstanding : ''}" placeholder="0.00" style="margin-bottom:12px;" />
+      <label class="fl">Type</label>
+      <div id="rpKind" style="display:flex;gap:6px;margin:6px 0 12px;">
+        <span data-k="deposit" onclick="_rpSetKind(this)" class="rpchip" style="flex:1;text-align:center;font-size:13px;padding:9px 0;border:1px solid var(--border);border-radius:10px;color:var(--text-2);cursor:pointer;">Deposit</span>
+        <span data-k="balance" onclick="_rpSetKind(this)" class="rpchip" style="flex:1;text-align:center;font-size:13px;padding:9px 0;border:1px solid var(--border);border-radius:10px;color:var(--text-2);cursor:pointer;">Balance</span>
+        <span data-k="other" onclick="_rpSetKind(this)" class="rpchip" style="flex:1;text-align:center;font-size:13px;padding:9px 0;border:1px solid #A78BFA;background:rgba(167,139,250,0.12);border-radius:10px;color:var(--text);cursor:pointer;">Other</span>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:14px;">
+        <div style="flex:1;"><label class="fl">Date</label><input id="rpDate" type="date" class="fi" value="${today}" /></div>
+        <div style="flex:1;"><label class="fl">Method</label>
+          <select id="rpMethod" class="fi">
+            <option value="bank_transfer">Bank transfer</option>
+            <option value="cash">Cash</option>
+            <option value="card">Card</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+      </div>
+      <button onclick="saveGigPayment('${gigId}')" style="width:100%;background:#A78BFA;color:#1a1a1a;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;">Save payment</button>
+      <button onclick="document.querySelectorAll('.sheet-overlay').forEach(o=>o.remove());" style="width:100%;margin-top:8px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:24px;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
+    </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  window._rpKind = 'other';
+}
+function _rpSetKind(elm) {
+  window._rpKind = elm.getAttribute('data-k');
+  document.querySelectorAll('#rpKind .rpchip').forEach(c => {
+    const sel = c === elm;
+    c.style.border = sel ? '1px solid #A78BFA' : '1px solid var(--border)';
+    c.style.background = sel ? 'rgba(167,139,250,0.12)' : 'transparent';
+    c.style.color = sel ? 'var(--text)' : 'var(--text-2)';
+  });
+}
+async function saveGigPayment(gigId) {
+  const amtEl = document.getElementById('rpAmount');
+  const amount = parseFloat((amtEl && amtEl.value) || '0');
+  if (!(amount > 0)) { if (typeof showToast === 'function') showToast('Enter an amount'); return; }
+  const paid_at = (document.getElementById('rpDate') || {}).value || undefined;
+  const method = (document.getElementById('rpMethod') || {}).value || undefined;
+  const kind = window._rpKind || 'other';
+  try {
+    const res = await fetch(`/api/gigs/${encodeURIComponent(gigId)}/payments`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount, paid_at, method, kind }),
+    });
+    const d = await res.json();
+    if (!res.ok) { if (typeof showToast === 'function') showToast(d.error || 'Could not save'); return; }
+    document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());
+    renderGigPaymentSection(gigId, d);
+    _gigPaymentRefreshCaches(gigId, d);
+    if (typeof showToast === 'function') showToast('Payment recorded');
+  } catch (_) { if (typeof showToast === 'function') showToast('Could not save payment'); }
+}
+async function markGigFullyPaid(gigId, outstanding) {
+  if (!(outstanding > 0)) return;
+  try {
+    const res = await fetch(`/api/gigs/${encodeURIComponent(gigId)}/payments`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount: outstanding, kind: 'balance' }),
+    });
+    const d = await res.json();
+    if (!res.ok) { if (typeof showToast === 'function') showToast(d.error || 'Could not save'); return; }
+    renderGigPaymentSection(gigId, d);
+    _gigPaymentRefreshCaches(gigId, d);
+    if (typeof showToast === 'function') showToast('Marked fully paid');
+  } catch (_) {}
+}
+async function deleteGigPayment(gigId, pid) {
+  try {
+    const res = await fetch(`/api/gigs/${encodeURIComponent(gigId)}/payments/${encodeURIComponent(pid)}`, { method: 'DELETE' });
+    if (!res.ok) return;
+    const d = await res.json();
+    renderGigPaymentSection(gigId, d);
+    _gigPaymentRefreshCaches(gigId, d);
+  } catch (_) {}
+}
+function _gigPaymentRefreshCaches(gigId, d) {
+  try {
+    if (Array.isArray(window._cachedGigs)) {
+      const g = window._cachedGigs.find(x => String(x.id) === String(gigId));
+      if (g) g.paid_so_far = d.paid_so_far;
+    }
+    if (typeof _gigsPaintAll === 'function') _gigsPaintAll();
+  } catch (_) {}
+}
+window.openRecordPaymentSheet = openRecordPaymentSheet;
+window._rpSetKind = _rpSetKind;
+window.saveGigPayment = saveGigPayment;
+window.markGigFullyPaid = markGigFullyPaid;
+window.deleteGigPayment = deleteGigPayment;
+window.loadGigPaymentSection = loadGigPaymentSection;
 
 async function openSendInvoice(invoiceId) {
   const body = document.getElementById('sendInvoiceBody');

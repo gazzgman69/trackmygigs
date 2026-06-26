@@ -1512,6 +1512,20 @@ async function runMigrations() {
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_email VARCHAR(255)`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_address TEXT`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_name VARCHAR(255)`);
+    // Per-gig payment ledger: deposit/balance/other receipts against a gig, the
+    // single source of truth for client money RECEIVED (fee minus paid = owed).
+    await db.query(`CREATE TABLE IF NOT EXISTS gig_payments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      gig_id UUID NOT NULL REFERENCES gigs(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL,
+      amount DECIMAL(10,2) NOT NULL,
+      paid_at DATE,
+      method VARCHAR(32),
+      kind VARCHAR(16),
+      note TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_gig_payments_gig ON gig_payments(gig_id)`);
 
     // Invoice client directory: save-on-use address book so a musician only
     // types a client once. Keyed to (user_id, lower(name)) so "Marriott" and
