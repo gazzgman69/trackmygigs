@@ -9,6 +9,8 @@ const { haversineMiles } = require('../lib/geo');
 const features = require('../lib/features');
 const { normaliseE164 } = require('../lib/phone');
 const { renderInvoicePdfBuffer, buildInvoiceFilename } = require('../lib/invoicePdf');
+const { sendEmail, APP_NAME, invoiceFromAddress } = require('../lib/email');
+const { renderInvoiceEmailHtml } = require('../lib/invoiceEmail');
 
 const router = express.Router();
 
@@ -5849,6 +5851,85 @@ router.get('/invoices/:id/pdf', async (req, res) => {
   } catch (err) {
     console.error('Invoice PDF error:', err);
     res.status(500).send('Failed to build invoice PDF');
+  }
+});
+
+// Server-side invoice send: render the same PDF as /pdf, email it via Resend
+// (Gmail fallback) with the musician's name as the From display name and their
+// own address as Reply-To, then mark the invoice sent. The status only flips
+// to 'sent' AFTER a successful send, so a delivery failure never leaves a false
+// "sent" badge. This is what makes "send invoices free" real (Gigflow paywalls
+// the equivalent behind Pro).
+router.post('/invoices/:id/send', async (req, res) => {
+  try {
+    const userR = await db.query(
+      `SELECT display_name, name, email, business_address, business_phone, vat_number, bank_details, payment_link_url
+       FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const me = userR.rows[0] || {};
+
+    const invR = await db.query(
+      `SELECT i.*, g.venue_name AS g_venue, g.date AS g_date, g.band_name AS g_band, g.client_name AS g_client
+       FROM invoices i
+       LEFT JOIN gigs g ON i.gig_id = g.id
+       WHERE i.id = $1 AND i.user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (invR.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
+    const inv = invR.rows[0];
+
+    const toAddr = String(req.body.recipient_email || inv.recipient_email || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(toAddr)) {
+      return res.status(400).json({ error: 'A valid recipient email is required' });
+    }
+    const recipientName = String(
+      req.body.recipient_name || inv.recipient_name || inv.band_name || inv.g_band || inv.g_client || ''
+    ).trim();
+    const message = String(req.body.message || '').trim();
+    const subject = String(req.body.subject || '').trim() || `Invoice ${inv.invoice_number || ''}`.trim();
+
+    // Resolve the pay URL exactly like the /pdf route so the PDF and email agree.
+    const directLink = inv.payment_link_url_override || me.payment_link_url || null;
+    const origin = (process.env.APP_ORIGIN || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    const payUrl = directLink && inv.public_pay_slug ? `${origin}/pay/${inv.public_pay_slug}` : null;
+
+    const pdf = await renderInvoicePdfBuffer(inv, me, { payUrl });
+    const filename = buildInvoiceFilename(inv);
+
+    // FREE invoices stay brand-stamped. The paid custom-branding feature
+    // (config: custom_invoice_branding) will flip `branded` off for the email
+    // footer AND the PDF together when it ships; until then everyone is branded,
+    // which matches "branded unless they pay".
+    const branded = true;
+    const html = renderInvoiceEmailHtml({
+      invoice: inv, user: me, recipientName, message, payUrl, appName: APP_NAME, branded,
+    });
+
+    await sendEmail({
+      to: toAddr,
+      subject,
+      html,
+      fromName: me.display_name || me.name || APP_NAME,
+      fromAddress: invoiceFromAddress(),
+      replyTo: me.email || undefined,
+      attachments: [{ filename, content: pdf }],
+    });
+
+    // Mark sent only after a clean send. Never downgrade a paid invoice.
+    const upd = await db.query(
+      `UPDATE invoices SET
+         status = CASE WHEN status = 'paid' THEN status ELSE 'sent' END,
+         sent_at = COALESCE(sent_at, NOW()),
+         recipient_email = $1,
+         recipient_name = COALESCE($2, recipient_name)
+       WHERE id = $3 AND user_id = $4 RETURNING *`,
+      [toAddr, recipientName || null, req.params.id, req.user.id]
+    );
+    res.json({ success: true, invoice: upd.rows[0] });
+  } catch (err) {
+    console.error('Send invoice email error:', err);
+    res.status(502).json({ error: 'Could not send the invoice email. Try again, or use the download option.' });
   }
 });
 

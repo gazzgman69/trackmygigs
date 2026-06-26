@@ -1,6 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
+const { sendEmail } = require('../lib/email');
 const { OAuth2Client } = require('google-auth-library');
 const { google } = require('googleapis');
 const db = require('../db');
@@ -36,48 +36,9 @@ function rateLimitOk(key) {
   return true;
 }
 
-// Gmail transporter — used as a fallback if RESEND_API_KEY is not configured.
-// S10-07: Gmail SMTP is fine for beta but isn't a production transactional-email
-// path (Gmail explicitly doesn't support this at scale, and every bounce or
-// spam report lands in the owner's personal inbox). When RESEND_API_KEY is set
-// we call Resend's HTTPS API instead of SMTP, which gives a real
-// no-reply@trackmygigs.app envelope sender and the standard reputation tools.
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
-  },
-});
-
-// Mail wrapper: prefer Resend over Gmail SMTP when available. Keeps the call
-// sites identical (`sendEmail({ to, subject, html })`) so we don't have to
-// branch per provider in every route.
-async function sendEmail({ to, subject, html }) {
-  if (process.env.RESEND_API_KEY) {
-    const from = process.env.MAIL_FROM || 'TrackMyGigs <no-reply@trackmygigs.app>';
-    const resp = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ from, to, subject, html }),
-    });
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => '');
-      throw new Error(`Resend send failed (${resp.status}): ${body}`);
-    }
-    return;
-  }
-  // Fallback: Gmail SMTP.
-  await transporter.sendMail({
-    from: `"TrackMyGigs" <${process.env.GMAIL_USER}>`,
-    to,
-    subject,
-    html,
-  });
-}
+// Mail sending (Resend with Gmail fallback) lives in lib/email.js so the
+// invoice route can reuse it with attachments + Reply-To. sendEmail is
+// imported at the top; the call site below is unchanged.
 
 // Google OAuth client (for ID token verification)
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);

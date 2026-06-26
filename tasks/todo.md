@@ -493,3 +493,63 @@ NEXT (Phase 1 remainder):
 - CLIENT HIDING (surgical, browser-verify): hide marketplace entry points (Find dep home card app.js:1227, Marketplace tab in Offers app.js:4666, marketplace panels in index.html) WHILE KEEPING the dep-offers screen + chat + contacts. Hide open Find Musicians tab (app.js:11894 switchNetTab('find')) + renderFindTab/renderDiscoverEmptyState guards. Hide voice-note button (app.js:10883) + directory-profile editor section (buildDirectoryProfileEditor call app.js:11258). Hide Apple Wallet button. All config-driven via tmgFeatureVisible(), NOT deleted.
 - DECISION MADE: /discover server routes (6020/6442/6639) NOT sealed in Phase 1 — they also serve kept contextual lookups and the P4 reframed search+invite will reuse them. Seal/scope properly in P4.
 - Discovery map saved: 53 surfaces in workflow output wuz67p6za.
+
+### Phase 1 COMPLETE (2026-06-11) — verified live
+- SPINE: config/features.json + lib/features.js + /js/features.js (window.TMG_FEATURES + helpers) + subscription_tier migration + premium_until expiry check + 3 gates refactored. Verified.
+- SERVER SEAL: /marketplace* all 404 (config-driven). Verified.
+- CLIENT CUTS (config-driven body classes + 2 template guards, nothing deleted): Find dep home card hidden, Marketplace tab in Offers hidden (Received/Sent dep tabs + Send dep stay), open Find Musicians tab hidden, directory-only profile fields + summary hidden, voice-note button hidden. Apple Wallet: no client button existed. Verified in browser at 390px: home grid 5 cards, Offers clean, Edit Profile goes Instruments->Home Postcode, no console errors, all screens navigate.
+- COPY: removed 2 "check the marketplace" quiet-state strings.
+- Reversible: flip any feature's mvp/tier in config/features.json.
+- NOT DONE (deferred by design): /discover server routes not sealed (serve kept contextual lookups + P4 reframed search reuses them).
+
+### NEXT: Phase 2 (gate newly-paid features with tasteful locked states)
+- Repertoire/setlists/Stage, EPK media (gallery/video/audio), Documents, AI features (smart-paste, chordpro, setlist-gen, invoice-chase, thank-you, receipt-scan, monthly-insight, import-extract). Each: server requireFeature/isPremiumUser gate + client locked state via tmgEntitled(). Drop voice notes server path too (already client-hidden).
+
+---
+
+# Server-side invoice send via Resend (2026-06-26, AWAITING SIGN-OFF, then build)
+
+## Why
+Gigflow competitive deep-dive (browser + their JS bundle) found their "Send invoice" is a real server-side send: client-gen PDF -> Supabase Edge Function `send-invoice` -> emailed (Resend), and they PAYWALL it behind £9.99/mo Pro. TMG today does NOT send server-side: `confirmSendInvoice` (public/js/app.js:12824) PATCHes status->sent then hands off to navigator.share / a `mailto:` (no email leaves our server, user attaches the PDF manually). The MVP tier map already promises invoicing INCLUDING send as FREE (todo line ~416). This build makes that real and turns "send invoices free, no paywall on getting paid" into a headline Gigflow can't match. Decision (Gareth, 2026-06-26): "Gonna go with resend."
+
+## What we already have (audit 2026-06-26, file:line)
+- Server PDF renderer: lib/invoicePdf.js:38 `renderInvoicePdfBuffer(invoice, user, opts)` -> Promise<Buffer> (pdfkit); `buildInvoiceFilename(invoice)`. Already pulls sender identity (display_name, business_address/phone, vat, bank_details) + bill-to (recipient_address, band_name, due_date, amount, line_items, notes).
+- Authed PDF route: GET /api/invoices/:id/pdf (routes/api.js:5813) resolves payUrl + streams the Buffer.
+- Resend wrapper: routes/auth.js:56 `sendEmail({to,subject,html})` = raw fetch to https://api.resend.com/emails, key=RESEND_API_KEY, From=MAIL_FROM, Gmail-SMTP fallback when no key. NOT exported; no attachments/reply_to/from-name yet. (Resend API natively supports reply_to + attachments[{filename,content:base64}] + display-name from.)
+- invoices columns: status (draft/sent/paid/cancelled/overdue), sent_at (auto-stamped on PATCH status->sent at api.js:5325), recipient_email, recipient_address, due_date, amount, line_items, payment_link_url_override, public_pay_slug, chase_count/last_chase_at/chased_at. NO recipient_name column.
+- Sender identity on req.user (api.js authMiddleware sets req.user = full users row): From-name = display_name||name; Reply-To = email; bank_details + payment_link_url already rendered into the PDF.
+- All invoice routes live in routes/api.js (no routes/invoices.js); router.use(authMiddleware) authes the whole file.
+
+## Build steps
+1. lib/email.js: lift sendEmail out of auth.js into a shared, EXPORTED module. Extend to `{to, subject, html, text?, fromName?, replyTo?, attachments?}`; forward `reply_to` + `attachments` + a display-name `from` to the Resend API; keep Gmail fallback. Point auth.js at it (magic-links unchanged). Fix MAIL_FROM vs .env.example EMAIL_FROM mismatch (standardise on MAIL_FROM).
+2. POST /api/invoices/:id/send in routes/api.js right after the /pdf route (~5853). Reuse the /pdf handler's user+invoice query + `renderInvoicePdfBuffer(inv, me, {payUrl})` to get the Buffer in-process (no HTTP round-trip), base64 it for the attachment. Recipient email from body.recipient_email || invoice.recipient_email (400 if none); name from body.recipient_name || invoice.band_name || gig.client_name. Build From-name = me.display_name||me.name over MAIL_FROM, Reply-To = me.email, subject default `Invoice {invoice_number}` (body.subject overridable), branded HTML body + PDF attached. On success: UPDATE status='sent' (auto-stamps sent_at) + persist recipient_email(+name); return {success, sent_at}. On Resend failure: 502, do NOT mark sent. Scope every query by user_id (multi-tenant, mirror /pdf).
+3. Migration (server.js): `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_name VARCHAR(255)` for a clean greeting + record (fallback to band_name/client_name when null).
+4. lib/invoiceEmail.js: branded HTML body -> "Hi {name}, please find below my invoice for {band/gig}." + amount + due date + a "Pay online" button when a pay link exists + PDF-attached note + signed with the musician's name. FREE invoices keep the TMG footer (custom-branding removal stays the PAID toggle, todo line ~429).
+5. Rewrite confirmSendInvoice (app.js:12824): primary action POSTs /send (recipient email, optional name + message/subject), optimistic "Sending..." -> "Invoice sent to {email}", refresh list (sent_at). KEEP a secondary "Download PDF / send from my own email" using the existing share/mailto path as a fallback. Error toast on 502 (and leave status unchanged).
+
+## Reply-To / From (personal-touch handling we agreed)
+- From: `{musician name} <invoices@trackmygigs.app>` (recognisable name, deliverable domain).
+- Reply-To: musician's own email, so client replies land in their inbox not ours.
+
+## Depends on (external)
+- RESEND_API_KEY set (already in prod checklist, todo line ~75) + Resend domain verification for trackmygigs.app (external blocker, todo line ~65). On the dev workspace, test via the Gmail fallback or a Resend test key. MAIL_FROM set.
+
+## Verify plan
+- node --check, one commit, push + reload, grep bundle for the new symbol.
+- Test send to Gareth's own email from the dev account: email received, PDF attaches + opens, From shows musician name, Reply-To = musician email, invoice flips to sent + sent_at stamped, recipient persisted.
+- Multi-tenant: user B cannot /send or read user A's invoice (404, scoped by user_id).
+- Failure paths: empty recipient -> 400 no status change; forced Resend error -> 502, invoice NOT marked sent.
+
+## Open questions for Gareth (answer before build)
+1. From address: `invoices@trackmygigs.app` (recommend), `no-reply@...`, or existing MAIL_FROM?
+2. Keep the "download PDF / send from my own email" fallback alongside server send (recommend), or server-send only?
+3. Add the recipient_name column (recommend, tiny) or just fall back to band_name/client_name?
+
+Mockup: updated send sheet + "sent" confirmation rendered in chat for sign-off.
+
+## SIGNED OFF (2026-06-26) — build approved
+1. From = `{musician display_name} <invoices@{MAIL_FROM domain}>`. The musician's NAME is the From display name (Gareth: "need their name for sure"), so the client sees a person, not the app.
+2. KEEP the "download PDF / send from my own email" fallback alongside server send.
+3. ADD `invoices.recipient_name` column (fallback to band_name/client_name when null).
+4. NAME-NOT-COMMITTED CONSTRAINT (Gareth): "trackmygigs" is a PLACEHOLDER, do not hard-bake it. Route the app name through a single `APP_NAME` value (env APP_NAME || existing default) and the sending domain through `MAIL_FROM` env, so a rename is one config change, not a code sweep. Do NOT add new hardcoded "TrackMyGigs"/"trackmygigs.app" string literals. The email footer/branding reads APP_NAME. (Existing PDF branding left as-is for now; just don't add more.)
+- Live branded send from the domain waits on BOTH Resend DNS verification AND the final name. Until then: build + test on dev via the Gmail fallback; the From-name (musician) and all wiring work regardless of the eventual domain.

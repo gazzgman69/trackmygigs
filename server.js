@@ -1511,6 +1511,7 @@ async function runMigrations() {
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS last_chase_at TIMESTAMP`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_email VARCHAR(255)`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_address TEXT`);
+    await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recipient_name VARCHAR(255)`);
 
     // Invoice client directory: save-on-use address book so a musician only
     // types a client once. Keyed to (user_id, lower(name)) so "Marriott" and

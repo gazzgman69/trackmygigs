@@ -12811,8 +12811,10 @@ async function openSendInvoice(invoiceId) {
           <div style="font-size:13px;font-weight:700;color:var(--success);margin-top:6px;">&pound;${parseFloat(invoice.amount || 0).toFixed(2)}</div>
         </div>
         <div class="form-group"><label class="fl">Recipient email</label><input type="email" class="fi" id="sendInvoiceEmail" value="${escapeHtml(invoice.recipient_email || '')}" placeholder="client@example.com" /></div>
+        <div class="form-group"><label class="fl">Recipient name</label><input type="text" class="fi" id="sendInvoiceName" value="${escapeHtml(invoice.recipient_name || invoice.band_name || '')}" placeholder="Client name" /></div>
         <div class="form-group"><label class="fl">Message (optional)</label><textarea class="fi" id="sendInvoiceMessage" style="resize:vertical;height:100px;">Hi, please find attached invoice ${escapeHtml(invoice.invoice_number || '')} for recent work. Thanks!</textarea></div>
-        <button onclick="confirmSendInvoice('${invoice.id}')" class="pill">Send now</button>
+        <button onclick="confirmSendInvoice('${invoice.id}')" class="pill">Send invoice</button>
+        <button onclick="sendInvoiceFallback('${invoice.id}')" class="pill" style="margin-top:8px;background:transparent;border:1px solid var(--border);color:var(--text-2);font-weight:600;">Download PDF or send from my own email</button>
         <div id="sendInvoiceStatus" style="font-size:11px;color:var(--text-2);text-align:center;margin-top:10px;"></div>
       </div>`;
   } catch (err) {
@@ -12822,6 +12824,53 @@ async function openSendInvoice(invoiceId) {
 }
 
 async function confirmSendInvoice(invoiceId) {
+  const emailEl = document.getElementById('sendInvoiceEmail');
+  const nameEl = document.getElementById('sendInvoiceName');
+  const msgEl = document.getElementById('sendInvoiceMessage');
+  const status = document.getElementById('sendInvoiceStatus');
+  const toAddr = (emailEl && emailEl.value.trim()) || '';
+  if (!toAddr) { if (status) { status.style.color = 'var(--danger)'; status.textContent = 'Email is required.'; } return; }
+  const sendBtn = document.querySelector('#sendInvoiceBody button[onclick*="confirmSendInvoice"]');
+  if (status) { status.style.color = 'var(--text-2)'; status.textContent = 'Sending...'; }
+  if (sendBtn) sendBtn.disabled = true;
+  try {
+    // Server-side send: the server renders the PDF, emails it via Resend with
+    // the musician's name as From + their email as Reply-To, and only then
+    // marks the invoice sent. No mailto handoff, no manual attach.
+    const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipient_email: toAddr,
+        recipient_name: (nameEl && nameEl.value.trim()) || '',
+        message: (msgEl && msgEl.value.trim()) || '',
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (status) { status.style.color = 'var(--danger)'; status.textContent = (data && data.error) || 'Could not send invoice.'; }
+      if (sendBtn) sendBtn.disabled = false;
+      return;
+    }
+    window._cachedInvoices = null;
+    window._cachedInvoicesTime = 0;
+    if (typeof showToast === 'function') showToast('Invoice sent to ' + toAddr);
+    setTimeout(() => {
+      closePanel('panel-send-invoice');
+      openInvoiceDetail(invoiceId).catch(() => {});
+      if (typeof renderInvoicesScreen === 'function') { try { renderInvoicesScreen(); } catch (_) {} }
+    }, 500);
+  } catch (err) {
+    console.error('Send invoice error:', err);
+    if (status) { status.style.color = 'var(--danger)'; status.textContent = 'Could not send invoice. Try again.'; }
+    if (sendBtn) sendBtn.disabled = false;
+  }
+}
+
+// Fallback path: download the PDF and hand off to the device share sheet or a
+// mailto so the user sends from their own email client. Kept for anyone who
+// prefers their own address over the in-app server send.
+async function sendInvoiceFallback(invoiceId) {
   const emailEl = document.getElementById('sendInvoiceEmail');
   const msgEl = document.getElementById('sendInvoiceMessage');
   const status = document.getElementById('sendInvoiceStatus');
