@@ -553,3 +553,47 @@ Mockup: updated send sheet + "sent" confirmation rendered in chat for sign-off.
 3. ADD `invoices.recipient_name` column (fallback to band_name/client_name when null).
 4. NAME-NOT-COMMITTED CONSTRAINT (Gareth): "trackmygigs" is a PLACEHOLDER, do not hard-bake it. Route the app name through a single `APP_NAME` value (env APP_NAME || existing default) and the sending domain through `MAIL_FROM` env, so a rename is one config change, not a code sweep. Do NOT add new hardcoded "TrackMyGigs"/"trackmygigs.app" string literals. The email footer/branding reads APP_NAME. (Existing PDF branding left as-is for now; just don't add more.)
 - Live branded send from the domain waits on BOTH Resend DNS verification AND the final name. Until then: build + test on dev via the Gmail fallback; the From-name (musician) and all wiring work regardless of the eventual domain.
+
+## BUILT + VERIFIED LIVE 2026-06-26 (commit 87096c7)
+Files: lib/email.js (new, shared sender + APP_NAME + invoiceFromAddress), lib/invoiceEmail.js (new, branded HTML body), routes/auth.js (uses lib/email, login call site unchanged), routes/api.js (POST /invoices/:id/send + requires), server.js (recipient_name migration), public/js/app.js (recipient-name field, new server-send confirmSendInvoice, old path kept as sendInvoiceFallback).
+Local checks PASS: node --check on all 6 files; runtime smoke test (APP_NAME swap -> invoices@gigly.io proves nothing hard-baked; template renders greeting/amount/due/pay-button/brand-footer/sign-off; branded:false hides footer).
+VERIFIED LIVE 2026-06-26: reload OK (HEAD 87096c7), /health 200, bundle has sendInvoiceFallback. End-to-end: dev-login -> created throwaway invoice -> POST /invoices/:id/send to gazzgwyn@me.com returned 200 {success:true}; invoice flipped status=sent with recipient_email + recipient_name persisted + sent_at stamped (recipient_name migration confirmed); test invoice deleted. The 200 means a transport accepted the email. STILL TO CONFIRM by Gareth: inbox receipt + From shows musician name + Reply-To = his email + PDF attached + brand footer (and whether it went via Resend or the Gmail fallback).
+Secrets for the real send: RESEND_API_KEY, MAIL_FROM (e.g. `TrackMyGigs <no-reply@trackmygigs.app>`), optional APP_NAME / INVOICE_FROM. Without RESEND_API_KEY it uses the Gmail fallback (GMAIL_USER/GMAIL_APP_PASSWORD).
+LIVE-TESTED INBOX (Gareth screenshots 2026-06-26): PDF attached + rendered (header, bank details, totals, "Generated with TrackMyGigs" footer); email body greeting/message/summary/"attached as PDF"/sign-off/"Sent with TrackMyGigs" footer; Reply-To present. Confirmed it went via the GMAIL FALLBACK (From showed the Gmail account identity "Club Kudo Tracker", overriding the intended musician name "Gareth" that the body sign-off shows). Setting RESEND_API_KEY + verified domain will make From = "{musician} <invoices@domain>" un-overridable. TODO later: one consistent profile display_name so email/PDF/sender all agree.
+
+---
+
+# Per-gig payment tracking (2026-06-26, MOCKUP DONE, awaiting sign-off)
+
+## Why (Gigflow parity gap #2 of the remaining gaps)
+Today a gig has only `fee` + `status` (no payment columns; confirmed via every ALTER TABLE gigs). "Paid" is inferred BINARY from a linked invoice (`_gpMoneyState` app.js:1726-1744); an UNINVOICED cash gig has no money state at all; no Record-payment, no "to collect", no partial deposit+balance. Gigflow puts all of this on the gig detail (useGigPayments + ChasePaymentSheet). This is core to "track my gigs and get paid".
+
+## Data model
+- NEW table `gig_payments` (id UUID, gig_id UUID, user_id UUID, amount DECIMAL(10,2), paid_at DATE, method VARCHAR(32) [bank_transfer|cash|card|other], kind VARCHAR(16) [deposit|balance|other], note TEXT, created_at). Append-only ledger of receipts.
+- Roll-up per gig: `paid_so_far = SUM(amount)`, `outstanding = fee - paid_so_far`. Status: unpaid (0) / part paid (0<paid<fee) / paid (paid>=fee).
+- Gig is the SINGLE SOURCE OF TRUTH for client money received. Linked invoice paid-state becomes a projection: when paid_so_far >= fee, flip linked invoice to paid (reuse PATCH /invoices/:id, api.js:5320); and `markInvoiceAsPaid` (app.js:14262) writes a balancing gig_payments row, so gig and invoice never disagree or double-count.
+
+## Finance integration (CLAUDE.md rule #7 = confirmed money only)
+- Today "earned"/tax-year = `SUM(gigs.fee) WHERE status='confirmed'` = BOOKED, not banked (api.js:3716/3443). Keep that meaning.
+- ADD a separate RECEIVED vs TO-COLLECT axis sourced from gig_payments: "in the bank" = SUM(gig_payments.amount) over confirmed gigs; "to collect" = SUM(fee) - SUM(payments) over confirmed gigs. Scope every payment query to gigs.status='confirmed' (pencilled contributes nothing) per rule #7. Extend GET /earnings + /stats with received/outstanding fields.
+
+## Endpoints (routes/api.js)
+- POST /api/gigs/:id/payments  (add a payment; validate amount>0, scope user_id; optional invoice-paid sync)
+- GET /api/gigs/:id/payments   (list for the gig)
+- DELETE /api/gigs/:id/payments/:pid  (remove a mistaken entry; re-derive status)
+- Extend /earnings + /stats with received/outstanding.
+
+## UI (public/js/app.js)
+- Payment section inside openGigDetail (~9957/10055): status pill (Unpaid/Part paid/Paid), big "£X to collect", progress bar, fee + received line, recorded-payments list, "Record payment" button, "Mark fully paid" quick action. (Mockup rendered in chat 2026-06-26.)
+- Record-payment sheet: amount (prefill = outstanding), type Deposit/Balance/Other, date, method. Save -> POST.
+- Rewrite `_gpMoneyState` (app.js:1726) to derive paid/part/outstanding from payments not invoice-only; update the `'money'` ("Awaiting money") filter (app.js:1979) to outstanding>0.
+
+## Decisions (SIGNED OFF 2026-06-27, all recommended)
+1. Invoice <-> gig sync: YES, kept in sync both ways. Gig = source of truth.
+2. Finance: ADD a new "in the bank / to collect" view; keep "earned" = booked confirmed fees.
+3. Cash gigs record payments directly, no invoice required: YES.
+
+## BUILT + BACKEND-VERIFIED LIVE 2026-06-27 (commit 82027a0)
+Server: server.js gig_payments table + index; routes/api.js GET /gigs enriched with paid_so_far, gigPaymentRollup + syncInvoicePaidFromGig helpers, GET/POST/DELETE /api/gigs/:id/payments, and reverse sync in PATCH /invoices/:id (marking invoice paid inserts a balancing gig_payment). Client: app.js _gpMoneyState + 'money' filter use paid_so_far; gig-detail Payment section + loader; Record-payment sheet (amount/type/date/method) + Save/Delete/Mark-fully-paid; list-badge cache refresh. node --check PASS on all 3 files.
+NOTE: this build is the GIG-LEVEL feature only. Decision #2's finance "in the bank / to collect" panel (extend /earnings + /stats with received/outstanding from gig_payments over confirmed gigs + surface in the finance UI) is the NEXT wave, not in 82027a0.
+VERIFIED LIVE 2026-06-27 (curl, dev account, all cleaned up): reload OK, /health 200, bundle has openRecordPaymentSheet, gig_payments migration ran. Test A rollup: fee 450 -> deposit 150 = part/300 owed -> balance 300 = paid/0 -> delete payment re-derives to part/150. Test B forward sync: paying gig in full flipped linked invoice draft->paid (+paid_at). Test C reverse sync: PATCH invoice paid wrote a balancing "Invoice marked paid" payment so the gig reads paid. STILL TO EYEBALL (UI render): the gig-detail Payment section + Record sheet + list "£X to collect" badge in the browser - wired (loader after openPanel, fns on window, sheet matches app pattern) but not visually confirmed.
