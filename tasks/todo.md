@@ -62,9 +62,16 @@ Open decisions: AI features hand-test vs hide; support email address.
       and there is a 100-user cap. Verification takes days to weeks. Submit
       NOW. Mitigation if late: launch with sync labelled early access and
       the warning documented; the cap is fine at launch scale.
-- [ ] Resend (transactional email) domain verification for trackmygigs.app.
-      Magic-link login IS the auth, so this must be bulletproof. Needs DNS
-      records at the registrar. Minutes of work + DNS propagation.
+- [ ] Resend (transactional email) domain verification. Magic-link login IS the
+      auth, so this must be bulletproof. Needs DNS records at the registrar.
+      CODE SIDE DONE (2026-06-28): see docs/GO-LIVE-EMAIL.md for the exact
+      registrar/Resend/Secrets/cron checklist. App is rename-safe (APP_NAME is
+      decoupled from the sending domain via MAIL_DOMAIN/MAIL_FROM, proven), so
+      the sending domain need NOT be the final brand name. Verify wiring with no
+      send via GET /api/admin/email-config?key=<RELOAD_SECRET>. Remaining = Gareth
+      executes: pick domain, Resend account + DNS, set Replit Secrets, daily cron
+      on /api/admin/run-chases?key=<CHASE_CRON_SECRET> (use the dedicated key, not
+      RELOAD_SECRET).
 - [ ] Stripe live webhook endpoint registered for the prod domain; checkout
       success/cancel URLs point at prod.
 
