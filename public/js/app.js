@@ -14151,6 +14151,17 @@ async function loadNotificationSettings() {
     set('notifyInvoices', prefs.invoices);
     set('notifyWeekly', prefs.weekly);
     set('notifyEmailImportant', prefs.email_important);
+    // Auto-chase settings (separate endpoint, real columns).
+    try {
+      const acRes = await fetch('/api/auto-chase-settings');
+      if (acRes.ok) {
+        const ac = await acRes.json();
+        const en = document.getElementById('autoChaseEnabled');
+        const cd = document.getElementById('autoChaseCooldown');
+        if (en) en.checked = !!ac.enabled;
+        if (cd) cd.value = ac.cooldown_days != null ? ac.cooldown_days : 7;
+      }
+    } catch (_) {}
     if (status) status.textContent = '';
   } catch (err) {
     // Silent fail: defaults stay checked so the panel is usable even offline.
@@ -14176,6 +14187,17 @@ async function saveNotificationSettings() {
       body: JSON.stringify(prefs)
     });
     if (!res.ok) throw new Error('Save failed');
+    // Persist auto-chase settings too.
+    try {
+      await fetch('/api/auto-chase-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: !!(document.getElementById('autoChaseEnabled') || {}).checked,
+          cooldown_days: parseInt((document.getElementById('autoChaseCooldown') || {}).value, 10) || 7,
+        }),
+      });
+    } catch (_) {}
     if (status) status.textContent = 'Preferences saved.';
     if (typeof showToast === 'function') showToast('Preferences saved');
   } catch (err) {

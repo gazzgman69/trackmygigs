@@ -268,6 +268,36 @@ function handleReload(req, res) {
 app.get('/api/admin/reload', handleReload);
 app.post('/api/admin/reload', handleReload);
 
+// Opt-in auto-chase sweep. Gated by RELOAD_SECRET so an external cron can hit it
+// reliably (the in-process interval below is best-effort on Replit's sleepy
+// dyno). ?dry=1 selects the eligible invoices without sending anything.
+async function handleRunChases(req, res) {
+  const expected = process.env.RELOAD_SECRET;
+  if (!expected || req.query.key !== expected) return res.status(404).json({ error: 'Not found' });
+  try {
+    const { runAutoChaseSweep } = require('./lib/autoChase');
+    const result = await runAutoChaseSweep({ dryRun: req.query.dry === '1' });
+    res.json(result);
+  } catch (e) {
+    console.error('run-chases error:', e);
+    res.status(500).json({ error: 'chase_sweep_failed', message: String(e.message || e).slice(0, 200) });
+  }
+}
+app.get('/api/admin/run-chases', handleRunChases);
+app.post('/api/admin/run-chases', handleRunChases);
+
+// Best-effort in-process scheduler: sweep auto-chases every 6h. Inert unless a
+// user has opted in. On Replit the reliable path is an external cron hitting
+// /api/admin/run-chases; this is a bonus for when the process is warm.
+setInterval(() => {
+  try {
+    const { runAutoChaseSweep } = require('./lib/autoChase');
+    runAutoChaseSweep({})
+      .then((r) => { if (r.sent || r.errors) console.log('[auto-chase]', JSON.stringify({ scanned: r.scanned, sent: r.sent, errors: r.errors })); })
+      .catch((e) => console.error('[auto-chase] sweep failed:', e.message));
+  } catch (e) { console.error('[auto-chase] scheduler error:', e.message); }
+}, 6 * 60 * 60 * 1000);
+
 // 2026-04-29 — populate demo accounts with realistic profile data so the
 // directory + chat profile sheets actually render something interesting.
 // Demo users currently have empty instruments/bio/genres/postcode, which

@@ -836,6 +836,10 @@
         <div style="font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px;">Email</div>
         <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">Weekly summary<input type="checkbox" id="notifyWeekly" /></label>
         <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">Important updates<input type="checkbox" id="notifyEmailImportant" checked /></label>
+        <div style="font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px;">Automated chasing</div>
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">Auto-chase overdue invoices<input type="checkbox" id="autoChaseEnabled" /></label>
+        <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">Days between chases<input type="number" id="autoChaseCooldown" min="1" max="60" value="7" style="width:64px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:5px 8px;text-align:right;" /></label>
+        <div style="font-size:11px;color:var(--text-3);padding:6px 14px 0;line-height:1.5;">Off by default. When on, overdue invoices you've sent get an automatic email reminder (up to 3 times, with the invoice attached). Turn it off any time.</div>
         <button onclick="saveNotificationSettings()" class="pill" style="margin-top:16px;">Save preferences</button>
         <div id="notifSettingsStatus" style="font-size:11px;color:var(--text-2);text-align:center;margin-top:8px;"></div>
       </div>

@@ -5747,6 +5747,33 @@ router.delete('/agencies/:id', async (req, res) => {
   }
 });
 
+// ── Auto-chase settings (opt-in overdue-invoice chasing) ─────────────────────
+router.get('/auto-chase-settings', async (req, res) => {
+  try {
+    const r = await db.query('SELECT auto_chase_enabled, auto_chase_cooldown_days FROM users WHERE id = $1', [req.user.id]);
+    const row = r.rows[0] || {};
+    res.json({ enabled: !!row.auto_chase_enabled, cooldown_days: row.auto_chase_cooldown_days != null ? row.auto_chase_cooldown_days : 7 });
+  } catch (e) {
+    console.error('Get auto-chase settings error:', e);
+    res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+router.post('/auto-chase-settings', async (req, res) => {
+  try {
+    const enabled = !!req.body.enabled;
+    let cooldown = parseInt(req.body.cooldown_days, 10);
+    if (isNaN(cooldown) || cooldown < 1) cooldown = 7;
+    cooldown = Math.min(60, cooldown);
+    await db.query('UPDATE users SET auto_chase_enabled = $1, auto_chase_cooldown_days = $2 WHERE id = $3',
+      [enabled, cooldown, req.user.id]);
+    res.json({ success: true, enabled, cooldown_days: cooldown });
+  } catch (e) {
+    console.error('Save auto-chase settings error:', e);
+    res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
 // ── Printable export pages (Save as PDF via browser) ──────────────────────────
 // ── Saved invoice items (June 2026, Gareth) ─────────────────────────────────
 
