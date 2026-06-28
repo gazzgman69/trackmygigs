@@ -6552,6 +6552,74 @@ function selectRecentVenue(idx) {
   if (confirm) confirm.style.display = 'block';
 }
 
+// Edit-form venue picker: same saved-venues + Google Places dropdown as the
+// wizard, but targeting the edit-gig inputs.
+async function searchVenuesEdit(query) {
+  const list = document.getElementById('editVenueSuggestions');
+  if (!list) return;
+  clearTimeout(window._editVenueTimer);
+  await loadRecentVenues();
+  const renderInto = (googleHtml) => {
+    const q = (query || '').trim().toLowerCase();
+    const recents = window._recentVenuesCache || [];
+    const matches = recents.map((v, i) => ({ v, i }))
+      .filter(({ v }) => !q || (v.venue_name || '').toLowerCase().includes(q) || (v.venue_address || '').toLowerCase().includes(q))
+      .slice(0, 4);
+    let html = '';
+    if (matches.length) {
+      html += '<div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;padding:7px 12px 3px;">Your venues</div>';
+      html += matches.map(({ v, i }) => `
+        <div class="suggestion-item" onclick="selectRecentVenueEdit(${i})">
+          <div style="font-size:14px;font-weight:500;color:var(--text);">📍 ${escapeHtml(v.venue_name || v.venue_address || 'Venue')}</div>
+          <div style="font-size:11px;color:var(--text-3);">${escapeHtml(v.venue_address || '')}${v.mileage_miles ? ' · ' + Math.round(v.mileage_miles * 2) + ' mi round trip' : ''}</div>
+        </div>`).join('');
+    }
+    html += googleHtml || '';
+    if (!html) { list.style.display = 'none'; return; }
+    list.innerHTML = html;
+    list.style.display = 'block';
+  };
+  if (!query || query.length < 3) { renderInto(''); return; }
+  window._editVenueTimer = setTimeout(async () => {
+    try {
+      const resp = await fetch(`/api/places?q=${encodeURIComponent(query)}`);
+      const data = resp.ok ? await resp.json() : { predictions: [] };
+      const gh = (data.predictions || []).map((p) => `
+        <div class="suggestion-item" onclick="selectVenueEdit('${escapeHtml(p.place_id)}', '${escapeHtml(p.structured_formatting?.main_text || p.description)}')">
+          <div style="font-size:14px;font-weight:500;color:var(--text);">${escapeHtml(p.structured_formatting?.main_text || p.description)}</div>
+          <div style="font-size:11px;color:var(--text-3);">${escapeHtml(p.structured_formatting?.secondary_text || '')}</div>
+        </div>`).join('');
+      renderInto(gh);
+    } catch (_) { renderInto(''); }
+  }, 300);
+}
+function selectRecentVenueEdit(idx) {
+  const v = (window._recentVenuesCache || [])[idx];
+  if (!v) return;
+  const n = document.getElementById('editVenue');
+  const a = document.getElementById('editVenueAddress');
+  const m = document.getElementById('editMileage');
+  const l = document.getElementById('editVenueSuggestions');
+  if (n) n.value = v.venue_name || '';
+  if (a) a.value = v.venue_address || '';
+  if (m && v.mileage_miles && !m.value) m.value = parseFloat(v.mileage_miles);
+  if (l) l.style.display = 'none';
+}
+async function selectVenueEdit(placeId, name) {
+  const n = document.getElementById('editVenue');
+  const a = document.getElementById('editVenueAddress');
+  const l = document.getElementById('editVenueSuggestions');
+  if (n) n.value = name;
+  if (l) l.style.display = 'none';
+  try {
+    const resp = await fetch(`/api/places/detail?place_id=${encodeURIComponent(placeId)}`);
+    if (resp.ok) { const d = await resp.json(); if (d.result && a) a.value = d.result.formatted_address || ''; }
+  } catch (_) {}
+}
+window.searchVenuesEdit = searchVenuesEdit;
+window.selectRecentVenueEdit = selectRecentVenueEdit;
+window.selectVenueEdit = selectVenueEdit;
+
 async function selectVenue(placeId, name) {
   const nameInput = document.getElementById('wVenueName');
   const addrInput = document.getElementById('wVenueAddress');
@@ -10960,9 +11028,10 @@ async function openEditGig(gigId) {
           <div class="form-label">Band / client name</div>
           <input type="text" class="form-input" id="editBandName" value="${escapeHtml(gig.band_name || '')}" placeholder="e.g. The Vents" />
         </div>
-        <div class="form-group">
+        <div class="form-group" style="position:relative;">
           <div class="form-label">Venue</div>
-          <input type="text" class="form-input" id="editVenue" value="${escapeHtml(gig.venue_name || '')}" placeholder="e.g. The Grand Hotel" />
+          <input type="text" class="form-input" id="editVenue" value="${escapeHtml(gig.venue_name || '')}" placeholder="e.g. The Grand Hotel" autocomplete="off" oninput="searchVenuesEdit(this.value)" onfocus="searchVenuesEdit(this.value)" />
+          <div id="editVenueSuggestions" class="suggestions-list" style="display:none;"></div>
         </div>
         <div class="form-group">
           <div class="form-label">Venue address</div>
