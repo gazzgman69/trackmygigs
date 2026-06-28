@@ -12963,8 +12963,10 @@ function refreshAgencyTakeHome() {
   const fee = parseFloat((document.getElementById('editFee') || {}).value || '0') || 0;
   const a = sel && sel.value ? (window._agenciesCache || []).find(x => String(x.id) === String(sel.value)) : null;
   if (!a || a.commission_pct == null || !(fee > 0)) { box.innerHTML = ''; return; }
-  const commission = Math.round(fee * (parseFloat(a.commission_pct) / 100) * 100) / 100;
-  const keep = Math.round((fee - commission) * 100) / 100;
+  // Round take-home in one step (matching the gig-detail calc), then derive the
+  // displayed commission from it, so the two surfaces never differ by a penny.
+  const keep = Math.round((fee - fee * parseFloat(a.commission_pct) / 100) * 100) / 100;
+  const commission = Math.round((fee - keep) * 100) / 100;
   box.innerHTML = `Fee £${fee.toLocaleString()} · ${a.commission_pct}% −£${commission.toLocaleString()} · <b style="color:var(--success);">you keep £${keep.toLocaleString()}</b>`;
 }
 function _agencySheetShell(title, nameVal, pctVal, saveId) {

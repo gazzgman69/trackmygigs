@@ -467,6 +467,14 @@ router.post('/gigs', async (req, res) => {
       }
     }
 
+    // Only accept an agency_id that belongs to the caller (the read join is
+    // already user-scoped; this stops a stray/foreign id landing on the gig row).
+    let agencyId = req.body.agency_id || null;
+    if (agencyId) {
+      const ag = await db.query('SELECT 1 FROM agencies WHERE id = $1 AND user_id = $2', [agencyId, req.user.id]);
+      if (ag.rows.length === 0) agencyId = null;
+    }
+
     const result = await db.query(
       `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, gig_leader_name, gig_leader_phone, gig_leader_email, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode, venue_lat, venue_lng, agency_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
@@ -498,7 +506,7 @@ router.post('/gigs', async (req, res) => {
         gigPostcode,
         venueLat,
         venueLng,
-        req.body.agency_id || null,
+        agencyId,
       ]
     );
 
@@ -613,6 +621,15 @@ router.patch('/gigs/:id', async (req, res) => {
       }
     }
 
+    // Validate agency_id ownership: $32 flags whether it was provided (so "None"
+    // can clear it), $33 is the value, coerced to null if it isn't the caller's.
+    const agencyProvided = req.body.agency_id !== undefined;
+    let agencyVal = req.body.agency_id || null;
+    if (agencyProvided && agencyVal) {
+      const ag = await db.query('SELECT 1 FROM agencies WHERE id = $1 AND user_id = $2', [agencyVal, req.user.id]);
+      if (ag.rows.length === 0) agencyVal = null;
+    }
+
     const result = await db.query(
       `UPDATE gigs SET
         band_name = COALESCE($1, band_name), venue_name = COALESCE($2, venue_name),
@@ -645,7 +662,7 @@ router.patch('/gigs/:id', async (req, res) => {
         -- stay read-only on the Google side until this flag flips.
         tmg_edited = TRUE
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, gig_leader_name || null, gig_leader_phone || null, gig_leader_email || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng, soundcheck_time || null, req.body.agency_id !== undefined, req.body.agency_id || null]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, gig_leader_name || null, gig_leader_phone || null, gig_leader_email || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng, soundcheck_time || null, agencyProvided, agencyVal]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     const gig = result.rows[0];
@@ -3932,8 +3949,9 @@ router.get('/earnings', async (req, res) => {
     // Same window + status='confirmed' filter as the "earned" query, so
     // earned = in the bank + to collect, and rule #7 (confirmed only) holds.
     const receivedResult = await db.query(
-      `SELECT COALESCE(SUM(gp.amount), 0) AS received
-       FROM gig_payments gp JOIN gigs g ON g.id = gp.gig_id
+      `SELECT COALESCE(SUM(LEAST(p.received, COALESCE(g.fee, p.received))), 0) AS received
+       FROM (SELECT gig_id, SUM(amount) AS received FROM gig_payments GROUP BY gig_id) p
+       JOIN gigs g ON g.id = p.gig_id
        WHERE g.user_id = $1 AND g.date >= $2 AND g.date <= $3 AND g.status = 'confirmed'`,
       [userId, taxYearStart, taxYearEnd]
     );
