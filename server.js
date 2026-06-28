@@ -268,11 +268,13 @@ function handleReload(req, res) {
 app.get('/api/admin/reload', handleReload);
 app.post('/api/admin/reload', handleReload);
 
-// Opt-in auto-chase sweep. Gated by RELOAD_SECRET so an external cron can hit it
-// reliably (the in-process interval below is best-effort on Replit's sleepy
-// dyno). ?dry=1 selects the eligible invoices without sending anything.
+// Opt-in auto-chase sweep, for an external cron to hit reliably (the in-process
+// interval below is best-effort on Replit's sleepy dyno). Gated by a dedicated
+// CHASE_CRON_SECRET when set, so the cron URL never has to carry the master
+// RELOAD_SECRET; falls back to RELOAD_SECRET if no dedicated key is configured.
+// ?dry=1 selects the eligible invoices without sending anything.
 async function handleRunChases(req, res) {
-  const expected = process.env.RELOAD_SECRET;
+  const expected = process.env.CHASE_CRON_SECRET || process.env.RELOAD_SECRET;
   if (!expected || req.query.key !== expected) return res.status(404).json({ error: 'Not found' });
   try {
     const { runAutoChaseSweep } = require('./lib/autoChase');
@@ -297,6 +299,35 @@ setInterval(() => {
       .catch((e) => console.error('[auto-chase] sweep failed:', e.message));
   } catch (e) { console.error('[auto-chase] scheduler error:', e.message); }
 }, 6 * 60 * 60 * 1000);
+
+// Read-only email/send readiness check for go-live. Reports the resolved From
+// addresses + which knobs are set, NEVER the secret values. Lets you confirm
+// the wiring after setting Replit Secrets, without sending a test mail.
+app.get('/api/admin/email-config', (req, res) => {
+  const expected = process.env.RELOAD_SECRET;
+  if (!expected || req.query.key !== expected) return res.status(404).json({ error: 'Not found' });
+  const { APP_NAME, invoiceFromAddress } = require('./lib/email');
+  const fallbackDomain = process.env.MAIL_DOMAIN || 'trackmygigs.app';
+  const provider = process.env.RESEND_API_KEY ? 'resend'
+    : (process.env.GMAIL_USER ? 'gmail-fallback' : 'none');
+  res.json({
+    app_name: APP_NAME,
+    provider,
+    branded_domain_ready: provider === 'resend' && (!!process.env.MAIL_FROM || !!process.env.MAIL_DOMAIN),
+    default_from: process.env.MAIL_FROM || `${APP_NAME} <no-reply@${fallbackDomain}>`,
+    invoice_from: invoiceFromAddress(),
+    env_set: {
+      RESEND_API_KEY: !!process.env.RESEND_API_KEY,
+      MAIL_FROM: !!process.env.MAIL_FROM,
+      MAIL_DOMAIN: process.env.MAIL_DOMAIN || null,
+      INVOICE_FROM: !!process.env.INVOICE_FROM,
+      APP_NAME: !!process.env.APP_NAME,
+      GMAIL_USER: !!process.env.GMAIL_USER,
+      CHASE_CRON_SECRET: !!process.env.CHASE_CRON_SECRET,
+    },
+    auto_chase: { in_process_interval: '6h (best-effort)', cron_endpoint: '/api/admin/run-chases?key=…&dry=1' },
+  });
+});
 
 // 2026-04-29 — populate demo accounts with realistic profile data so the
 // directory + chat profile sheets actually render something interesting.
