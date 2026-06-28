@@ -2074,7 +2074,7 @@ function _gigsRow(g, maps) {
   else if (past) chip = '<span style="font-size:9px;font-weight:800;border-radius:5px;padding:2px 6px;text-transform:uppercase;color:var(--text-2);background:var(--surface);">Played</span>';
   else chip = '<span style="font-size:9px;font-weight:800;border-radius:5px;padding:2px 6px;text-transform:uppercase;color:var(--success);background:rgba(63,185,80,.12);">Confirmed</span>';
   const title = g.band_name || g.venue_name || 'Gig';
-  const subBits = [g.start_time ? String(g.start_time).slice(0, 5) : null, g.band_name ? g.venue_name : null].filter(Boolean).join(' · ');
+  const subBits = [g.start_time ? String(g.start_time).slice(0, 5) : null, g.band_name ? g.venue_name : null, getGigType(g)].filter(Boolean).join(' · ');
   const fee = _gpFee(g);
   return `
     <div onclick="openGigDetail('${escapeAttr(g.id)}')" style="margin-bottom:8px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;${past || _gpIsCancelled(g) ? 'opacity:.7;' : ''}">
@@ -10935,6 +10935,10 @@ async function openEditGig(gigId) {
           <input type="text" class="form-input" id="editVenueAddress" value="${escapeHtml(gig.venue_address || '')}" placeholder="Full address" />
         </div>
         <div class="form-group">
+          <div class="form-label">Mileage (one-way, optional)</div>
+          <input type="number" class="form-input" id="editMileage" value="${gig.mileage_miles != null ? gig.mileage_miles : ''}" placeholder="Auto from the address, or type it" step="0.1" inputmode="decimal" />
+        </div>
+        <div class="form-group">
           <div class="form-label">Date</div>
           <input type="date" class="form-input" id="editDate" value="${(gig.date || '').substring(0, 10)}" />
         </div>
@@ -11080,6 +11084,10 @@ async function saveEditGig(gigId) {
       end_time: document.getElementById('editEndTime').value || null,
       load_in_time: document.getElementById('editLoadInTime').value || null,
       fee: feeVal ? parseFloat(feeVal) : null,
+      mileage_miles: (() => {
+        const v = (document.getElementById('editMileage') || {}).value;
+        return v !== '' && v != null && !isNaN(parseFloat(v)) ? parseFloat(v) : null;
+      })(),
       status: document.getElementById('editStatus').value,
       gig_type: document.getElementById('editGigType').value || null,
       dress_code: document.getElementById('editDressCode').value || null,
