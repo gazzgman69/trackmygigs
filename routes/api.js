@@ -657,12 +657,13 @@ router.patch('/gigs/:id', async (req, res) => {
         -- agency_id: $32 flags whether the caller sent it (so selecting "None"
         -- can CLEAR it, which a COALESCE could never do).
         agency_id = CASE WHEN $32::boolean THEN $33 ELSE agency_id END,
+        completed_at = CASE WHEN $34::boolean THEN $35 ELSE completed_at END,
         -- 2026-04-23: any user-initiated PATCH flips tmg_edited so sync-back
         -- to Google starts pushing changes. Imported-but-never-touched gigs
         -- stay read-only on the Google side until this flag flips.
         tmg_edited = TRUE
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, gig_leader_name || null, gig_leader_phone || null, gig_leader_email || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng, soundcheck_time || null, agencyProvided, agencyVal]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, gig_leader_name || null, gig_leader_phone || null, gig_leader_email || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng, soundcheck_time || null, agencyProvided, agencyVal, req.body.completed_at !== undefined, req.body.completed_at || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     const gig = result.rows[0];

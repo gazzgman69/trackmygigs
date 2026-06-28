@@ -2010,6 +2010,13 @@ async function runMigrations() {
     // Agencies a gig can be booked through, with a commission rate that comes
     // off the fee before the band split. agency_id links a gig to one.
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS agency_id UUID`);
+    // Explicit "this gig happened" stamp, separate from the date-derived "Played"
+    // (lets a gig be marked played early / confirmed done).
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`);
+    // Opt-in automated invoice chasing (off by default; the app's principle is
+    // nothing auto-sends, so only opted-in users are ever swept).
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_chase_enabled BOOLEAN DEFAULT FALSE`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_chase_cooldown_days INTEGER DEFAULT 7`);
     await db.query(`CREATE TABLE IF NOT EXISTS agencies (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL,

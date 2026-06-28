@@ -1696,7 +1696,7 @@ const GIG_PENCILLED_STATUSES = ['tentative', 'enquiry', 'pending'];
 function _gpToday() { const t = new Date(); t.setHours(0, 0, 0, 0); return t; }
 function _gpIsCancelled(g) { return g.status === 'cancelled'; }
 function _gpIsPencilled(g) { return GIG_PENCILLED_STATUSES.includes(g.status); }
-function _gpIsPast(g) { const d = parseGigDate(g.date); return d && d < _gpToday(); }
+function _gpIsPast(g) { const d = parseGigDate(g.date); return (d && d < _gpToday()) || !!g.completed_at; }
 function _gpDaysUntil(g) {
   const d = parseGigDate(g.date);
   return d ? Math.round((d - _gpToday()) / 86400000) : null;
@@ -10185,6 +10185,7 @@ async function openGigDetail(gigId) {
         </div>
         <div style="text-align:center;font-size:10px;color:var(--text-3);margin-top:6px;">Set up your review links in Profile > Edit Profile</div>
       </div>
+      ${gig.status !== 'cancelled' ? `<button style="width:100%;background:${gig.completed_at ? 'var(--success-dim)' : 'var(--card)'};color:var(--success);border:1px solid var(--success);border-radius:24px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:8px;" onclick="markGigPlayed('${gig.id}', ${gig.completed_at ? 'false' : 'true'})">${gig.completed_at ? '✓ Played · undo' : '✓ Mark as played'}</button>` : ''}
       ${gig.status !== 'cancelled' ? `<button style="width:100%;background:var(--card);color:var(--warning);border:1px solid var(--warning);border-radius:24px;padding:12px;font-size:14px;font-weight:500;cursor:pointer;margin-bottom:8px;" onclick="cancelGig('${gig.id}')">Cancel gig</button>` : `<div style="width:100%;background:var(--card);color:var(--text-3);border:1px solid var(--border);border-radius:24px;padding:12px;font-size:14px;font-weight:500;text-align:center;margin-bottom:8px;">Gig is cancelled</div>`}
       <button style="width:100%;background:var(--card);color:var(--danger);border:1px solid var(--danger);border-radius:24px;padding:12px;font-size:14px;font-weight:500;cursor:pointer;" onclick="closePanel('panel-gig-detail');deleteGig('${gig.id}')">Delete gig</button>
     </div>
@@ -10847,6 +10848,32 @@ async function markGigDetailsComplete(gigId) {
     console.error('Mark complete error:', e);
   }
 }
+
+// Explicit "this gig happened": stamps completed_at (or clears it), so the gig
+// flows into the Played list + the get-paid surfaces even before its date.
+async function markGigPlayed(gigId, played) {
+  const completed_at = played ? new Date().toISOString() : null;
+  try {
+    const res = await fetch(`/api/gigs/${gigId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ completed_at }),
+    });
+    if (!res.ok) throw new Error('Failed to update gig');
+    window._cachedGigs = (window._cachedGigs || []).map(g =>
+      g.id === gigId ? { ...g, completed_at } : g
+    );
+    window._cachedStats = null;
+    persistCachedCalendar();
+    openGigDetail(gigId);
+    if (typeof _gigsPaintAll === 'function') _gigsPaintAll();
+    if (typeof showToast === 'function') showToast(played ? 'Marked as played' : 'Marked as not played');
+  } catch (e) {
+    console.error('Mark played error:', e);
+    if (typeof showToast === 'function') showToast('Could not update gig');
+  }
+}
+window.markGigPlayed = markGigPlayed;
 
 async function cancelGig(gigId) {
   const ok = await showConfirm('This will mark the gig as cancelled. You can still invoice for it if needed.', {
