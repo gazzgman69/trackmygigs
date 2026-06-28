@@ -608,4 +608,16 @@ VERIFIED LIVE 2026-06-27: GET /venues/recent returned his 6 venues with mileage;
 ## Polish wave — BUILT + VERIFIED LIVE 2026-06-27 (commit 710b983)
 - Gig type on gig-list cards: subline now appends getGigType(g) (e.g. "20:00 · Cardiff Castle · DEMO"). Verified in browser.
 - Manual mileage fallback: edit-gig form gains an editable "Mileage (one-way, optional)" field (pre-filled from gig.mileage_miles, verified showing 152.00); saveEditGig sends mileage_miles (PATCH COALESCE preserves on empty). Covers the "auto-distance failed, type it" case.
-Both verified live. NOT done (deferred, smaller/needs decision): edit-gig venue autocomplete (wizard picker uses wizard element ids; edit would need parallel fns), explicit "Complete gig" status (interacts with date-derived Played logic, riskier), agency tag + commission (a feature, needs a product decision), automated chase cadence (needs a scheduled worker).
+Both verified live.
+
+## Agencies + commission — BUILT + VERIFIED 2026-06-27 (commit b24fd4a)
+agencies table (name + commission_pct) + gigs.agency_id; CRUD /api/agencies; gig POST/PATCH thread agency_id; GET /gigs (list+single) LEFT JOIN agencies -> agency_name/commission_pct. UI: Agencies manager (More menu), edit-gig "Booked through" picker + inline add + live take-home preview, gig-detail take-home line. Backend verified: take-home £340 on £400@15%, clear works, all user-scoped. UI not yet browser-eyeballed.
+
+## SAFETY SWEEP (2026-06-27) — multi-agent audit + live cross-tenant probe of the whole session (a4542ea..HEAD)
+VERDICT: clean. ZERO critical/high. Multi-tenant CLEAN (static audit + live two-account probe: account B got 404 on every one of A's gig-payments/gig/invoice-send/agency endpoints, no data leaked, A's data uncorrupted). No regressions (auth/email refactor, searchVenues, finance fix, invoice sync all OK). No SQL param bugs ($32/$33, 26->27 placeholders correct). No injection/XSS (parameterized + escaped). Migrations idempotent; features correctly free-core.
+FIXES APPLIED + VERIFIED (commit 707c249, all low-severity):
+1. /earnings "in the bank" caps each gig's received at its fee (LEAST per gig) so an overpaid gig can't break earned==in_the_bank+to_collect. Verified: £200 gig + £250 paid -> in_the_bank +£200 (capped), identity holds.
+2. refreshAgencyTakeHome rounds take-home one-step (matches gig detail) -> no 1p preview/detail drift.
+3. gig POST/PATCH validate agency_id belongs to caller (coerce to null if not). Verified: fake UUID -> null, own agency -> set.
+OPEN DECISION FOR GARETH (audit finding, low): the premium fee-splitter divides the GROSS fee and ignores agency commission. Should the band split the full fee, or the fee AFTER the agency's cut? (Conventionally commission comes off the top first.) Not yet changed - his call.
+STILL NOT BUILT from "do them all": automated chase cadence (needs a scheduled worker + opt-in toggle), explicit "Complete gig" status (interacts with date-derived Played logic), edit-form venue autocomplete (small).
