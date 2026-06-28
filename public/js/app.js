@@ -5871,6 +5871,7 @@ function renderWizardStep(step) {
           value="${escapeHtml(gigWizardData.venue_name)}"
           autocomplete="off"
           oninput="searchVenues(this.value)"
+          onfocus="searchVenues(this.value)"
         >
         <div id="venueSuggestions" class="suggestions-list" style="display:none;"></div>
         <div class="wizard-error" id="wVenueError">Please enter the venue name</div>
@@ -6440,14 +6441,56 @@ function hideSuggestions(id) {
 // ── Venue search (Google Places via server proxy) ───────────────────────────
 let _venueSearchTimer = null;
 
-function searchVenues(query) {
+// Load (once) the user's previously-used venues so the picker can offer them
+// without retyping or re-hitting Google.
+async function loadRecentVenues() {
+  if (Array.isArray(window._recentVenuesCache)) return window._recentVenuesCache;
+  try {
+    const r = await fetch('/api/venues/recent');
+    window._recentVenuesCache = r.ok ? await r.json() : [];
+  } catch (_) { window._recentVenuesCache = []; }
+  return window._recentVenuesCache;
+}
+
+// Render the venue suggestions dropdown: the user's matching saved venues on
+// top (tap to reuse name + address + mileage with no Google call), then any
+// Google Places predictions below.
+function _renderVenueSuggestions(query, googleHtml) {
   const list = document.getElementById('venueSuggestions');
   if (!list) return;
+  const q = (query || '').trim().toLowerCase();
+  const recents = window._recentVenuesCache || [];
+  const matches = recents
+    .map((v, i) => ({ v, i }))
+    .filter(({ v }) => !q
+      || (v.venue_name || '').toLowerCase().includes(q)
+      || (v.venue_address || '').toLowerCase().includes(q))
+    .slice(0, 4);
+  let html = '';
+  if (matches.length) {
+    html += '<div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;padding:7px 12px 3px;">Your venues</div>';
+    html += matches.map(({ v, i }) => `
+      <div class="suggestion-item" onclick="selectRecentVenue(${i})">
+        <div style="font-size:14px;font-weight:500;color:var(--text);">\ud83d\udccd ${escapeHtml(v.venue_name || v.venue_address || 'Venue')}</div>
+        <div style="font-size:11px;color:var(--text-3);">${escapeHtml(v.venue_address || '')}${v.mileage_miles ? ' \u00b7 ' + Math.round(v.mileage_miles * 2) + ' mi round trip' : ''}</div>
+      </div>`).join('');
+  }
+  html += googleHtml || '';
+  if (!html) { list.style.display = 'none'; return; }
+  list.innerHTML = html;
+  list.style.display = 'block';
+}
 
+async function searchVenues(query) {
+  const list = document.getElementById('venueSuggestions');
+  if (!list) return;
   clearTimeout(_venueSearchTimer);
+  await loadRecentVenues();
 
-  if (query.length < 3) {
-    list.style.display = 'none';
+  // Short query (or just focused): show only the saved-venue matches; Google
+  // autocomplete needs 3+ chars anyway.
+  if (!query || query.length < 3) {
+    _renderVenueSuggestions(query, '');
     return;
   }
 
@@ -6455,36 +6498,57 @@ function searchVenues(query) {
     try {
       const resp = await fetch(`/api/places?q=${encodeURIComponent(query)}`);
       if (!resp.ok) {
-        list.style.display = 'none';
+        _renderVenueSuggestions(query, '');
         if (typeof showToast === 'function') {
           showToast('Venue lookup isn\u2019t working right now. Just type the venue name.');
         }
         return;
       }
       const data = await resp.json();
-      if (!data.predictions || data.predictions.length === 0) {
-        list.style.display = 'none';
-        return;
-      }
-      list.innerHTML = data.predictions
-        .map(
-          (p) => `
+      const preds = data.predictions || [];
+      const googleHtml = preds.map(
+        (p) => `
         <div class="suggestion-item" onclick="selectVenue('${escapeHtml(p.place_id)}', '${escapeHtml(p.structured_formatting?.main_text || p.description)}')">
           <div style="font-size:14px;font-weight:500;color:var(--text);">${escapeHtml(p.structured_formatting?.main_text || p.description)}</div>
           <div style="font-size:11px;color:var(--text-3);">${escapeHtml(p.structured_formatting?.secondary_text || '')}</div>
         </div>
       `
-        )
-        .join('');
-      list.style.display = 'block';
+      ).join('');
+      _renderVenueSuggestions(query, googleHtml);
     } catch (err) {
       console.error('Venue search error:', err);
-      list.style.display = 'none';
+      _renderVenueSuggestions(query, '');
       if (typeof showToast === 'function') {
         showToast('Venue lookup isn\u2019t working right now. Just type the venue name.');
       }
     }
   }, 300);
+}
+
+// Pick a saved venue: fill name + address and reuse its stored mileage with
+// NO Google lookup.
+function selectRecentVenue(idx) {
+  const v = (window._recentVenuesCache || [])[idx];
+  if (!v) return;
+  const nameInput = document.getElementById('wVenueName');
+  const addrInput = document.getElementById('wVenueAddress');
+  const list = document.getElementById('venueSuggestions');
+  const confirm = document.getElementById('venueConfirm');
+  const addrText = document.getElementById('venueAddrText');
+  const addrMeta = document.getElementById('venueAddrMeta');
+  if (nameInput) nameInput.value = v.venue_name || '';
+  if (addrInput) addrInput.value = v.venue_address || '';
+  if (list) list.style.display = 'none';
+  gigWizardData.venue_name = v.venue_name || '';
+  gigWizardData.venue_address = v.venue_address || '';
+  if (addrText) addrText.textContent = '\ud83d\udccd ' + (v.venue_address || '');
+  if (v.mileage_miles) {
+    gigWizardData.mileage_miles = parseFloat(v.mileage_miles);
+    if (addrMeta) addrMeta.textContent = '\u2713 Saved venue \u00b7 ' + Math.round(v.mileage_miles * 2) + ' miles round trip (reused, no lookup)';
+  } else if (addrMeta) {
+    addrMeta.textContent = '\u2713 Saved venue';
+  }
+  if (confirm) confirm.style.display = 'block';
 }
 
 async function selectVenue(placeId, name) {

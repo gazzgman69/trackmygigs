@@ -3439,16 +3439,56 @@ function formatRoutesDuration(durationStr) {
   return `${minutes} min`;
 }
 
+// Distinct recently-used venues for this user, most recent first, preferring
+// rows that already carry a stored mileage so the picker can reuse it.
+router.get('/venues/recent', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT DISTINCT ON (LOWER(TRIM(venue_address)))
+              venue_name, venue_address, venue_postcode, mileage_miles, date AS last_used
+       FROM gigs
+       WHERE user_id = $1 AND venue_address IS NOT NULL AND TRIM(venue_address) <> ''
+             AND status <> 'cancelled'
+       ORDER BY LOWER(TRIM(venue_address)), (mileage_miles IS NOT NULL) DESC, date DESC`,
+      [req.user.id]
+    );
+    const rows = r.rows
+      .sort((a, b) => new Date(b.last_used) - new Date(a.last_used))
+      .slice(0, 12);
+    res.json(rows);
+  } catch (err) {
+    console.error('Recent venues error:', err);
+    res.status(500).json({ error: 'Failed to fetch recent venues' });
+  }
+});
+
 router.get('/distance', async (req, res) => {
+  const origin = req.query.origin;
+  const dest = req.query.destination;
+  if (!origin || !dest) return res.json({ distance: null, error: 'missing_params' });
+
+  // Mileage cache: reuse a prior gig's stored mileage for the SAME venue
+  // (matched by address) and skip Google entirely. Repeat venue = one lookup
+  // ever, which cuts Routes API cost.
+  try {
+    const cached = await db.query(
+      `SELECT mileage_miles FROM gigs
+       WHERE user_id = $1 AND mileage_miles IS NOT NULL
+             AND LOWER(TRIM(venue_address)) = LOWER(TRIM($2))
+       ORDER BY date DESC LIMIT 1`,
+      [req.user.id, dest]
+    );
+    if (cached.rows.length && cached.rows[0].mileage_miles != null) {
+      const miles = Math.round(parseFloat(cached.rows[0].mileage_miles));
+      return res.json({ distance: `${miles} mi`, duration: null, miles, cached: true });
+    }
+  } catch (e) { /* fall through to Google on any cache error */ }
+
   const key = process.env.GOOGLE_PLACES_KEY;
   if (!key) {
     console.error('[distance] GOOGLE_PLACES_KEY not set');
     return res.json({ distance: null, error: 'key_missing' });
   }
-
-  const origin = req.query.origin;
-  const dest = req.query.destination;
-  if (!origin || !dest) return res.json({ distance: null, error: 'missing_params' });
 
   // Try the modern Routes API first (Google's recommended replacement for
   // Distance Matrix). Falls back to legacy Distance Matrix only if Routes
