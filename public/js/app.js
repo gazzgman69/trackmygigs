@@ -10269,7 +10269,11 @@ function renderGigSplitsSection(gig) {
   const mode = s.mode || 'equal';
   const costs = parseFloat(s.costs) || 0;
   const leaderCut = parseFloat(s.leader_cut) || 0;
-  const pot = Math.max(0, fee - costs);
+  // Agency commission comes off the top first (before costs and the band split),
+  // so the band only ever divides the net-of-agency money.
+  const commission = (gig.agency_commission_pct != null && fee > 0)
+    ? Math.round(fee * parseFloat(gig.agency_commission_pct) / 100 * 100) / 100 : 0;
+  const pot = Math.max(0, fee - commission - costs);
   const saved = {};
   (s.members || []).forEach(m => { saved[m.name] = m; });
   // Compute amounts per mode. Member 0 is treated as the leader (the gig
@@ -10294,6 +10298,7 @@ function renderGigSplitsSection(gig) {
   el.innerHTML = `
     <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Gig fee</span><b>\u00A3${Math.round(fee)}</b></div>
+      ${commission > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Agency commission${gig.agency_commission_pct != null ? ' (' + gig.agency_commission_pct + '%)' : ''}</span><b style="color:var(--danger);">-\u00A3${Math.round(commission)}</b></div>` : ''}
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Costs off the top</span><input id="splitCosts" type="number" min="0" value="${costs || ''}" placeholder="0" onchange="saveGigSplits('${escapeAttr(gig.id)}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:6px 8px;width:84px;text-align:right;"></div>
       ${mode === 'leader' ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Your cut first (\u00A3)</span><input id="splitLeaderCut" type="number" min="0" value="${leaderCut || ''}" placeholder="0" onchange="saveGigSplits('${escapeAttr(gig.id)}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:6px 8px;width:84px;text-align:right;"></div>` : ''}
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Pot to split between ${n}</span><b style="color:var(--success);font-size:15px;">\u00A3${Math.round(pot)}</b></div>
