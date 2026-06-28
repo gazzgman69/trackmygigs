@@ -3880,8 +3880,20 @@ router.get('/earnings', async (req, res) => {
       [userId]
     );
 
+    // Money actually RECEIVED (gig_payments) over confirmed gigs this tax year.
+    // Same window + status='confirmed' filter as the "earned" query, so
+    // earned = in the bank + to collect, and rule #7 (confirmed only) holds.
+    const receivedResult = await db.query(
+      `SELECT COALESCE(SUM(gp.amount), 0) AS received
+       FROM gig_payments gp JOIN gigs g ON g.id = gp.gig_id
+       WHERE g.user_id = $1 AND g.date >= $2 AND g.date <= $3 AND g.status = 'confirmed'`,
+      [userId, taxYearStart, taxYearEnd]
+    );
+
     const mileageClaimable = parseFloat(mileageResult.rows[0]?.total || 0) * 0.45;
     const totalEarnings = parseFloat(currentYearResult.rows[0]?.total || 0);
+    const inTheBank = parseFloat(receivedResult.rows[0]?.received || 0);
+    const toCollect = Math.max(0, Math.round((totalEarnings - inTheBank) * 100) / 100);
     const totalExpenses = parseFloat(expensesResult.rows[0]?.total || 0);
     const totalGigs = parseInt(currentYearResult.rows[0]?.count || 0);
     const totalMiles = parseFloat(mileageResult.rows[0]?.total || 0);
@@ -3905,6 +3917,8 @@ router.get('/earnings', async (req, res) => {
       // Fields used by the new finance panel
       tax_year: taxYearLabel,
       total_earnings: totalEarnings,
+      in_the_bank: inTheBank,
+      to_collect: toCollect,
       total_gigs: totalGigs,
       total_expenses: totalExpenses,
       total_miles: totalMiles,

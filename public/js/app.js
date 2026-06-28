@@ -8841,12 +8841,18 @@ async function renderFinancePanel() {
     if (!resp.ok) throw new Error('Failed to fetch earnings');
     const data = await resp.json();
 
-    const paidTot = Number(data.paid_total) || 0;
-    const unpaidTot = Number(data.unpaid_total) || 0;
-    const overdueTot = Number(data.overdue_total) || 0;
+    // /earnings nests invoice figures under invoice_summary; read those (the old
+    // flat data.paid_total names were never returned, so these tiles showed £0).
+    const invSum = data.invoice_summary || {};
+    const paidTot = Number(data.paid_total ?? invSum.paid) || 0;
+    const unpaidTot = Number(data.unpaid_total ?? invSum.unpaid) || 0;
+    const overdueTot = Number(data.overdue_total ?? invSum.overdue) || 0;
     const expensesTot = Number(data.expenses_total) || Number(data.total_expenses) || 0;
     const grossTot = paidTot + unpaidTot + overdueTot;
-    const hasAnyActivity = grossTot + expensesTot > 0;
+    // Gig-money view: actually received vs still to collect (from recorded payments).
+    const inTheBank = Number(data.in_the_bank) || 0;
+    const toCollect = Number(data.to_collect) || 0;
+    const hasAnyActivity = grossTot + expensesTot + inTheBank + (Number(data.total_earnings) || 0) > 0;
 
     const taxYear = data.tax_year || '2026/27';
     const earnings = Number(data.total_earnings) || 0;
@@ -8912,6 +8918,22 @@ async function renderFinancePanel() {
           <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--danger);border-radius:2px;"></span>Overdue</span>
         </div>
         <div style="font-size:10px;color:var(--text-3);margin-top:4px;">${gigs} gig${gigs === 1 ? '' : 's'}</div>
+      </div>
+
+      <!-- Money in: received vs still to collect (from recorded gig payments) -->
+      <div data-finance-section="money-in" style="padding:0 16px 16px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Money in</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:12px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">In the bank</div>
+            <div style="font-size:18px;font-weight:800;color:var(--success);">${fmtGBP(inTheBank)}</div>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:12px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;">To collect</div>
+            <div style="font-size:18px;font-weight:800;color:var(--warning);">${fmtGBP(toCollect)}</div>
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--text-3);text-align:center;margin-top:6px;">Received vs still owed across your confirmed gigs &middot; tax year ${escapeHtml(taxYear)}</div>
       </div>
 
       <!-- Monthly breakdown with &pound; labels on bars -->
