@@ -2007,6 +2007,17 @@ async function runMigrations() {
     )`);
     await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS chased_at TIMESTAMPTZ`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS fee_splits JSONB`);
+    // Agencies a gig can be booked through, with a commission rate that comes
+    // off the fee before the band split. agency_id links a gig to one.
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS agency_id UUID`);
+    await db.query(`CREATE TABLE IF NOT EXISTS agencies (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL,
+      name TEXT NOT NULL,
+      commission_pct NUMERIC,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS agencies_user_name_idx ON agencies (user_id, LOWER(name))`);
     // 2026-06-10 availability polls. Live objects, deliberately NOT message
     // snapshots: the chat attachment carries only {kind:'poll', poll_id} and
     // the card hydrates from these tables so votes always show current state.

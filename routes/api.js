@@ -292,8 +292,10 @@ function syncBlockedDateSafely(action, userId, payload) {
 router.get('/gigs', async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT g.*, COALESCE((SELECT SUM(amount) FROM gig_payments gp WHERE gp.gig_id = g.id), 0) AS paid_so_far
-       FROM gigs g WHERE g.user_id = $1 ORDER BY g.date DESC`,
+      `SELECT g.*, COALESCE((SELECT SUM(amount) FROM gig_payments gp WHERE gp.gig_id = g.id), 0) AS paid_so_far,
+              a.name AS agency_name, a.commission_pct AS agency_commission_pct
+       FROM gigs g LEFT JOIN agencies a ON a.id = g.agency_id AND a.user_id = g.user_id
+       WHERE g.user_id = $1 ORDER BY g.date DESC`,
       [req.user.id]
     );
     res.json(result.rows);
@@ -466,8 +468,8 @@ router.post('/gigs', async (req, res) => {
     }
 
     const result = await db.query(
-      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, gig_leader_name, gig_leader_phone, gig_leader_email, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode, venue_lat, venue_lng)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, fee, status, source, dress_code, notes, gig_type, parking_info, gig_leader_name, gig_leader_phone, gig_leader_email, mileage_miles, client_name, client_email, client_phone, rate_per_hour, venue_postcode, venue_lat, venue_lng, agency_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
        RETURNING *`,
       [
         req.user.id,
@@ -496,6 +498,7 @@ router.post('/gigs', async (req, res) => {
         gigPostcode,
         venueLat,
         venueLng,
+        req.body.agency_id || null,
       ]
     );
 
@@ -569,7 +572,9 @@ router.get('/gigs/:id/wallet-pass.pkpass', async (req, res) => {
 router.get('/gigs/:id', async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT * FROM gigs WHERE id = $1 AND user_id = $2',
+      `SELECT g.*, a.name AS agency_name, a.commission_pct AS agency_commission_pct
+       FROM gigs g LEFT JOIN agencies a ON a.id = g.agency_id AND a.user_id = g.user_id
+       WHERE g.id = $1 AND g.user_id = $2`,
       [req.params.id, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
@@ -632,12 +637,15 @@ router.patch('/gigs/:id', async (req, res) => {
         venue_lat = COALESCE($29, venue_lat),
         venue_lng = COALESCE($30, venue_lng),
         soundcheck_time = COALESCE($31, soundcheck_time),
+        -- agency_id: $32 flags whether the caller sent it (so selecting "None"
+        -- can CLEAR it, which a COALESCE could never do).
+        agency_id = CASE WHEN $32::boolean THEN $33 ELSE agency_id END,
         -- 2026-04-23: any user-initiated PATCH flips tmg_edited so sync-back
         -- to Google starts pushing changes. Imported-but-never-touched gigs
         -- stay read-only on the Google side until this flag flips.
         tmg_edited = TRUE
        WHERE id = $13 AND user_id = $14 RETURNING *`,
-      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, gig_leader_name || null, gig_leader_phone || null, gig_leader_email || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng, soundcheck_time || null]
+      [band_name, venue_name, venue_address, date, start_time, end_time, load_in_time, effectiveFee, status, source, dress_code, notes, req.params.id, req.user.id, checklist ? JSON.stringify(checklist) : null, gig_type || null, details_complete != null ? details_complete : null, set_times ? JSON.stringify(set_times) : null, parking_info || null, gig_leader_name || null, gig_leader_phone || null, gig_leader_email || null, mileage_miles != null ? mileage_miles : null, client_name || null, client_email || null, client_phone || null, rate_per_hour || null, gigPostcode, venueLat, venueLng, soundcheck_time || null, req.body.agency_id !== undefined, req.body.agency_id || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Gig not found' });
     const gig = result.rows[0];
@@ -5640,6 +5648,83 @@ router.delete('/invoice-clients/:id', async (req, res) => {
   } catch (error) {
     console.error('Delete invoice client error:', error);
     res.status(500).json({ error: 'Failed to delete client' });
+  }
+});
+
+// ── Agencies (booked-through, with a commission rate) ────────────────────────
+// Saved agencies a gig can be booked through. commission_pct comes off the fee
+// before any band split. All routes scope to req.user.id.
+router.get('/agencies', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, name, commission_pct, created_at
+         FROM agencies WHERE user_id = $1 ORDER BY LOWER(name) ASC`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('List agencies error:', error);
+    res.status(500).json({ error: 'Failed to fetch agencies' });
+  }
+});
+
+router.post('/agencies', async (req, res) => {
+  try {
+    const cleanName = String(req.body.name || '').trim();
+    if (!cleanName) return res.status(400).json({ error: 'Agency name is required' });
+    let pct = req.body.commission_pct;
+    pct = (pct === '' || pct == null) ? null : Math.max(0, Math.min(100, parseFloat(pct)));
+    if (pct != null && isNaN(pct)) pct = null;
+    const result = await db.query(
+      `INSERT INTO agencies (user_id, name, commission_pct)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, LOWER(name)) DO UPDATE
+         SET commission_pct = COALESCE(EXCLUDED.commission_pct, agencies.commission_pct)
+       RETURNING id, name, commission_pct, created_at`,
+      [req.user.id, cleanName.slice(0, 255), pct]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Upsert agency error:', error);
+    res.status(500).json({ error: 'Failed to save agency' });
+  }
+});
+
+router.patch('/agencies/:id', async (req, res) => {
+  try {
+    let pct = req.body.commission_pct;
+    pct = (pct === undefined) ? null : (pct === '' || pct == null ? null : Math.max(0, Math.min(100, parseFloat(pct))));
+    const result = await db.query(
+      `UPDATE agencies SET
+         name = COALESCE($1, name),
+         commission_pct = COALESCE($2, commission_pct)
+       WHERE id = $3 AND user_id = $4
+       RETURNING id, name, commission_pct, created_at`,
+      [req.body.name ? String(req.body.name).trim().slice(0, 255) : null,
+       (pct != null && !isNaN(pct)) ? pct : null,
+       req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Agency not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update agency error:', error);
+    res.status(500).json({ error: 'Failed to update agency' });
+  }
+});
+
+router.delete('/agencies/:id', async (req, res) => {
+  try {
+    const result = await db.query(
+      'DELETE FROM agencies WHERE id = $1 AND user_id = $2 RETURNING id',
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Agency not found' });
+    // Unlink any gigs that pointed at it so they do not dangle.
+    await db.query('UPDATE gigs SET agency_id = NULL WHERE agency_id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete agency error:', error);
+    res.status(500).json({ error: 'Failed to delete agency' });
   }
 });
 

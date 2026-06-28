@@ -1518,6 +1518,7 @@ function openHomeMoreSheet() {
     { ico: '🤝', label: 'My Network', onclick: "openPanel('panel-network'); if (typeof openNetworkPanel === 'function') openNetworkPanel();" },
     { ico: '🎤', label: 'Professional EPK', onclick: "if (typeof viewEPK === 'function') viewEPK();" },
     { ico: '📈', label: 'Finance', onclick: "if (window.openFinanceAt) window.openFinanceAt('tax-year');" },
+    { ico: '🏢', label: 'Agencies', onclick: "openPanel('panel-agencies'); if (typeof openAgenciesPanel === 'function') openAgenciesPanel();" },
     { ico: '👤', label: 'Profile', onclick: "openPanel('profile-panel'); if (typeof renderProfileScreen === 'function') renderProfileScreen();" },
   ];
   overlay.innerHTML = `
@@ -10051,6 +10052,7 @@ async function openGigDetail(gigId) {
       ${gig.venue_address ? `<div onclick="openDirections('${escapeHtml(gig.venue_address).replace(/'/g, '&#39;')}')" style="font-size:14px;color:var(--text-2);margin-bottom:6px;cursor:pointer;"><span style="color:var(--accent);">\uD83D\uDCCD</span> ${escapeHtml(gig.venue_address)} <span style="color:var(--accent);font-size:12px;font-weight:600;margin-left:4px;">Open in Maps \u203A</span></div>` : ''}
       ${gig.venue_name ? `<div onclick="openVenueMemory('${escapeAttr(gig.venue_name)}')" style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:6px;cursor:pointer;">\uD83D\uDCD2 Venue history &amp; heads-ups \u203A</div>` : ''}
       <div style="font-size:14px;color:var(--text-2);">\uD83D\uDCB7 ${gig.fee ? '\u00A3' + parseFloat(gig.fee).toFixed(0) : 'No fee set'} <span class="badge badge-${statusBadgeClass(gig.status)}" style="margin-left:6px;">${statusLabel(gig.status)}</span></div>
+      ${gig.agency_name ? `<div style="font-size:13px;color:var(--text-2);margin-top:6px;">\uD83C\uDFE2 ${escapeHtml(gig.agency_name)}${(gig.agency_commission_pct != null && gig.fee) ? ` \u00B7 ${gig.agency_commission_pct}% \u00B7 <b style="color:var(--success);">take-home \u00A3${(Math.round((parseFloat(gig.fee) - parseFloat(gig.fee) * parseFloat(gig.agency_commission_pct) / 100) * 100) / 100).toLocaleString()}</b>` : ''}</div>` : ''}
       <div id="gigDetailMileage" style="margin-top:8px;"></div>
       <div id="gigDetailWeather" style="display:none;margin-top:8px;font-size:12px;color:var(--text-2);"></div>
       <!-- Completeness tracker -->
@@ -10994,6 +10996,11 @@ async function openEditGig(gigId) {
           </div>
         </div>
         <div class="form-group">
+          <div class="form-label">Booked through (agency)</div>
+          <select class="form-input" id="editAgency" onchange="onAgencySelectChange(this)"><option value="">No agency</option></select>
+          <div id="editAgencyTakeHome" style="font-size:11px;color:var(--text-2);margin-top:6px;"></div>
+        </div>
+        <div class="form-group">
           <div class="form-label">Parking</div>
           <input type="text" class="form-input" id="editParkingInfo" value="${escapeHtml(gig.parking_info || '')}" placeholder="e.g. Q-Park, rear entrance" />
         </div>
@@ -11026,6 +11033,18 @@ async function openEditGig(gigId) {
       </div>`;
 
     body.innerHTML = html;
+
+    // Populate the agency picker from the saved-agencies list (async) and show
+    // the take-home preview for the gig's current agency + fee.
+    loadAgencies().then(() => {
+      const sel = document.getElementById('editAgency');
+      if (sel) {
+        sel.innerHTML = agencyOptionsHtml(gig.agency_id);
+        sel.value = gig.agency_id || '';
+        sel.setAttribute('data-prev', sel.value);
+        refreshAgencyTakeHome();
+      }
+    });
   } catch (err) {
     console.error('Edit gig error:', err);
     body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);">Failed to load gig</div>';
@@ -11090,6 +11109,7 @@ async function saveEditGig(gigId) {
       })(),
       status: document.getElementById('editStatus').value,
       gig_type: document.getElementById('editGigType').value || null,
+      agency_id: (document.getElementById('editAgency') || {}).value || null,
       dress_code: document.getElementById('editDressCode').value || null,
       parking_info: document.getElementById('editParkingInfo').value || null,
       gig_leader_name: document.getElementById('editGigLeaderName').value || null,
@@ -12904,6 +12924,150 @@ async function openStandaloneInvoice() {
   // itself and the screen-level "+ New" button skipped it).
   if (typeof initInvoicePanel === 'function') initInvoicePanel();
 }
+
+// ── Agencies + commission (client) ──────────────────────────────────────────
+async function loadAgencies(force) {
+  if (!force && Array.isArray(window._agenciesCache)) return window._agenciesCache;
+  try {
+    const r = await fetch('/api/agencies');
+    window._agenciesCache = r.ok ? await r.json() : [];
+  } catch (_) { window._agenciesCache = []; }
+  return window._agenciesCache;
+}
+function agencyOptionsHtml(selectedId) {
+  const list = window._agenciesCache || [];
+  return ['<option value="">No agency</option>']
+    .concat(list.map(a => `<option value="${a.id}" ${String(selectedId) === String(a.id) ? 'selected' : ''}>${escapeHtml(a.name)}${a.commission_pct != null ? ' (' + a.commission_pct + '%)' : ''}</option>`))
+    .concat('<option value="__add__">+ Add new agency…</option>')
+    .join('');
+}
+function onAgencySelectChange(sel) {
+  if (!sel) return;
+  if (sel.value === '__add__') {
+    sel.value = sel.getAttribute('data-prev') || '';
+    addAgencySheet((agency) => {
+      sel.innerHTML = agencyOptionsHtml(agency.id);
+      sel.value = agency.id;
+      sel.setAttribute('data-prev', agency.id);
+      refreshAgencyTakeHome();
+    });
+    return;
+  }
+  sel.setAttribute('data-prev', sel.value);
+  refreshAgencyTakeHome();
+}
+function refreshAgencyTakeHome() {
+  const box = document.getElementById('editAgencyTakeHome');
+  if (!box) return;
+  const sel = document.getElementById('editAgency');
+  const fee = parseFloat((document.getElementById('editFee') || {}).value || '0') || 0;
+  const a = sel && sel.value ? (window._agenciesCache || []).find(x => String(x.id) === String(sel.value)) : null;
+  if (!a || a.commission_pct == null || !(fee > 0)) { box.innerHTML = ''; return; }
+  const commission = Math.round(fee * (parseFloat(a.commission_pct) / 100) * 100) / 100;
+  const keep = Math.round((fee - commission) * 100) / 100;
+  box.innerHTML = `Fee £${fee.toLocaleString()} · ${a.commission_pct}% −£${commission.toLocaleString()} · <b style="color:var(--success);">you keep £${keep.toLocaleString()}</b>`;
+}
+function _agencySheetShell(title, nameVal, pctVal, saveId) {
+  return `
+    <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:14px;">${title}</div>
+      <label class="fl">Agency name</label>
+      <input id="agName" type="text" class="fi" value="${escapeHtml(nameVal || '')}" placeholder="e.g. Sound Music Agency" style="margin-bottom:12px;" />
+      <label class="fl">Commission %</label>
+      <input id="agPct" type="number" class="fi" value="${pctVal != null && pctVal !== '' ? pctVal : ''}" placeholder="e.g. 15" step="0.5" inputmode="decimal" style="margin-bottom:14px;" />
+      <button id="${saveId}" style="width:100%;background:#A78BFA;color:#1a1a1a;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;">Save agency</button>
+      <button onclick="document.querySelectorAll('.sheet-overlay').forEach(o=>o.remove());" style="width:100%;margin-top:8px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:24px;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
+    </div>`;
+}
+function addAgencySheet(onSaved) {
+  document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  overlay.innerHTML = _agencySheetShell('Add agency', '', '', 'agSave');
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  overlay.querySelector('#agSave').onclick = async () => {
+    const name = (overlay.querySelector('#agName').value || '').trim();
+    const pct = overlay.querySelector('#agPct').value;
+    if (!name) { if (typeof showToast === 'function') showToast('Agency name required'); return; }
+    try {
+      const r = await fetch('/api/agencies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, commission_pct: pct }) });
+      const a = await r.json();
+      if (!r.ok) { if (typeof showToast === 'function') showToast(a.error || 'Could not save'); return; }
+      await loadAgencies(true);
+      overlay.remove();
+      if (typeof showToast === 'function') showToast('Agency saved');
+      if (typeof onSaved === 'function') onSaved(a);
+    } catch (_) { if (typeof showToast === 'function') showToast('Could not save agency'); }
+  };
+}
+async function openAgenciesPanel() {
+  const body = document.getElementById('agenciesBody');
+  if (!body) return;
+  body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text-2);">Loading…</div>';
+  await loadAgencies(true);
+  renderAgenciesList();
+}
+function renderAgenciesList() {
+  const body = document.getElementById('agenciesBody');
+  if (!body) return;
+  const list = window._agenciesCache || [];
+  const rows = list.length ? list.map(a => `
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
+      <div style="font-size:20px;">🏢</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(a.name)}</div>
+        <div style="font-size:12px;color:var(--text-3);">${a.commission_pct != null ? a.commission_pct + '% commission' : 'No commission set'}</div>
+      </div>
+      <span onclick="editAgencyPrompt('${a.id}')" style="font-size:13px;color:var(--accent);cursor:pointer;margin-right:12px;">Edit</span>
+      <span onclick="deleteAgency('${a.id}')" style="font-size:13px;color:var(--danger);cursor:pointer;">Delete</span>
+    </div>`).join('') : '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No agencies yet. Add the agencies you get work through, with their commission rate, then pick one on a gig.</div>';
+  body.innerHTML = `<div style="padding:0 16px 16px;">${rows}
+    <button onclick="addAgencySheet(function(){ renderAgenciesList(); })" style="width:100%;margin-top:14px;background:#A78BFA;color:#1a1a1a;border:none;border-radius:24px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">+ Add agency</button></div>`;
+}
+function editAgencyPrompt(id) {
+  const a = (window._agenciesCache || []).find(x => String(x.id) === String(id));
+  if (!a) return;
+  document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  overlay.innerHTML = _agencySheetShell('Edit agency', a.name, a.commission_pct, 'agSave');
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  overlay.querySelector('#agSave').onclick = async () => {
+    const name = (overlay.querySelector('#agName').value || '').trim();
+    const pct = overlay.querySelector('#agPct').value;
+    try {
+      const r = await fetch('/api/agencies/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, commission_pct: pct }) });
+      if (!r.ok) { if (typeof showToast === 'function') showToast('Could not save'); return; }
+      await loadAgencies(true);
+      overlay.remove();
+      renderAgenciesList();
+    } catch (_) {}
+  };
+}
+async function deleteAgency(id) {
+  const ok = await (typeof showConfirm === 'function'
+    ? showConfirm('Delete this agency? Gigs booked through it will lose the link.', { title: 'Delete agency?', confirmLabel: 'Delete', danger: true })
+    : Promise.resolve(true));
+  if (!ok) return;
+  try {
+    const r = await fetch('/api/agencies/' + encodeURIComponent(id), { method: 'DELETE' });
+    if (!r.ok) return;
+    await loadAgencies(true);
+    renderAgenciesList();
+    window._cachedGigs = null;
+  } catch (_) {}
+}
+window.onAgencySelectChange = onAgencySelectChange;
+window.addAgencySheet = addAgencySheet;
+window.openAgenciesPanel = openAgenciesPanel;
+window.renderAgenciesList = renderAgenciesList;
+window.editAgencyPrompt = editAgencyPrompt;
+window.deleteAgency = deleteAgency;
 
 // ── Per-gig payment tracking (client) ───────────────────────────────────────
 function _gpFmtMoney(n) {
