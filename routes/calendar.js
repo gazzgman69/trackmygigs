@@ -155,7 +155,7 @@ Signal guidance for classification:
 - Pub/hotel/venue/church/hall/club names in location are strong signals
 - Evening (17:00+) and weekend timing increase confidence but are not required
 - All-day events are usually NOT gigs unless title says festival, tour day, residency
-- Medical, personal, holiday, family, business meetings, commutes, admin = confidence below 20
+- Medical, personal, holiday, family, business meetings, commutes, admin = confidence below 20. A "wedding anniversary", birthday, or family dinner is a PERSONAL event, not a wedding gig, even though the title contains a gig-like word.
 
 Field extraction guidance:
 - suggested_fee: parse amounts like "£350", "350 quid", "Fee: 400", "£250 cash", "£180 + expenses". Return the integer GBP value. Null if no fee mentioned.
@@ -206,6 +206,19 @@ const VENUE_KEYWORDS = [
   'venue', 'garden', 'manor', 'castle', 'barn', 'restaurant',
 ];
 
+// Phrases that signal a PERSONAL or admin diary entry even when a gig word is
+// present ("wedding" inside "wedding anniversary"). Deliberately conservative:
+// only phrases that won't appear in a real booking title, so genuine gigs like
+// an "anniversary party at the Manor" are NOT caught. The AI classifier handles
+// the nuanced cases; this just stops the keyword fallback over-suggesting.
+const NON_GIG_KEYWORDS = [
+  'wedding anniversary', 'anniversary dinner', 'our anniversary',
+  'dentist', 'doctor', "doctor's", 'gp appointment', 'hospital appointment',
+  'optician', 'physio', 'chiropractor', 'haircut',
+  'parents evening', "parents' evening", 'school run', 'sports day',
+  'date night', 'mot test', 'car service', 'self assessment', 'tax return',
+];
+
 function scoreEvent(event) {
   const title = (event.summary || '').toLowerCase();
   const location = (event.location || '').toLowerCase();
@@ -214,6 +227,16 @@ function scoreEvent(event) {
 
   let score = 0;
   const reasons = [];
+
+  // Personal/admin events sometimes contain a gig-like word (e.g. "wedding" in
+  // "wedding anniversary"). A non-gig phrase in the title outweighs the keyword
+  // bonus so these don't get suggested as gigs by keyword alone.
+  for (const kw of NON_GIG_KEYWORDS) {
+    if (title.includes(kw)) {
+      score -= 60;
+      reasons.push(`"${kw}" looks personal, not a gig`);
+    }
+  }
 
   // Keyword matches in title (highest weight)
   for (const kw of GIG_KEYWORDS) {
