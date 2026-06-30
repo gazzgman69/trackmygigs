@@ -9041,22 +9041,60 @@ function toggleHideFigures() {
 }
 window.toggleHideFigures = toggleHideFigures;
 
-async function openIncomeGoalEditor() {
-  const cur = window._incomeGoal != null ? String(window._incomeGoal) : '';
-  const val = window.prompt('Income goal for the tax year (£). Leave blank to clear.', cur);
-  if (val === null) return;
-  const cleaned = String(val).replace(/[^0-9.]/g, '').trim();
-  const goal = cleaned === '' ? null : Math.round(parseFloat(cleaned));
-  try {
-    await fetch('/api/finance/goal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal }),
-    });
-    if (typeof renderFinancePanel === 'function') renderFinancePanel();
-  } catch (e) {
-    if (typeof showToast === 'function') showToast('Could not save goal');
+function openIncomeGoalEditor() {
+  const current = window._incomeGoal != null ? window._incomeGoal : '';
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">Income goal</div>
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:12px;">Your target for the tax year. We track your confirmed income against it.</div>
+      <div style="position:relative;">
+        <span style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--text-2);font-size:15px;">£</span>
+        <input id="goalInput" type="number" inputmode="numeric" min="0" step="100" placeholder="20000" value="${current}" style="width:100%;padding:12px 14px 12px 26px;background:var(--card);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;box-sizing:border-box;" />
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button id="goalSave" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:10px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;">Save goal</button>
+        ${current !== '' ? `<button id="goalClear" style="flex:0 0 auto;background:transparent;color:var(--danger,#f85149);border:1px solid var(--border);border-radius:10px;padding:11px 16px;font-size:13px;font-weight:600;cursor:pointer;">Clear</button>` : ''}
+      </div>
+      <button id="goalCancel" style="width:100%;margin-top:10px;background:transparent;border:none;color:var(--text-3);padding:8px;font-size:12px;font-weight:500;cursor:pointer;">Cancel</button>
+    </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  const input = overlay.querySelector('#goalInput');
+  const saveBtn = overlay.querySelector('#goalSave');
+  const clearBtn = overlay.querySelector('#goalClear');
+  const cancelBtn = overlay.querySelector('#goalCancel');
+  setTimeout(() => input.focus(), 50);
+
+  async function save(goal) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      await fetch('/api/finance/goal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal }),
+      });
+      overlay.remove();
+      if (typeof renderFinancePanel === 'function') renderFinancePanel();
+    } catch (e) {
+      if (typeof showToast === 'function') showToast('Could not save goal');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save goal';
+    }
   }
+
+  saveBtn.addEventListener('click', () => {
+    const cleaned = String(input.value).replace(/[^0-9.]/g, '').trim();
+    save(cleaned === '' ? null : Math.round(parseFloat(cleaned)));
+  });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveBtn.click(); });
+  if (clearBtn) clearBtn.addEventListener('click', () => save(null));
+  cancelBtn.addEventListener('click', () => overlay.remove());
 }
 window.openIncomeGoalEditor = openIncomeGoalEditor;
 
