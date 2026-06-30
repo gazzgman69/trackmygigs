@@ -1286,11 +1286,13 @@ function parseQuickGig(text) {
   if (!text || typeof text !== 'string') return out;
   let rest = ' ' + text.trim() + ' ';
 
-  // 1. Amount: £450 / 450 / £450.00. Take the first such token. Strip pound
-  //    signs and trailing decimal pence.
-  const feeMatch = rest.match(/£\s*(\d+(?:\.\d+)?)\b|\b(\d{2,5}(?:\.\d{1,2})?)\b(?=\s*(?:pounds|p|gbp)?\b)/i);
+  // 1. Amount. A £-prefixed value is unambiguous, so take it first and strip it
+  //    (thousands separators allowed). A bare number is only considered as a fee
+  //    AFTER the date has been parsed out (step 2b below), so a day, month or
+  //    year can never be mistaken for the fee.
+  const feeMatch = rest.match(/£\s*(\d[\d,]*(?:\.\d{1,2})?)/);
   if (feeMatch) {
-    out.fee = parseFloat(feeMatch[1] || feeMatch[2]);
+    out.fee = parseFloat(feeMatch[1].replace(/,/g, ''));
     rest = rest.replace(feeMatch[0], ' ');
   }
 
@@ -1393,6 +1395,16 @@ function parseQuickGig(text) {
     if (m) {
       out.date = `${m[1]}-${String(parseInt(m[2], 10)).padStart(2, '0')}-${String(parseInt(m[3], 10)).padStart(2, '0')}`;
       rest = rest.replace(m[0], ' ');
+    }
+  }
+
+  // 2b. Bare-number fee fallback — only now that any date has been removed, so
+  //    a day, month or year can't be mistaken for the fee. Skip 4-digit years.
+  if (out.fee == null) {
+    const bareFee = rest.match(/\b(\d{2,5}(?:\.\d{1,2})?)\b(?=\s*(?:pounds|p|gbp)?\b)/i);
+    if (bareFee && !/^(?:19|20)\d{2}$/.test(bareFee[1])) {
+      out.fee = parseFloat(bareFee[1]);
+      rest = rest.replace(bareFee[0], ' ');
     }
   }
 
