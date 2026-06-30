@@ -3042,6 +3042,11 @@ function personalEventsToPins(events) {
       all_day: !!pe.all_day,
       start_at: pe.start_at || null,
       end_at: pe.end_at || null,
+      start_date: pe.start_date || null,
+      end_date: pe.end_date || null,
+      transparency: pe.transparency || 'opaque',
+      reminders: pe.reminders || null,
+      timezone: pe.timezone || 'Europe/London',
     };
     if (pe.all_day) {
       const s = (pe.start_date || '').slice(0, 10);
@@ -3101,9 +3106,12 @@ function openPersonalEventDetail(peId) {
     + '<div style="font-size:16px;font-weight:700;color:var(--text);">' + escapeHtml(p.summary || 'Event') + '</div>'
     + '<div style="font-size:12px;color:var(--text-2);margin:4px 0 2px;">' + escapeHtml(when) + '</div>'
     + metaRows.join('')
-    + '<div style="display:flex;gap:10px;margin-top:18px;">'
+    + '<div style="display:flex;flex-direction:column;gap:10px;margin-top:18px;">'
+    + '<button onclick="openPersonalEventForm({peId:\'' + escapeAttr(peId) + '\'})" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;">Edit event</button>'
+    + '<div style="display:flex;gap:10px;">'
     + '<button onclick="closePersonalEventDetail()" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;">Close</button>'
     + '<button onclick="deletePersonalEvent(\'' + escapeAttr(peId) + '\')" style="flex:1;background:transparent;color:var(--danger);border:1px solid var(--danger);border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;">Delete</button>'
+    + '</div>'
     + '</div>'
     + '<div style="font-size:11px;color:var(--text-3);text-align:center;margin-top:10px;">Synced with your Google Calendar.</div>'
     + '</div>';
@@ -3132,6 +3140,164 @@ async function deletePersonalEvent(peId) {
     }
   } catch (_) {
     showToast('Could not delete. Try again.');
+  }
+}
+
+// ── Add / edit a personal event (C3) ─────────────────────────────────────────
+function _peReminderOptions(selected) {
+  const opts = [
+    ['default', 'Default reminder'], ['none', 'No reminder'], ['0', 'At time of event'],
+    ['10', '10 minutes before'], ['30', '30 minutes before'], ['60', '1 hour before'], ['1440', '1 day before'],
+  ];
+  return opts.map(([v, label]) => `<option value="${v}"${v === selected ? ' selected' : ''}>${label}</option>`).join('');
+}
+function _reminderToSelect(reminders) {
+  try {
+    const r = typeof reminders === 'string' ? JSON.parse(reminders) : reminders;
+    if (!r || r.useDefault) return 'default';
+    if (Array.isArray(r.overrides) && r.overrides.length) return String(r.overrides[0].minutes);
+    return 'none';
+  } catch (_) { return 'default'; }
+}
+function _selectToReminder(v) {
+  if (v === 'none') return { useDefault: false, overrides: [] };
+  const m = parseInt(v, 10);
+  if (Number.isFinite(m)) return { useDefault: false, overrides: [{ method: 'popup', minutes: m }] };
+  return { useDefault: true };
+}
+function _peToggleAllDay() {
+  const cb = document.getElementById('pefAllDay');
+  const times = document.getElementById('pefTimes');
+  if (cb && times) times.style.display = cb.checked ? 'none' : 'flex';
+}
+function closePersonalEventForm() {
+  const el = document.getElementById('peFormSheet');
+  if (el) el.remove();
+}
+
+// opts: { dateStr } to create on a day, or { peId } to edit an existing event.
+function openPersonalEventForm(opts) {
+  opts = opts || {};
+  closePersonalEventDetail();
+  const existing = document.getElementById('peFormSheet');
+  if (existing) existing.remove();
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const pe = opts.peId ? (Array.isArray(window._googlePins) ? window._googlePins : []).find(x => x.pe_id === opts.peId) : null;
+  const editing = !!pe;
+  const allDay = pe ? !!pe.all_day : false;
+  let dateStr = opts.dateStr || '';
+  let startTime = '19:00', endTime = '20:00';
+  if (pe) {
+    if (pe.all_day) {
+      dateStr = (pe.start_date || pe.date || '').slice(0, 10);
+    } else if (pe.start_at) {
+      const s = new Date(pe.start_at);
+      dateStr = `${s.getFullYear()}-${pad(s.getMonth() + 1)}-${pad(s.getDate())}`;
+      startTime = `${pad(s.getHours())}:${pad(s.getMinutes())}`;
+      if (pe.end_at) { const e = new Date(pe.end_at); endTime = `${pad(e.getHours())}:${pad(e.getMinutes())}`; }
+    }
+  }
+  if (!dateStr) { const t = new Date(); dateStr = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`; }
+  const title = pe ? (pe.summary || '') : '';
+  const location = pe ? (pe.location || '') : '';
+  const notes = pe ? (pe.description || '') : '';
+  const transparency = pe ? (pe.transparency || 'opaque') : 'opaque';
+  const reminderSel = pe ? _reminderToSelect(pe.reminders) : 'default';
+
+  const inp = 'width:100%;box-sizing:border-box;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:14px;';
+  const lab = 'font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 4px;display:block;';
+
+  const sheet = document.createElement('div');
+  sheet.id = 'peFormSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.dataset.peId = opts.peId || '';
+  sheet.innerHTML = `
+    <div style="width:100%;max-width:480px;max-height:90vh;overflow-y:auto;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
+      <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px;">${editing ? 'Edit event' : 'New event'}</div>
+      <input id="pefTitle" placeholder="Add title" value="${escapeAttr(title)}" style="${inp}font-weight:600;">
+      <label style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;font-size:14px;color:var(--text);cursor:pointer;">
+        <input type="checkbox" id="pefAllDay" ${allDay ? 'checked' : ''} onchange="_peToggleAllDay()"> All day
+      </label>
+      <label style="${lab}">Date</label>
+      <input type="date" id="pefDate" value="${dateStr}" style="${inp}">
+      <div id="pefTimes" style="display:${allDay ? 'none' : 'flex'};gap:10px;">
+        <div style="flex:1;"><label style="${lab}">Start</label><input type="time" id="pefStart" value="${startTime}" style="${inp}"></div>
+        <div style="flex:1;"><label style="${lab}">End</label><input type="time" id="pefEnd" value="${endTime}" style="${inp}"></div>
+      </div>
+      <label style="${lab}">Location</label>
+      <input id="pefLocation" placeholder="Add location" value="${escapeAttr(location)}" style="${inp}">
+      <div style="display:flex;gap:10px;">
+        <div style="flex:1;"><label style="${lab}">Show as</label>
+          <select id="pefBusy" style="${inp}">
+            <option value="opaque"${transparency === 'opaque' ? ' selected' : ''}>Busy</option>
+            <option value="transparent"${transparency === 'transparent' ? ' selected' : ''}>Free</option>
+          </select></div>
+        <div style="flex:1;"><label style="${lab}">Reminder</label>
+          <select id="pefReminder" style="${inp}">${_peReminderOptions(reminderSel)}</select></div>
+      </div>
+      <label style="${lab}">Notes</label>
+      <textarea id="pefNotes" placeholder="Add notes" style="${inp}min-height:64px;resize:vertical;">${escapeHtml(notes)}</textarea>
+      <div style="display:flex;gap:10px;margin-top:18px;">
+        <button onclick="closePersonalEventForm()" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;">Cancel</button>
+        <button id="pefSave" onclick="savePersonalEventForm()" style="flex:2;background:var(--accent);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;">${editing ? 'Save changes' : 'Add event'}</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-3);text-align:center;margin-top:10px;">Saved to TMG and your Google Calendar.</div>
+    </div>`;
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) closePersonalEventForm(); });
+  document.body.appendChild(sheet);
+  const t = document.getElementById('pefTitle');
+  if (t && !editing) t.focus();
+}
+
+async function savePersonalEventForm() {
+  const sheet = document.getElementById('peFormSheet');
+  if (!sheet) return;
+  const peId = sheet.dataset.peId || '';
+  const v = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const pad = (n) => String(n).padStart(2, '0');
+  const summary = (v('pefTitle') || '').trim() || 'Untitled';
+  const allDay = !!(document.getElementById('pefAllDay') && document.getElementById('pefAllDay').checked);
+  const date = v('pefDate');
+  if (!date) { showToast('Pick a date'); return; }
+  const location = (v('pefLocation') || '').trim() || null;
+  const description = (v('pefNotes') || '').trim() || null;
+  const transparency = v('pefBusy') || 'opaque';
+  const reminders = _selectToReminder(v('pefReminder'));
+
+  let body;
+  if (allDay) {
+    body = { summary, all_day: true, start: date, end: date, location, description, transparency, reminders };
+  } else {
+    const st = v('pefStart') || '19:00';
+    let endTime = v('pefEnd') || `${pad((parseInt(st.slice(0, 2), 10) + 1) % 24)}:${st.slice(3, 5)}`;
+    const startISO = new Date(`${date}T${st}`).toISOString();
+    let endISO = new Date(`${date}T${endTime}`).toISOString();
+    if (new Date(endISO) <= new Date(startISO)) {
+      const d = new Date(`${date}T00:00:00`); d.setDate(d.getDate() + 1);
+      endISO = new Date(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${endTime}`).toISOString();
+    }
+    body = { summary, all_day: false, start: startISO, end: endISO, location, description, transparency, reminders };
+  }
+
+  const saveBtn = document.getElementById('pefSave');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+  try {
+    const url = peId ? `/api/calendar/personal-events/${encodeURIComponent(peId)}` : '/api/calendar/personal-events';
+    const r = await fetch(url, { method: peId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) {
+      showToast('Could not save. Try again.');
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = peId ? 'Save changes' : 'Add event'; }
+      return;
+    }
+    closePersonalEventForm();
+    showToast(peId ? 'Event updated' : 'Event added');
+    window._googlePinsKey = null;
+    if (typeof loadGoogleCalendarPins === 'function') { await loadGoogleCalendarPins().catch(() => {}); }
+  } catch (_) {
+    showToast('Could not save. Try again.');
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = peId ? 'Save changes' : 'Add event'; }
   }
 }
 
@@ -4282,6 +4448,7 @@ function openDayActionSheet(dateStr) {
       <div style="font-size:14px;font-weight:700;color:var(--text);text-align:center;margin-bottom:14px;">${escapeHtml(display)}</div>
       ${summaryHtml}
       <button onclick="closeDayActionSheet();window._prefillGigDate='${dateStr}';openGigWizard();" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;margin:6px 0 10px;">${gigsOnDay.length > 0 ? 'Add another gig' : 'Add gig'}</button>
+      <button onclick="closeDayActionSheet();openPersonalEventForm({dateStr:'${dateStr}'});" style="width:100%;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:10px;">Add event</button>
       ${blockButton}
       <button onclick="closeDayActionSheet()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Cancel</button>
     </div>`;
