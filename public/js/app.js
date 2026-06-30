@@ -9099,11 +9099,10 @@ function openIncomeGoalEditor() {
 window.openIncomeGoalEditor = openIncomeGoalEditor;
 
 // Tap a month bar on the finance chart to see that month's gigs + fees.
-async function openMonthBreakdown(monthStart, label) {
-  const d = monthStart ? new Date(monthStart) : null;
-  if (!d || isNaN(d.getTime())) { if (typeof showToast === 'function') showToast("Couldn't open that month"); return; }
-  const year = d.getUTCFullYear();
-  const month = d.getUTCMonth() + 1;
+async function openMonthBreakdown(year, month, label) {
+  year = parseInt(year, 10);
+  month = parseInt(month, 10);
+  if (!year || !month || month < 1 || month > 12) { if (typeof showToast === 'function') showToast("Couldn't open that month"); return; }
 
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
@@ -9343,7 +9342,7 @@ async function renderFinancePanel() {
             const height = Math.min(100, (val / (max || 1)) * 100);
             const isForecast = m.status === 'forecast';
             const label = m.label || m.month_label || m.month || '';
-            return `<div onclick="openMonthBreakdown('${escapeAttr(String(m.month_start || ''))}','${escapeAttr(label)}')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end;cursor:pointer;">
+            return `<div onclick="openMonthBreakdown(${Number(m.year) || 0}, ${Number(m.month) || 0}, '${escapeAttr(label)}')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end;cursor:pointer;">
               <div style="font-size:9px;color:var(--text-2);line-height:1;white-space:nowrap;">${val > 0 ? fmtBar(val) : ''}</div>
               <div style="width:100%;background:var(--success);border-radius:2px;height:${Math.max(4, height)}%;opacity:${isForecast ? 0.4 : 1};" title="${escapeHtml(label)}: &pound;${val}"></div>
               <div style="font-size:8px;color:var(--text-3);line-height:1;">${escapeHtml((label || '').slice(0, 3))}</div>
