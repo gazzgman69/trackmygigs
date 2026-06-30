@@ -20982,17 +20982,20 @@ async function exportGigsCSV() {
     const header = ['Date', 'Time', 'Venue', 'Address', 'Act', 'Gig type', 'Fee', 'Status', 'Paid', 'Invoiced', 'Notes'];
     const rows = [header];
     gigs.forEach(g => {
+      const fee = parseFloat(g.fee || 0) || 0;
+      const paid = parseFloat(g.paid_so_far || 0) || 0;
+      const paidCol = (fee > 0 && paid + 0.005 >= fee) ? 'Yes' : (paid > 0 ? 'Partial' : 'No');
       rows.push([
         (g.date || '').slice(0, 10),
         g.start_time || '',
         g.venue_name || '',
         g.venue_address || '',
-        g.act_name || '',
+        g.act_name || g.band_name || '',
         g.gig_type || '',
         g.fee || '',
         g.status || '',
-        g.status === 'paid' || g.invoice_status === 'paid' ? 'Yes' : 'No',
-        g.invoice_id ? 'Yes' : 'No',
+        paidCol,
+        g.has_invoice ? 'Yes' : 'No',
         g.notes || '',
       ]);
     });

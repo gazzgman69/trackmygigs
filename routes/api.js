@@ -293,6 +293,7 @@ router.get('/gigs', async (req, res) => {
   try {
     const result = await db.query(
       `SELECT g.*, COALESCE((SELECT SUM(amount) FROM gig_payments gp WHERE gp.gig_id = g.id), 0) AS paid_so_far,
+              EXISTS(SELECT 1 FROM invoices i WHERE i.gig_id = g.id AND i.user_id = g.user_id) AS has_invoice,
               a.name AS agency_name, a.commission_pct AS agency_commission_pct
        FROM gigs g LEFT JOIN agencies a ON a.id = g.agency_id AND a.user_id = g.user_id
        WHERE g.user_id = $1 ORDER BY g.date DESC`,
@@ -4046,8 +4047,34 @@ const SA103_BOXES = {
   'Training & development': '30',
   'Other': '30',
 };
+// Exact map first (preserves the author's specific choices), then a
+// vocabulary-tolerant fallback: live receipts carry short/variant category
+// names ('Travel' not 'Travel & vehicle', 'Equipment' not 'Equipment &
+// instruments', 'Phone & office' not 'Mobile phone & internet'), which used to
+// fall through to box 30. Mirrors the prefix-tolerant claimable-category logic.
+const SA103_ALIASES = [
+  [/travel|vehicle|fuel|mileage|petrol|diesel|parking|train|taxi|car\b|\bvan\b/, '20'],
+  [/accommodation|hotel|lodging/, '20'],
+  [/subsist|meal\b|meals|food|per diem/, '20'],
+  [/equipment|instrument|\bgear\b|repair|renewal|strings|cables/, '24'],
+  [/phone|mobile|internet|broadband|office/, '25'],
+  [/station|postage|print/, '25'],
+  [/insurance/, '27'],
+  [/subscription|membership/, '30'],
+  [/market|promo|advert|entertain|website|design/, '23'],
+  [/account|legal|professional|solicitor/, '28'],
+  [/session|dep\b|deps|wage|salary|staff|sub musician|sub-musician/, '17'],
+  [/rehears|studio|premises|room hire|space hire/, '22'],
+  [/train(ing)?|develop|course|lesson|tuition/, '30'],
+];
 function hmrcBoxFor(category) {
-  return SA103_BOXES[category] || '30';
+  if (!category) return '30';
+  if (SA103_BOXES[category]) return SA103_BOXES[category];
+  const c = String(category).toLowerCase().trim();
+  for (const [re, box] of SA103_ALIASES) {
+    if (re.test(c)) return box;
+  }
+  return '30';
 }
 
 router.get('/finance/mtd-export', async (req, res) => {
@@ -6290,7 +6317,7 @@ router.get('/print/finance', async (req, res) => {
     const [gigsR, expensesR] = await Promise.all([
       db.query(
         `SELECT date, venue_name, fee, status FROM gigs
-         WHERE user_id = $1 AND date >= $2 AND date <= $3
+         WHERE user_id = $1 AND status = 'confirmed' AND date >= $2 AND date <= $3
          ORDER BY date ASC`,
         [req.user.id, taxYearStart, taxYearEnd]
       ),
