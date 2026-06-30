@@ -61,11 +61,16 @@ changes pushed to Google. Next: C4 (gig-entry day context + fee nudge), C5
 (recurrence + reminders), then the public link.
 
 ## Fast-follows (in order)
-### C4 - gig-entry day context + premium-date fee nudge
-- [ ] Inline "That day" panel in gig entry (reads stored events now): timeline + list
-      of that day's commitments, new gig slots in live, real overlap -> one-tap "save
-      anyway", non-overlap items as heads-ups, catches gig-vs-gig double-booking.
-- [ ] Premium-date hint (bank holiday / NYE / already-busy) -> "consider a higher fee".
+### C4 - gig-entry day context + premium-date fee nudge  [DONE, verified live 2026-06-30]
+- [x] Full gig form shows a "That day" panel (live on date/time change): existing
+      gigs + personal events + blocked dates with times. Time overlaps flag CLASHES +
+      a warning; non-overlap items show a heads-up. Verified live: a 09:30 gig on a
+      day with "Swimming 09:00-10:00" flagged the clash.
+- [x] Premium-date hint: seasonal (NYE/Christmas/Valentine's/Halloween) + computed
+      England & Wales Monday-rule bank holidays, or already-busy scarcity. Easter
+      omitted (no fixed rule) - add later.
+- Note (not C4): "Add gig" from a day doesn't prefill that date into the full form
+  (pre-existing wizard->full handoff gap). Worth a small fix.
 ### C5 - recurrence + reminders
 - [ ] Preset recurrence create/edit (Daily / Weekly on <day> / Monthly / Annually /
       Every weekday) as real RRULE; edit scope this / all / this-and-following.
