@@ -9098,6 +9098,58 @@ function openIncomeGoalEditor() {
 }
 window.openIncomeGoalEditor = openIncomeGoalEditor;
 
+// Tap a month bar on the finance chart to see that month's gigs + fees.
+async function openMonthBreakdown(monthStart, label) {
+  const d = monthStart ? new Date(monthStart) : null;
+  if (!d || isNaN(d.getTime())) { if (typeof showToast === 'function') showToast("Couldn't open that month"); return; }
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth() + 1;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;max-height:75vh;display:flex;flex-direction:column;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;flex:0 0 auto;"></div>
+      <div id="monthBreakdownBody" style="overflow-y:auto;flex:1;"><div style="text-align:center;color:var(--text-2);font-size:12px;padding:20px 0;">Loading…</div></div>
+      <button onclick="this.closest('.sheet-overlay').remove();" style="flex:0 0 auto;width:100%;margin-top:12px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;">Close</button>
+    </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  const bodyEl = overlay.querySelector('#monthBreakdownBody');
+  const _gp = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', minimumFractionDigits: 2 });
+  const money = (n) => window._hideFigures ? '£•••' : _gp.format(Number(n) || 0);
+  const monthName = new Date(year, month - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const statusChip = (st) => {
+    const map = { confirmed: ['Confirmed', 'var(--success)'], tentative: ['Pencilled', 'var(--warning)'], pending: ['Pencilled', 'var(--warning)'], enquiry: ['Enquiry', 'var(--text-3)'] };
+    const v = map[st];
+    return v ? `<span style="font-size:9px;color:${v[1]};border:1px solid ${v[1]};border-radius:6px;padding:1px 5px;margin-left:6px;white-space:nowrap;">${v[0]}</span>` : '';
+  };
+  try {
+    const resp = await fetch(`/api/finance/month-detail?year=${year}&month=${month}`);
+    if (!resp.ok) throw new Error('fetch failed');
+    const data = await resp.json();
+    const gigs = (data.gigs || []).filter((g) => g.status !== 'cancelled');
+    const total = gigs.reduce((s, g) => s + (Number(g.fee) || 0), 0);
+    bodyEl.innerHTML = `
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px;">${escapeHtml(monthName)}</div>
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:12px;">${gigs.length} gig${gigs.length === 1 ? '' : 's'} &middot; ${money(total)}</div>
+      ${gigs.length ? gigs.map((g) => `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <div style="min-width:0;flex:1;">
+            <div style="font-size:13px;color:var(--text);font-weight:500;">${escapeHtml(g.band_name || g.venue_name || 'Gig')}${statusChip(g.status)}</div>
+            <div style="font-size:11px;color:var(--text-3);margin-top:2px;">${escapeHtml(typeof formatDateLong === 'function' ? formatDateLong(g.date) : String(g.date).slice(0, 10))}${g.venue_name && g.band_name ? ' &middot; ' + escapeHtml(g.venue_name) : ''}</div>
+          </div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);margin-left:10px;white-space:nowrap;">${money(g.fee)}</div>
+        </div>`).join('') : '<div style="text-align:center;color:var(--text-3);font-size:12px;padding:16px 0;">No gigs this month.</div>'}
+    `;
+  } catch (e) {
+    bodyEl.innerHTML = '<div style="text-align:center;color:var(--text-3);font-size:12px;padding:20px 0;">Couldn\'t load this month.</div>';
+  }
+}
+window.openMonthBreakdown = openMonthBreakdown;
+
 // ── Finance Panel ───────────────────────────────────────────────────────────
 async function renderFinancePanel() {
   // Target the panel body inside #panel-finance (the Finance Dashboard panel
@@ -9291,7 +9343,7 @@ async function renderFinancePanel() {
             const height = Math.min(100, (val / (max || 1)) * 100);
             const isForecast = m.status === 'forecast';
             const label = m.label || m.month_label || m.month || '';
-            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end;">
+            return `<div onclick="openMonthBreakdown('${escapeAttr(String(m.month_start || ''))}','${escapeAttr(label)}')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end;cursor:pointer;">
               <div style="font-size:9px;color:var(--text-2);line-height:1;white-space:nowrap;">${val > 0 ? fmtBar(val) : ''}</div>
               <div style="width:100%;background:var(--success);border-radius:2px;height:${Math.max(4, height)}%;opacity:${isForecast ? 0.4 : 1};" title="${escapeHtml(label)}: &pound;${val}"></div>
               <div style="font-size:8px;color:var(--text-3);line-height:1;">${escapeHtml((label || '').slice(0, 3))}</div>
