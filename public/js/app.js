@@ -23373,16 +23373,24 @@ function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
 
   Object.keys(pinsByDate).forEach(iso => {
     pinsByDate[iso].forEach(p => {
-      const title = p.title || p.summary || 'Google event';
-      const timed = p.start && String(p.start).length > 10;
-      push(iso, timed ? String(p.start).slice(11, 16) : '97:97', `
-        <div onclick="openGooglePinSheet('${escapeAttr(p.id)}')" style="display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;">
+      const title = p.title || p.summary || 'Busy';
+      const timed = !p.all_day && !!p.start_time;
+      const timeLabel = timed ? p.start_time : 'all-day';
+      const isNudge = !!(window._calendarNudgesById && window._calendarNudgesById[p.id]);
+      // Personal events open a clean detail; only AI gig-candidates get the
+      // import/busy/ignore sheet (promotion also lives in the imports-review bar).
+      const click = (!isNudge && p.pe_id)
+        ? `openPersonalEventDetail('${escapeAttr(p.pe_id)}')`
+        : `openGooglePinSheet('${escapeAttr(p.id)}')`;
+      const subtitle = isNudge ? 'Tap to review as a gig' : (p.location ? escapeHtml(p.location) : 'Tap for details');
+      push(iso, timed ? p.start_time : '97:97', `
+        <div onclick="${click}" style="display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;">
           <div style="width:4px;align-self:stretch;border-radius:2px;background:var(--info);flex-shrink:0;"></div>
           <div style="flex:1;min-width:0;">
             <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(title)} <span style="font-size:9px;color:var(--info);background:rgba(88,166,255,.12);border-radius:6px;padding:1px 6px;margin-left:6px;font-weight:700;">From Google</span></div>
-            <div style="font-size:11px;color:var(--text-2);margin-top:1px;">Tap for options: gig, busy, or ignore</div>
+            <div style="font-size:11px;color:var(--text-2);margin-top:1px;">${subtitle}</div>
           </div>
-          <div style="text-align:right;font-size:12px;color:var(--text-3);flex-shrink:0;">${timed ? String(p.start).slice(11, 16) : 'all-day'}</div>
+          <div style="text-align:right;font-size:12px;color:var(--text-3);flex-shrink:0;">${timeLabel}</div>
         </div>`);
     });
   });
