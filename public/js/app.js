@@ -10363,12 +10363,12 @@ async function openGigDetail(gigId) {
 
   // Build completeness tracker
   const fields = [
-    { name: 'Venue', ok: !!gig.venue_name },
-    { name: 'Times', ok: !!gig.start_time },
-    { name: 'Fee', ok: !!gig.fee && parseFloat(gig.fee) > 0 },
-    { name: 'Dress code', ok: !!gig.dress_code || !!gig.details_complete },
-    { name: 'Notes', ok: !!gig.notes || !!gig.details_complete },
-    { name: 'Address', ok: !!gig.venue_address },
+    { name: 'Venue', ok: !!gig.venue_name, anchor: 'editVenue' },
+    { name: 'Times', ok: !!gig.start_time, anchor: 'editStartTime' },
+    { name: 'Fee', ok: !!gig.fee && parseFloat(gig.fee) > 0, anchor: 'editFee' },
+    { name: 'Dress code', ok: !!gig.dress_code || !!gig.details_complete, anchor: 'editDressCode' },
+    { name: 'Notes', ok: !!gig.notes || !!gig.details_complete, anchor: 'editNotes' },
+    { name: 'Address', ok: !!gig.venue_address, anchor: 'editVenueAddress' },
   ];
   const doneCount = fields.filter((f) => f.ok).length;
   const allDone = doneCount === fields.length;
@@ -10402,7 +10402,7 @@ async function openGigDetail(gigId) {
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
           ${fields.map((f) => f.ok
             ? `<span style="font-size:10px;color:var(--success);background:var(--success-dim);border-radius:8px;padding:3px 8px;">\u2713 ${f.name}</span>`
-            : `<span style="font-size:10px;color:var(--warning);background:var(--warning-dim);border:1px solid rgba(240,165,0,.3);border-radius:8px;padding:3px 8px;">+ Add ${f.name.toLowerCase()}</span>`
+            : `<span onclick="openEditGigField('${gig.id}', '${f.anchor}')" style="font-size:10px;color:var(--warning);background:var(--warning-dim);border:1px solid rgba(240,165,0,.3);border-radius:8px;padding:3px 8px;cursor:pointer;">+ Add ${f.name.toLowerCase()}</span>`
           ).join('')}
           ${!allDone ? `<span onclick="markGigDetailsComplete('${gig.id}')" style="font-size:10px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px 10px;cursor:pointer;margin-left:auto;">Mark complete</span>` : ''}
         </div>
@@ -11274,6 +11274,22 @@ async function deleteGig(gigId) {
     showToast('Failed to delete gig');
   }
 }
+
+// Tap an incomplete "+ Add X" chip on the gig-detail completeness card to jump
+// straight into the edit form with that field focused and briefly highlighted.
+async function openEditGigField(gigId, anchorId) {
+  await openEditGig(gigId);
+  setTimeout(() => {
+    const el = document.getElementById(anchorId);
+    if (!el) return;
+    try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { try { el.scrollIntoView(); } catch (_) {} }
+    try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (_) {} }
+    const prev = el.style.boxShadow;
+    el.style.boxShadow = '0 0 0 2px var(--accent)';
+    setTimeout(() => { el.style.boxShadow = prev; }, 1600);
+  }, 280);
+}
+window.openEditGigField = openEditGigField;
 
 async function openEditGig(gigId) {
   const body = document.getElementById('editGigBody');
