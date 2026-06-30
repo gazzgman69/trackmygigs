@@ -5774,6 +5774,59 @@ router.post('/auto-chase-settings', async (req, res) => {
   }
 });
 
+// ── Income goal (single annual target; progress tracked vs confirmed income) ──
+router.get('/finance/goal', async (req, res) => {
+  try {
+    const r = await db.query('SELECT income_goal FROM users WHERE id = $1', [req.user.id]);
+    const g = r.rows[0] && r.rows[0].income_goal != null ? Number(r.rows[0].income_goal) : null;
+    res.json({ goal: g });
+  } catch (e) {
+    console.error('Get income goal error:', e);
+    res.status(500).json({ error: 'Failed to fetch goal' });
+  }
+});
+
+router.post('/finance/goal', async (req, res) => {
+  try {
+    let goal = req.body.goal;
+    if (goal === null || goal === '' || goal === undefined) {
+      goal = null;
+    } else {
+      goal = Math.round(parseFloat(goal));
+      if (isNaN(goal) || goal < 0) goal = null;
+      else if (goal > 100000000) goal = 100000000;
+    }
+    await db.query('UPDATE users SET income_goal = $1 WHERE id = $2', [goal, req.user.id]);
+    res.json({ success: true, goal });
+  } catch (e) {
+    console.error('Set income goal error:', e);
+    res.status(500).json({ error: 'Failed to save goal' });
+  }
+});
+
+// Confirmed-gigs income forecast: upcoming CONFIRMED gig fees grouped by month
+// (rule #7 — pending/enquiry never feed financial projections).
+router.get('/finance/forecast', async (req, res) => {
+  try {
+    const months = Math.max(1, Math.min(12, parseInt(req.query.months, 10) || 3));
+    const r = await db.query(
+      `SELECT to_char(date::date, 'YYYY-MM') AS ym, COUNT(*)::int AS gigs, COALESCE(SUM(fee), 0) AS total
+         FROM gigs
+        WHERE user_id = $1 AND status = 'confirmed'
+          AND date::date > CURRENT_DATE
+          AND date::date <= (CURRENT_DATE + ($2 || ' months')::interval)
+        GROUP BY ym ORDER BY ym ASC`,
+      [req.user.id, String(months)]
+    );
+    const rows = r.rows.map((x) => ({ ym: x.ym, gigs: x.gigs, total: Number(x.total) }));
+    const projected = rows.reduce((s, x) => s + x.total, 0);
+    res.json({ months, rows, projected });
+  } catch (e) {
+    console.error('Forecast error:', e);
+    res.status(500).json({ error: 'Failed to build forecast' });
+  }
+});
+
 // ── Printable export pages (Save as PDF via browser) ──────────────────────────
 // ── Saved invoice items (June 2026, Gareth) ─────────────────────────────────
 

@@ -9041,6 +9041,25 @@ function toggleHideFigures() {
 }
 window.toggleHideFigures = toggleHideFigures;
 
+async function openIncomeGoalEditor() {
+  const cur = window._incomeGoal != null ? String(window._incomeGoal) : '';
+  const val = window.prompt('Income goal for the tax year (£). Leave blank to clear.', cur);
+  if (val === null) return;
+  const cleaned = String(val).replace(/[^0-9.]/g, '').trim();
+  const goal = cleaned === '' ? null : Math.round(parseFloat(cleaned));
+  try {
+    await fetch('/api/finance/goal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal }),
+    });
+    if (typeof renderFinancePanel === 'function') renderFinancePanel();
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('Could not save goal');
+  }
+}
+window.openIncomeGoalEditor = openIncomeGoalEditor;
+
 // ── Finance Panel ───────────────────────────────────────────────────────────
 async function renderFinancePanel() {
   // Target the panel body inside #panel-finance (the Finance Dashboard panel
@@ -9052,9 +9071,15 @@ async function renderFinancePanel() {
   body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);">Loading finance...</div>';
 
   try {
-    const resp = await fetch('/api/earnings?period=year');
+    const [resp, goalResp, fcResp] = await Promise.all([
+      fetch('/api/earnings?period=year'),
+      fetch('/api/finance/goal').catch(() => null),
+      fetch('/api/finance/forecast?months=3').catch(() => null),
+    ]);
     if (!resp.ok) throw new Error('Failed to fetch earnings');
     const data = await resp.json();
+    const goalData = goalResp && goalResp.ok ? await goalResp.json().catch(() => ({})) : {};
+    const fcData = fcResp && fcResp.ok ? await fcResp.json().catch(() => ({})) : {};
 
     // /earnings nests invoice figures under invoice_summary; read those (the old
     // flat data.paid_total names were never returned, so these tiles showed £0).
@@ -9117,6 +9142,59 @@ async function renderFinancePanel() {
     const pctOverdue = pct(overdueTot);
     const pctUnpaid = Math.max(0, 100 - pctPaid - pctOverdue);
 
+    // Income goal (confirmed income vs annual target) + confirmed-gigs forecast.
+    const incomeGoal = goalData.goal != null ? Number(goalData.goal) : null;
+    window._incomeGoal = incomeGoal;
+    const _now = new Date();
+    const _tyIdx = ((_now.getMonth() - 3) + 12) % 12; // 0 = April, UK tax year start
+    const monthsLeft = Math.max(1, 12 - _tyIdx);
+    const goalPct = incomeGoal > 0 ? Math.min(100, Math.round((earnings / incomeGoal) * 100)) : 0;
+    const toGo = incomeGoal != null ? Math.max(0, incomeGoal - earnings) : 0;
+    const perMonth = monthsLeft > 0 ? Math.round(toGo / monthsLeft) : toGo;
+    const goalHtml = incomeGoal == null ? `
+      <div style="padding:0 16px 16px;">
+        <div onclick="openIncomeGoalEditor()" style="background:var(--card);border:1px dashed var(--border);border-radius:var(--rs);padding:14px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text);">Set an income goal</div>
+            <div style="font-size:11px;color:var(--text-2);margin-top:2px;">Track your confirmed income against a target for the year.</div>
+          </div>
+          <span style="color:var(--accent);font-size:20px;line-height:1;">+</span>
+        </div>
+      </div>` : `
+      <div style="padding:0 16px 16px;">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:14px 16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Income goal &middot; ${escapeHtml(taxYear)}</span>
+            <span onclick="openIncomeGoalEditor()" style="font-size:12px;color:var(--accent);cursor:pointer;">Edit</span>
+          </div>
+          <div style="margin-top:8px;"><span style="font-size:20px;font-weight:800;color:var(--text);">${fmtGBP(earnings)}</span> <span style="color:var(--text-3);font-size:13px;">of ${fmtGBP(incomeGoal)}</span></div>
+          <div style="height:9px;border-radius:5px;background:var(--bg,#0D1117);overflow:hidden;margin:10px 0 6px;border:1px solid var(--border);"><div style="height:100%;width:${goalPct}%;background:var(--accent);"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-2);"><span>${goalPct}% there</span><span style="color:var(--text);font-weight:600;">${fmtGBP(toGo)} to go</span></div>
+          ${toGo > 0
+            ? `<div style="font-size:11px;color:var(--text-3);margin-top:8px;line-height:1.5;">About ${fmtGBP(perMonth)} a month across the ${monthsLeft} month${monthsLeft === 1 ? '' : 's'} left in the tax year to hit it.</div>`
+            : `<div style="font-size:11px;color:var(--success);margin-top:8px;font-weight:600;">Goal smashed. Nice one.</div>`}
+        </div>
+      </div>`;
+
+    const fcRows = fcData.rows || [];
+    const fcProjected = Number(fcData.projected) || 0;
+    const _fcMonthName = (ym) => {
+      const p = String(ym).split('-');
+      return new Date(Number(p[0]), Number(p[1]) - 1, 1).toLocaleDateString('en-GB', { month: 'long' });
+    };
+    const forecastHtml = fcRows.length ? `
+      <div style="padding:0 16px 16px;">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--rs);padding:14px 16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <span style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Forecast &middot; next ${fcData.months || 3} months</span>
+            <span style="font-size:10px;color:var(--success);background:var(--success-dim,rgba(63,185,80,.15));border-radius:999px;padding:2px 8px;">confirmed only</span>
+          </div>
+          ${fcRows.map((r) => `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--text);">${_fcMonthName(r.ym)} <span style="color:var(--text-3);">&middot; ${r.gigs} gig${r.gigs === 1 ? '' : 's'}</span></span><span style="font-weight:600;color:var(--text);">${fmtGBP(r.total)}</span></div>`).join('')}
+          <div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);"><span style="color:var(--text);">Projected</span><span style="font-size:16px;font-weight:800;color:var(--accent);">${fmtGBP(fcProjected)}</span></div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:8px;line-height:1.5;">From confirmed gigs only. Pencilled and enquiry gigs aren't counted.</div>
+        </div>
+      </div>` : '';
+
     let html = `
       <div style="display:flex;justify-content:flex-end;padding:6px 16px 0;">
         <button onclick="toggleHideFigures()" title="Hide or show money figures" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;">
@@ -9144,6 +9222,8 @@ async function renderFinancePanel() {
         <div style="font-size:10px;color:var(--text-3);margin-top:4px;">${gigs} gig${gigs === 1 ? '' : 's'}</div>
       </div>
 
+      ${goalHtml}
+      ${forecastHtml}
       <!-- Money in: received vs still to collect (from recorded gig payments) -->
       <div data-finance-section="money-in" style="padding:0 16px 16px;">
         <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Money in</div>

@@ -2078,6 +2078,7 @@ async function runMigrations() {
     // nothing auto-sends, so only opted-in users are ever swept).
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_chase_enabled BOOLEAN DEFAULT FALSE`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_chase_cooldown_days INTEGER DEFAULT 7`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS income_goal NUMERIC`);
     await db.query(`CREATE TABLE IF NOT EXISTS agencies (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL,
