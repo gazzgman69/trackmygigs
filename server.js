@@ -2081,6 +2081,46 @@ async function runMigrations() {
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS classifier_used VARCHAR(16)`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS classify_confidence INTEGER`);
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS classify_reasons JSONB`);
+    // Personal (non-gig) calendar events. TMG becomes the user's one calendar:
+    // these mirror Google's event model and sync two-way. Gigs stay in `gigs`;
+    // everything else lives here. Times stored as instants (start_at/end_at) for
+    // timed events, dates (start_date/end_date, end = inclusive last day) for
+    // all-day. See tasks/calendar-parity-spec.md.
+    await db.query(`CREATE TABLE IF NOT EXISTS personal_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL,
+      google_event_id TEXT,
+      ical_uid TEXT,
+      calendar_id TEXT DEFAULT 'primary',
+      etag TEXT,
+      summary TEXT,
+      description TEXT,
+      location TEXT,
+      all_day BOOLEAN DEFAULT FALSE,
+      start_at TIMESTAMPTZ,
+      end_at TIMESTAMPTZ,
+      start_date DATE,
+      end_date DATE,
+      timezone TEXT DEFAULT 'Europe/London',
+      rrule TEXT,
+      recurring_event_id TEXT,
+      original_start TIMESTAMPTZ,
+      is_recurring_master BOOLEAN DEFAULT FALSE,
+      status TEXT DEFAULT 'confirmed',
+      transparency TEXT DEFAULT 'opaque',
+      visibility TEXT DEFAULT 'default',
+      color_id TEXT,
+      reminders JSONB,
+      source TEXT DEFAULT 'google',
+      last_pushed_etag TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      deleted_at TIMESTAMPTZ
+    )`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS personal_events_user_gid_idx
+      ON personal_events (user_id, google_event_id) WHERE google_event_id IS NOT NULL`);
+    await db.query(`CREATE INDEX IF NOT EXISTS personal_events_user_start_at_idx ON personal_events (user_id, start_at)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS personal_events_user_start_date_idx ON personal_events (user_id, start_date)`);
     // Opt-in automated invoice chasing (off by default; the app's principle is
     // nothing auto-sends, so only opted-in users are ever swept).
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_chase_enabled BOOLEAN DEFAULT FALSE`);

@@ -37,6 +37,43 @@ function londonDateTime(isoOrDate) {
   };
 }
 
+// Generalised londonDateTime: wall-clock {date, time} for an instant in any
+// IANA timezone. Used when pushing personal events back to Google, which wants
+// a naive local datetime plus a timeZone label.
+function wallClockInTz(isoOrDate, tz) {
+  if (!isoOrDate) return { date: null, time: null };
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  if (isNaN(d.getTime())) return { date: null, time: null };
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz || 'Europe/London',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d);
+  const get = (t) => parts.find(p => p.type === t)?.value;
+  let hour = get('hour');
+  if (hour === '24') hour = '00';
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${hour}:${get('minute')}`,
+  };
+}
+
+// A Postgres DATE/string -> 'YYYY-MM-DD'. pg returns DATE as a JS Date at UTC
+// midnight, so toISOString gives the intended calendar day.
+function dateColToStr(v) {
+  if (!v) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v).slice(0, 10);
+}
+
+// Shift a 'YYYY-MM-DD' by n days (UTC-anchored so DST never moves the date).
+function addDaysStr(dateStr, n) {
+  const d = new Date(String(dateStr).slice(0, 10) + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return dateStr;
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 // ── AI CLASSIFICATION (Claude Haiku 4.5) ─────────────────────────────────────
 // Given a batch of Google Calendar events, classify each as gig / not-gig with
 // confidence + extracted metadata. Falls back to the deterministic keyword
@@ -1140,6 +1177,9 @@ router.post('/import', async (req, res) => {
       // body reflects the full gig (fee, dress code, etc.).
       try { await pushGigToGoogle(req.user.id, updated.rows[0]); } catch (_) {}
 
+      // Promoted to a gig: drop any personal-event mirror of this calendar event.
+      try { await db.query('DELETE FROM personal_events WHERE user_id = $1 AND google_event_id = $2', [req.user.id, event_id]); } catch (_) {}
+
       return res.json({ gig: updated.rows[0], success: true, merged: true });
     }
 
@@ -1170,6 +1210,9 @@ router.post('/import', async (req, res) => {
         prov.reasons,
       ]
     );
+
+    // Promoted to a gig: drop any personal-event mirror of this calendar event.
+    try { await db.query('DELETE FROM personal_events WHERE user_id = $1 AND google_event_id = $2', [req.user.id, event_id]); } catch (_) {}
 
     // Refresh cached gigs
     res.json({ gig: result.rows[0], success: true });
@@ -1374,6 +1417,8 @@ router.post('/import-bulk', async (req, res) => {
           gigs.push(inserted.rows[0]);
           imported++;
         }
+        // Promoted to a gig: drop any personal-event mirror of this calendar event.
+        try { await db.query('DELETE FROM personal_events WHERE user_id = $1 AND google_event_id = $2', [req.user.id, ev.event_id]); } catch (_) {}
       } catch (rowErr) {
         console.error('[import-bulk] row error:', rowErr.message);
         errors.push({ event_id: ev && ev.event_id, message: rowErr.message });
@@ -1837,6 +1882,185 @@ router.post('/push-all', async (req, res) => {
 
 // ── INBOUND SYNC: pull Google Calendar changes into TrackMyGigs ─────────────
 //
+// ── PERSONAL (non-gig) EVENTS ────────────────────────────────────────────────
+// TMG as the one calendar: everything that isn't a gig lives in personal_events
+// and syncs two-way with Google. Build the Google event body from a row.
+function buildPersonalEventResource(pe) {
+  const event = {
+    summary: pe.summary || '(No title)',
+    description: pe.description || undefined,
+    location: pe.location || undefined,
+    // Private marker (invisible in Google's UI) so a re-push whose id never
+    // reached the DB adopts the existing event instead of making a twin.
+    extendedProperties: { private: { tmg_personal_event_id: String(pe.id || '') } },
+  };
+  if (pe.transparency) event.transparency = pe.transparency;
+  if (pe.visibility && pe.visibility !== 'default') event.visibility = pe.visibility;
+  if (pe.color_id) event.colorId = pe.color_id;
+  if (pe.reminders) {
+    try {
+      const r = typeof pe.reminders === 'string' ? JSON.parse(pe.reminders) : pe.reminders;
+      if (r && (typeof r.useDefault === 'boolean' || Array.isArray(r.overrides))) event.reminders = r;
+    } catch (_) {}
+  }
+  if (pe.rrule) {
+    const line = String(pe.rrule).startsWith('RRULE') ? String(pe.rrule) : `RRULE:${pe.rrule}`;
+    event.recurrence = [line];
+  }
+  if (pe.all_day) {
+    const startDate = dateColToStr(pe.start_date);
+    const lastDay = pe.end_date ? dateColToStr(pe.end_date) : startDate;
+    // Google's all-day end.date is EXCLUSIVE: store the inclusive last day, add +1 here.
+    event.start = { date: startDate };
+    event.end = { date: addDaysStr(lastDay, 1) };
+  } else {
+    const tz = pe.timezone || 'Europe/London';
+    const s = wallClockInTz(pe.start_at, tz);
+    const eInstant = pe.end_at || pe.start_at;
+    const e = wallClockInTz(eInstant, tz);
+    event.start = { dateTime: `${s.date}T${s.time}:00`, timeZone: tz };
+    event.end = { dateTime: `${e.date}T${e.time}:00`, timeZone: tz };
+  }
+  return event;
+}
+
+// Push a locally-created/edited personal event to Google. Only called on local
+// mutations, so there is no originated-in-Google guard (the pull never calls
+// this); loop-prevention is handled by last_pushed_etag on the pull side.
+async function pushPersonalEventToGoogle(userId, pe) {
+  try {
+    const handle = await getGoogleAuth(userId);
+    if (!handle) return null;
+    const { auth, calendarId } = handle;
+    const calendar = google.calendar({ version: 'v3', auth });
+    const resource = buildPersonalEventResource(pe);
+
+    if (pe.google_event_id) {
+      const resp = await calendar.events.update({ calendarId, eventId: pe.google_event_id, requestBody: resource });
+      const etag = resp.data.etag || null;
+      await db.query(
+        `UPDATE personal_events SET etag = $1, last_pushed_etag = $1,
+           ical_uid = COALESCE(ical_uid, $2), updated_at = NOW()
+         WHERE id = $3 AND user_id = $4`,
+        [etag, resp.data.iCalUID || null, pe.id, userId]
+      );
+      return pe.google_event_id;
+    }
+
+    // Create. Guard against a row deleted mid-flight, and adopt an orphan from a
+    // prior push whose id never reached the DB (matched by our private marker).
+    const stillThere = await db.query('SELECT 1 FROM personal_events WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL', [pe.id, userId]);
+    if (stillThere.rows.length === 0) return null;
+    try {
+      const found = await calendar.events.list({ calendarId, privateExtendedProperty: `tmg_personal_event_id=${pe.id}`, maxResults: 1, showDeleted: false });
+      const orphan = found.data.items && found.data.items[0];
+      if (orphan && orphan.id) {
+        const adopted = await calendar.events.update({ calendarId, eventId: orphan.id, requestBody: resource });
+        await db.query(
+          `UPDATE personal_events SET google_event_id = $1, etag = $2, last_pushed_etag = $2,
+             ical_uid = $3, updated_at = NOW() WHERE id = $4 AND user_id = $5`,
+          [adopted.data.id || orphan.id, adopted.data.etag || null, adopted.data.iCalUID || null, pe.id, userId]
+        );
+        return adopted.data.id || orphan.id;
+      }
+    } catch (_) { /* marker lookup is best-effort */ }
+
+    const resp = await calendar.events.insert({ calendarId, requestBody: resource });
+    const newId = resp.data.id;
+    if (newId) {
+      await db.query(
+        `UPDATE personal_events SET google_event_id = $1, etag = $2, last_pushed_etag = $2,
+           ical_uid = $3, updated_at = NOW() WHERE id = $4 AND user_id = $5`,
+        [newId, resp.data.etag || null, resp.data.iCalUID || null, pe.id, userId]
+      );
+    }
+    return newId;
+  } catch (err) {
+    if (err && (err.code === 404 || err.code === 410)) {
+      try { await db.query('UPDATE personal_events SET google_event_id = NULL WHERE id = $1 AND user_id = $2', [pe.id, userId]); } catch (_) {}
+    }
+    console.error('pushPersonalEventToGoogle error:', err.message || err);
+    return null;
+  }
+}
+
+// Delete the Google event behind a personal event. Personal events are fully
+// managed in TMG (the one calendar), so a TMG delete propagates to Google,
+// unlike gigs which keep the conservative import-experiment guard.
+async function removePersonalEventFromGoogle(userId, googleEventId) {
+  try {
+    if (!googleEventId) return false;
+    const handle = await getGoogleAuth(userId);
+    if (!handle) return false;
+    const { auth, calendarId } = handle;
+    const calendar = google.calendar({ version: 'v3', auth });
+    await calendar.events.delete({ calendarId, eventId: googleEventId });
+    return true;
+  } catch (err) {
+    if (err && (err.code === 404 || err.code === 410)) return true; // already gone
+    console.error('removePersonalEventFromGoogle error:', err.message || err);
+    return false;
+  }
+}
+
+// Map a Google event (from a singleEvents=true pull) into personal_events. Skips
+// our own write echoing back (etag === last_pushed_etag). Recurring series come
+// pre-expanded as instances, each its own google_event_id, so each lands as a row.
+async function upsertPersonalEventFromGoogle(userId, event) {
+  const existing = await db.query(
+    'SELECT id, last_pushed_etag FROM personal_events WHERE user_id = $1 AND google_event_id = $2 LIMIT 1',
+    [userId, event.id]
+  );
+  if (existing.rows.length && existing.rows[0].last_pushed_etag && existing.rows[0].last_pushed_etag === event.etag) {
+    return; // own echo, nothing changed
+  }
+
+  const allDay = !!(event.start?.date && !event.start?.dateTime);
+  let startAt = null, endAt = null, startDate = null, endDate = null;
+  const tz = event.start?.timeZone || 'Europe/London';
+  if (allDay) {
+    startDate = event.start.date;
+    endDate = event.end?.date ? addDaysStr(event.end.date, -1) : event.start.date; // exclusive -> inclusive
+  } else {
+    startAt = event.start?.dateTime ? new Date(event.start.dateTime) : null;
+    endAt = event.end?.dateTime ? new Date(event.end.dateTime) : null;
+  }
+  const rrule = Array.isArray(event.recurrence) ? (event.recurrence.find(r => String(r).startsWith('RRULE')) || null) : null;
+  const origStart = event.originalStartTime?.dateTime
+    ? new Date(event.originalStartTime.dateTime)
+    : (event.originalStartTime?.date ? new Date(event.originalStartTime.date + 'T00:00:00Z') : null);
+  const reminders = event.reminders ? JSON.stringify(event.reminders) : null;
+  const vals = [
+    event.iCalUID || null, event.etag || null, event.summary || '(No title)',
+    event.description || null, event.location || null, allDay, startAt, endAt,
+    startDate, endDate, tz, rrule, event.recurringEventId || null, origStart,
+    !!rrule, event.status || 'confirmed', event.transparency || 'opaque',
+    event.visibility || 'default', event.colorId || null, reminders,
+  ];
+
+  if (existing.rows.length) {
+    await db.query(
+      `UPDATE personal_events SET ical_uid=$1, etag=$2, summary=$3, description=$4,
+         location=$5, all_day=$6, start_at=$7, end_at=$8, start_date=$9, end_date=$10,
+         timezone=$11, rrule=$12, recurring_event_id=$13, original_start=$14,
+         is_recurring_master=$15, status=$16, transparency=$17, visibility=$18,
+         color_id=$19, reminders=$20::jsonb, source='google', deleted_at=NULL, updated_at=NOW()
+       WHERE id=$21 AND user_id=$22`,
+      [...vals, existing.rows[0].id, userId]
+    );
+  } else {
+    await db.query(
+      `INSERT INTO personal_events
+         (user_id, google_event_id, ical_uid, etag, summary, description, location,
+          all_day, start_at, end_at, start_date, end_date, timezone, rrule,
+          recurring_event_id, original_start, is_recurring_master, status,
+          transparency, visibility, color_id, reminders, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::jsonb,'google')`,
+      [userId, event.id, ...vals]
+    );
+  }
+}
+
 // Uses Google's incremental sync via syncToken. On first call we establish a
 // token from a baseline window (past month onwards). On subsequent calls we
 // only fetch what changed since last pull. If the token is invalidated (410)
@@ -1869,6 +2093,7 @@ async function pullFromGoogle(userId) {
   let nextSyncToken = null;
   let updated = 0;
   let cancelled = 0;
+  let personalUpserted = 0;
 
   try {
     do {
@@ -1886,6 +2111,13 @@ async function pullFromGoogle(userId) {
             [userId, event.id]
           );
           if (r.rowCount > 0) cancelled++;
+          // Deletions arrive as cancelled tombstones, not missing rows. Soft-
+          // delete a matching personal event too, or it lingers as a ghost.
+          await db.query(
+            `UPDATE personal_events SET status = 'cancelled', deleted_at = NOW(), updated_at = NOW()
+             WHERE user_id = $1 AND google_event_id = $2 AND deleted_at IS NULL`,
+            [userId, event.id]
+          );
           continue;
         }
 
@@ -1928,7 +2160,16 @@ async function pullFromGoogle(userId) {
             event.id,
           ]
         );
-        if (r.rowCount > 0) updated++;
+        if (r.rowCount > 0) { updated++; continue; }
+
+        // No gig owns this event, so it is a personal / busy event. Store it
+        // (the helper skips our own echo and handles all-day + recurring instances).
+        try {
+          await upsertPersonalEventFromGoogle(userId, event);
+          personalUpserted++;
+        } catch (peErr) {
+          console.error('pullFromGoogle personal upsert error:', peErr.message || peErr);
+        }
       }
 
       pageToken = response.data.nextPageToken;
@@ -1951,7 +2192,7 @@ async function pullFromGoogle(userId) {
     );
   }
 
-  return { success: true, updated, cancelled };
+  return { success: true, updated, cancelled, personal: personalUpserted };
 }
 
 // POST /calendar/pull — fetch changes from Google and apply to linked gigs
@@ -2140,6 +2381,140 @@ router.get('/diag-gig', async (req, res) => {
   } catch (err) {
     console.error('diag-gig error:', err);
     res.status(500).json({ error: err.message || 'diag failed' });
+  }
+});
+
+// ── PERSONAL EVENT CRUD ──────────────────────────────────────────────────────
+// Normalise a request body into personal_events column values. The edit form
+// sends the whole event, so PATCH and POST share this. Timed events carry ISO
+// `start`/`end`; all-day events carry `start`/`end` as YYYY-MM-DD (end = the
+// inclusive last day).
+function normalizePersonalEventInput(body) {
+  const allDay = !!body.all_day;
+  const out = {
+    summary: (body.summary && String(body.summary).trim()) || '(No title)',
+    description: body.description ? String(body.description) : null,
+    location: body.location ? String(body.location) : null,
+    all_day: allDay,
+    timezone: body.timezone || 'Europe/London',
+    transparency: body.transparency === 'transparent' ? 'transparent' : 'opaque',
+    visibility: ['public', 'private', 'confidential'].includes(body.visibility) ? body.visibility : 'default',
+    color_id: body.color_id ? String(body.color_id) : null,
+    reminders: body.reminders ? JSON.stringify(body.reminders) : null,
+    rrule: body.rrule ? String(body.rrule) : null,
+    start_at: null, end_at: null, start_date: null, end_date: null,
+  };
+  if (allDay) {
+    out.start_date = body.start ? String(body.start).slice(0, 10) : null;
+    out.end_date = body.end ? String(body.end).slice(0, 10) : out.start_date;
+  } else {
+    out.start_at = body.start ? new Date(body.start) : null;
+    out.end_at = body.end ? new Date(body.end) : (out.start_at && !isNaN(out.start_at.getTime()) ? new Date(out.start_at.getTime() + 3600000) : null);
+  }
+  return out;
+}
+
+function personalInputValid(v) {
+  if (v.all_day) return !!v.start_date;
+  return !!(v.start_at && !isNaN(v.start_at.getTime()));
+}
+
+// GET /calendar/personal-events?start=YYYY-MM-DD&end=YYYY-MM-DD
+// Stored personal events overlapping the range (for the in-app calendar).
+router.get('/personal-events', async (req, res) => {
+  try {
+    const start = typeof req.query.start === 'string' ? req.query.start.slice(0, 10) : null;
+    const end = typeof req.query.end === 'string' ? req.query.end.slice(0, 10) : null;
+    if (!start || !end) return res.status(400).json({ error: 'start and end required' });
+    const rows = await db.query(
+      `SELECT * FROM personal_events
+        WHERE user_id = $1 AND deleted_at IS NULL AND status != 'cancelled'
+          AND COALESCE(start_date, (start_at AT TIME ZONE 'Europe/London')::date) <= $3::date
+          AND COALESCE(end_date, (COALESCE(end_at, start_at) AT TIME ZONE 'Europe/London')::date) >= $2::date
+        ORDER BY COALESCE(start_at, start_date::timestamptz) ASC`,
+      [req.user.id, start, end]
+    );
+    res.json({ events: rows.rows });
+  } catch (err) {
+    console.error('list personal events error:', err);
+    res.status(500).json({ error: 'Failed to list events' });
+  }
+});
+
+// POST /calendar/personal-events — create locally, then push to Google.
+router.post('/personal-events', async (req, res) => {
+  try {
+    const v = normalizePersonalEventInput(req.body || {});
+    if (!personalInputValid(v)) return res.status(400).json({ error: 'valid start required' });
+    const ins = await db.query(
+      `INSERT INTO personal_events
+         (user_id, summary, description, location, all_day, start_at, end_at,
+          start_date, end_date, timezone, transparency, visibility, color_id,
+          reminders, rrule, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,'tmg')
+       RETURNING *`,
+      [req.user.id, v.summary, v.description, v.location, v.all_day, v.start_at, v.end_at,
+       v.start_date, v.end_date, v.timezone, v.transparency, v.visibility, v.color_id, v.reminders, v.rrule]
+    );
+    const row = ins.rows[0];
+    try { await pushPersonalEventToGoogle(req.user.id, row); } catch (_) {}
+    const fresh = await db.query('SELECT * FROM personal_events WHERE id = $1 AND user_id = $2', [row.id, req.user.id]);
+    res.json({ event: fresh.rows[0] || row, success: true });
+  } catch (err) {
+    console.error('create personal event error:', err);
+    res.status(500).json({ error: 'Failed to create event' });
+  }
+});
+
+// PATCH /calendar/personal-events/:id — edit (full event in body), then re-push.
+router.patch('/personal-events/:id', async (req, res) => {
+  try {
+    const cur = await db.query(
+      'SELECT id FROM personal_events WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
+      [req.params.id, req.user.id]
+    );
+    if (cur.rows.length === 0) return res.status(404).json({ error: 'not found' });
+    const v = normalizePersonalEventInput(req.body || {});
+    if (!personalInputValid(v)) return res.status(400).json({ error: 'valid start required' });
+    await db.query(
+      `UPDATE personal_events SET summary=$1, description=$2, location=$3, all_day=$4,
+         start_at=$5, end_at=$6, start_date=$7, end_date=$8, timezone=$9,
+         transparency=$10, visibility=$11, color_id=$12, reminders=$13::jsonb,
+         rrule=$14, updated_at=NOW()
+       WHERE id=$15 AND user_id=$16`,
+      [v.summary, v.description, v.location, v.all_day, v.start_at, v.end_at, v.start_date,
+       v.end_date, v.timezone, v.transparency, v.visibility, v.color_id, v.reminders, v.rrule,
+       req.params.id, req.user.id]
+    );
+    const row = (await db.query('SELECT * FROM personal_events WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id])).rows[0];
+    try { await pushPersonalEventToGoogle(req.user.id, row); } catch (_) {}
+    const fresh = await db.query('SELECT * FROM personal_events WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id]);
+    res.json({ event: fresh.rows[0] || row, success: true });
+  } catch (err) {
+    console.error('update personal event error:', err);
+    res.status(500).json({ error: 'Failed to update event' });
+  }
+});
+
+// DELETE /calendar/personal-events/:id — delete from Google (one calendar) + soft-delete local.
+router.delete('/personal-events/:id', async (req, res) => {
+  try {
+    const cur = await db.query(
+      'SELECT id, google_event_id FROM personal_events WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
+      [req.params.id, req.user.id]
+    );
+    if (cur.rows.length === 0) return res.status(404).json({ error: 'not found' });
+    const row = cur.rows[0];
+    if (row.google_event_id) { try { await removePersonalEventFromGoogle(req.user.id, row.google_event_id); } catch (_) {} }
+    await db.query(
+      `UPDATE personal_events SET deleted_at = NOW(), status = 'cancelled', updated_at = NOW()
+       WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('delete personal event error:', err);
+    res.status(500).json({ error: 'Failed to delete event' });
   }
 });
 

@@ -1,3 +1,67 @@
+# TMG as your one calendar: Google-parity events + two-way sync (design chat 2026-06-30, mockups + API map done, AWAITING SIGN-OFF)
+
+Goal: TMG becomes the calendar a musician runs their diary from. Two event types,
+GIG (rich) and PERSONAL (baseline like Google), both two-way synced to Google. Add
+anything in two taps, see everything properly, and Google stays the reminder engine
+underneath. Full build spec (schema, sync algorithm, parity table, risks):
+tasks/calendar-parity-spec.md.
+
+## Locked
+- TMG = the one calendar. Gig (rich) + Personal (Google-baseline) event types,
+  both two-way synced. [Gareth 2026-06-30]
+- Google is the notification engine: TMG writes reminders onto the synced event;
+  Google fires them cross-device. We do NOT build PWA push. [Gareth + API map 2026-06-30]
+- Add must be super easy for both: gig keeps the enriched flow; anything else is a
+  two-tap quick-add. [Gareth 2026-06-30]
+- All-day events surface in-app (time off, birthdays = heads-ups). Bank holidays are
+  SIGNAL: flag + hint to raise the fee. [Gareth 2026-06-30]
+- Public link (parked): TWO states, AVAILABLE / UNAVAILABLE, reason never shown.
+  [Gareth 2026-06-30]
+
+## First cut (v1 core) - the foundation that makes TMG the one calendar
+### C1 - personal_events schema + two-way sync
+- [ ] personal_events table per the spec (google_event_id, etag, all_day, start/end,
+      timezone, rrule, recurring_event_id, status, transparency, reminders jsonb,
+      source, last_pushed_etag, ...). Startup migration.
+- [ ] Extend pullFromGoogle: singleEvents=true + showDeleted=true, fixed params,
+      UPSERT ALL events (not just gig-linked), cancelled -> soft-delete, page to
+      nextSyncToken, 410 -> full resync, skip own-echo by last_pushed_etag.
+- [ ] Add pushPersonalEventToGoogle (mirror pushGigToGoogle): insert/patch+If-Match/
+      delete; store returned id+etag. Last-writer-wins on 412 for v1, log conflict.
+### C2 - proper in-app calendar
+- [ ] Render gigs + personal events properly on the calendar, "Other events" layer ON
+      by default, tappable detail (full own-data: title, time, location, notes).
+### C3 - add anything
+- [ ] One "+" -> Gig (existing enriched flow) or Personal. Quick-create popup
+      (title-alone creatable, date/time, all-day, Save + More options) -> full editor
+      (title, date/time+all-day+tz, repeat preset, location, notification, busy/free,
+      visibility, description). Writes locally + pushes to Google.
+
+## Fast-follows (in order)
+### C4 - gig-entry day context + premium-date fee nudge
+- [ ] Inline "That day" panel in gig entry (reads stored events now): timeline + list
+      of that day's commitments, new gig slots in live, real overlap -> one-tap "save
+      anyway", non-overlap items as heads-ups, catches gig-vs-gig double-booking.
+- [ ] Premium-date hint (bank holiday / NYE / already-busy) -> "consider a higher fee".
+### C5 - recurrence + reminders
+- [ ] Preset recurrence create/edit (Daily / Weekly on <day> / Monthly / Annually /
+      Every weekday) as real RRULE; edit scope this / all / this-and-following.
+      Recurring events FROM Google already display from C1 (singleEvents=true).
+- [ ] Reminders pass-through (default useDefault=true; one custom override).
+
+## Later / parked
+- [ ] events.watch push channel (replace polling), custom recurrence editor, event
+      colour, per-calendar selection UI, natural-language time parse.
+- [ ] D1 Public link: does a personal EVENING event make you unavailable? (needs the
+      stored events from C1 + a >= 17:00 boundary). Decide after the calendar lands.
+
+Verify: events created in Google appear properly in TMG and vice versa; deletes
+propagate both ways; an all-day event spans the right single day; a recurring Google
+event shows its instances; adding a personal event in TMG two taps and it lands in
+Google with reminders intact.
+
+---
+
 # Stage-ready setlists (approved 2026-06-10 "Lets get started", mockup signed off)
 
 Scope agreed in chat: editor upgrade + stage mode + the extras list
