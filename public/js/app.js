@@ -7003,6 +7003,19 @@ function renderFullGigForm() {
           <label class="form-label">Notes</label>
           <textarea class="form-textarea" name="notes" placeholder="Parking info, contacts, anything useful..." rows="3">${escapeHtml(d.notes)}</textarea>
         </div>
+        <div class="form-group" style="margin-bottom:16px;">
+          <label class="form-label">Payment so far</label>
+          <div style="display:flex;gap:8px;">
+            <button type="button" id="payNone" onclick="setFullFormPayment('none')" style="flex:1;background:var(--accent);color:#000;border:1px solid var(--accent);border-radius:10px;padding:9px 6px;font-size:12px;font-weight:600;cursor:pointer;">Not paid</button>
+            <button type="button" id="payDep" onclick="setFullFormPayment('deposit')" style="flex:1;background:var(--card);color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:9px 6px;font-size:12px;font-weight:600;cursor:pointer;">Deposit paid</button>
+            <button type="button" id="payFull" onclick="setFullFormPayment('full')" style="flex:1;background:var(--card);color:var(--text-2);border:1px solid var(--border);border-radius:10px;padding:9px 6px;font-size:12px;font-weight:600;cursor:pointer;">Paid in full</button>
+          </div>
+          <input type="hidden" id="fullFormPayKind" value="none">
+          <div id="fullFormPayAmountWrap" style="display:none;margin-top:10px;">
+            <label class="form-label">Amount received (£)</label>
+            <input type="number" class="form-input" id="fullFormPayAmount" placeholder="0" min="0" step="1">
+          </div>
+        </div>
         <!-- Lineup section (premium) -->
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:16px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
@@ -7055,6 +7068,22 @@ function renderFullGigForm() {
       });
 
       if (response.ok) {
+        const gig = await response.json().catch(() => null);
+        // Opening payment captured at booking (deposit or paid-in-full) records
+        // straight into the gig_payments ledger so the money shows immediately.
+        const payKind = (document.getElementById('fullFormPayKind') || {}).value;
+        if (gig && gig.id && (payKind === 'deposit' || payKind === 'full')) {
+          const amt = parseFloat((document.getElementById('fullFormPayAmount') || {}).value) || 0;
+          if (amt > 0) {
+            try {
+              await fetch(`/api/gigs/${gig.id}/payments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ amount: amt, kind: payKind === 'full' ? 'balance' : 'deposit' }),
+              });
+            } catch (e) {}
+          }
+        }
         window._cachedGigs = null;
         persistCachedCalendar();
         showScreen('gigs');
@@ -7081,6 +7110,28 @@ function selectFullFormSource(value) {
   gigWizardData.source = value;
   renderFullGigForm();
 }
+
+function setFullFormPayment(kind) {
+  const hidden = document.getElementById('fullFormPayKind');
+  if (hidden) hidden.value = kind;
+  const map = { none: 'payNone', deposit: 'payDep', full: 'payFull' };
+  Object.entries(map).forEach(([k, id]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const on = k === kind;
+    el.style.background = on ? 'var(--accent)' : 'var(--card)';
+    el.style.color = on ? '#000' : 'var(--text-2)';
+    el.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
+  });
+  const wrap = document.getElementById('fullFormPayAmountWrap');
+  if (wrap) wrap.style.display = kind === 'none' ? 'none' : 'block';
+  if (kind === 'full') {
+    const amt = document.getElementById('fullFormPayAmount');
+    const fee = parseFloat((document.querySelector('#createGigForm [name="fee"]') || {}).value) || 0;
+    if (amt && fee && !amt.value) amt.value = fee;
+  }
+}
+window.setFullFormPayment = setFullFormPayment;
 
 function selectFullFormGigType(value, el) {
   gigWizardData.gig_type = gigWizardData.gig_type === value ? '' : value;
@@ -8977,6 +9028,19 @@ window.toast = toast;
   window.renderMonthlyInsight = renderMonthlyInsight;
 })();
 
+// Device-local privacy toggle: mask money figures across the Finance dashboard
+// (the screen most likely glanced at in public). Read once at load; fmtGBP and
+// the eye button honour it.
+window._hideFigures = (function () {
+  try { return localStorage.getItem('tmg_hide_figures') === '1'; } catch (e) { return false; }
+})();
+function toggleHideFigures() {
+  window._hideFigures = !window._hideFigures;
+  try { localStorage.setItem('tmg_hide_figures', window._hideFigures ? '1' : '0'); } catch (e) {}
+  if (typeof renderFinancePanel === 'function') renderFinancePanel();
+}
+window.toggleHideFigures = toggleHideFigures;
+
 // ── Finance Panel ───────────────────────────────────────────────────────────
 async function renderFinancePanel() {
   // Target the panel body inside #panel-finance (the Finance Dashboard panel
@@ -9023,7 +9087,7 @@ async function renderFinancePanel() {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
-    const fmtGBP = (n) => _gbpFormatter.format(Number(n) || 0);
+    const fmtGBP = (n) => window._hideFigures ? '£•••' : _gbpFormatter.format(Number(n) || 0);
     const fmtBar = (n) => {
       const v = Math.round(Number(n) || 0);
       if (v >= 1000) return '£' + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
@@ -9053,6 +9117,14 @@ async function renderFinancePanel() {
     const pctUnpaid = Math.max(0, 100 - pctPaid - pctOverdue);
 
     let html = `
+      <div style="display:flex;justify-content:flex-end;padding:6px 16px 0;">
+        <button onclick="toggleHideFigures()" title="Hide or show money figures" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;">
+          ${window._hideFigures
+            ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+            : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>'}
+          <span>${window._hideFigures ? 'Show figures' : 'Hide figures'}</span>
+        </button>
+      </div>
       <!-- Hero: total invoiced + paid/unpaid/overdue split -->
       <div data-finance-section="hero" style="padding:12px 16px 16px;text-align:center;">
         <div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Tax year ${escapeHtml(taxYear)} &middot; Total invoiced</div>
