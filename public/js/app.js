@@ -2477,8 +2477,11 @@ function renderGooglePinCard(p, { mode = 'month' } = {}) {
     ? 'linear-gradient(135deg,rgba(240,165,0,.10),rgba(240,165,0,.02))'
     : 'var(--card)';
   const safeId = (p.id || '').replace(/'/g, "\\'");
-  const cardClick = isNudge ? `onclick="openCalendarNudgeByEventId('${safeId}')"` : '';
-  const cursor = isNudge ? 'cursor:pointer;' : '';
+  const safePeId = (p.pe_id || '').replace(/'/g, "\\'");
+  const cardClick = isNudge
+    ? `onclick="openCalendarNudgeByEventId('${safeId}')"`
+    : (p.pe_id ? `onclick="openPersonalEventDetail('${safePeId}')"` : '');
+  const cursor = (isNudge || p.pe_id) ? 'cursor:pointer;' : '';
 
   let dateColHtml = '';
   if (mode === 'day') {
@@ -2858,19 +2861,18 @@ async function loadGoogleCalendarPins() {
       return;
     }
 
-    const resp = await fetch(`/api/calendar/pins?start=${toYMD(start)}&end=${toYMD(end)}`);
-    if (!resp.ok) return;
+    // Source the calendar's personal-event layer from the SYNCED store (C1), not
+    // the live /pins fetch: instant, works offline, consistent with the gig
+    // day-context. personalEventsToPins keeps pin.id = google_event_id so nudge
+    // highlighting + import still work, and adds pe_id for tap detail / delete.
+    const resp = await fetch(`/api/calendar/personal-events?start=${toYMD(start)}&end=${toYMD(end)}`);
+    if (!resp.ok) { window._googlePins = []; return; }
     const data = await resp.json();
-    if (!data.connected) {
-      window._googlePins = [];
-      window._googleConnected = false;
-      return;
-    }
     window._googleConnected = true;
-    window._googlePins = data.pins || [];
+    window._googlePins = personalEventsToPins(data.events || []);
     window._googlePinsKey = cacheKey;
     window._googlePinsTime = Date.now();
-    // Re-render with pins
+    // Re-render with the events
     const content = document.getElementById('calendarScreen');
     if (content && window._cachedGigs && window._cachedBlocked) {
       buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
@@ -3013,10 +3015,123 @@ function getCalendarLayers() {
       blocked: saved.blocked !== false,
       travel: saved.travel !== false,
       events: saved.events !== false,
-      google: saved.google === true,
+      // Personal events are synced into TMG and shown by default (TMG is the
+      // one calendar). The user can still hide them via the layers toggle.
+      google: saved.google !== false,
     };
   } catch (e) {
-    return { gigs: true, blocked: true, travel: true, events: true, google: false };
+    return { gigs: true, blocked: true, travel: true, events: true, google: true };
+  }
+}
+
+// Map stored personal_events into the "pin" shape the calendar already renders.
+// pin.id stays the google_event_id so nudge highlighting + import keep working;
+// pin.pe_id carries the TMG row id for tap detail / delete. Multi-day all-day
+// events expand to one pin per day so they appear on every cell they cover.
+function personalEventsToPins(events) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const out = [];
+  for (const pe of (events || [])) {
+    const base = {
+      id: pe.google_event_id || pe.id,
+      pe_id: pe.id,
+      summary: pe.summary || 'Busy',
+      title: pe.summary || 'Busy',
+      location: pe.location || null,
+      description: pe.description || null,
+      all_day: !!pe.all_day,
+      start_at: pe.start_at || null,
+      end_at: pe.end_at || null,
+    };
+    if (pe.all_day) {
+      const s = (pe.start_date || '').slice(0, 10);
+      if (!s) continue;
+      const e = (pe.end_date || pe.start_date || '').slice(0, 10) || s;
+      let cur = new Date(s + 'T00:00:00');
+      const last = new Date(e + 'T00:00:00');
+      let guard = 0;
+      while (cur <= last && guard < 400) {
+        out.push({ ...base, date: `${cur.getFullYear()}-${pad(cur.getMonth() + 1)}-${pad(cur.getDate())}`, start_time: null });
+        cur.setDate(cur.getDate() + 1);
+        guard++;
+      }
+    } else if (pe.start_at) {
+      const d = new Date(pe.start_at);
+      if (isNaN(d.getTime())) continue;
+      out.push({
+        ...base,
+        date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+        start_time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      });
+    }
+  }
+  return out;
+}
+
+// Tap detail for a stored personal event: title, time, location, notes, and a
+// Delete that removes it from Google too. (Editing/creating lands in C3.)
+function openPersonalEventDetail(peId) {
+  const p = (Array.isArray(window._googlePins) ? window._googlePins : []).find(x => x.pe_id === peId);
+  if (!p) return;
+  const existing = document.getElementById('peDetailSheet');
+  if (existing) existing.remove();
+
+  let when;
+  if (p.all_day) {
+    when = (p.date ? new Date(p.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) : '') + ' · all day';
+  } else if (p.start_at) {
+    const s = new Date(p.start_at);
+    const e = p.end_at ? new Date(p.end_at) : null;
+    const dayStr = s.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+    const t = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    when = `${dayStr} · ${t(s)}${e ? ' - ' + t(e) : ''}`;
+  } else {
+    when = '';
+  }
+
+  const metaRows = [];
+  if (p.location) metaRows.push(`<div style="font-size:13px;color:var(--text-2);margin-top:8px;">📍 ${escapeHtml(p.location)}</div>`);
+  if (p.description) metaRows.push(`<div style="font-size:13px;color:var(--text-2);margin-top:8px;white-space:pre-wrap;">${escapeHtml(p.description)}</div>`);
+
+  const sheet = document.createElement('div');
+  sheet.id = 'peDetailSheet';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
+    + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+    + '<div style="font-size:16px;font-weight:700;color:var(--text);">' + escapeHtml(p.summary || 'Event') + '</div>'
+    + '<div style="font-size:12px;color:var(--text-2);margin:4px 0 2px;">' + escapeHtml(when) + '</div>'
+    + metaRows.join('')
+    + '<div style="display:flex;gap:10px;margin-top:18px;">'
+    + '<button onclick="closePersonalEventDetail()" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;">Close</button>'
+    + '<button onclick="deletePersonalEvent(\'' + escapeAttr(peId) + '\')" style="flex:1;background:transparent;color:var(--danger);border:1px solid var(--danger);border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;">Delete</button>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--text-3);text-align:center;margin-top:10px;">Synced with your Google Calendar.</div>'
+    + '</div>';
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) closePersonalEventDetail(); });
+  document.body.appendChild(sheet);
+}
+
+function closePersonalEventDetail() {
+  const el = document.getElementById('peDetailSheet');
+  if (el) el.remove();
+}
+
+async function deletePersonalEvent(peId) {
+  if (!confirm('Delete this event? It will be removed from your Google Calendar too.')) return;
+  try {
+    const r = await fetch(`/api/calendar/personal-events/${encodeURIComponent(peId)}`, { method: 'DELETE' });
+    if (!r.ok) { showToast('Could not delete. Try again.'); return; }
+    window._googlePins = (Array.isArray(window._googlePins) ? window._googlePins : []).filter(x => x.pe_id !== peId);
+    window._googlePinsKey = null;
+    closePersonalEventDetail();
+    closePanel('panel-day-detail');
+    showToast('Event deleted');
+    const content = document.getElementById('calendarScreen');
+    if (content && window._cachedGigs && window._cachedBlocked) {
+      buildCalendarView(content, window._cachedGigs, window._cachedBlocked);
+    }
+  } catch (_) {
+    showToast('Could not delete. Try again.');
   }
 }
 
