@@ -10600,7 +10600,8 @@ async function loadGigSetlistSection(gig) {
   const ordered = (setlist.song_ids || []).map(id => byId.get(id)).filter(Boolean);
   const preview = ordered.slice(0, 5);
   const more = ordered.length - preview.length;
-  const sumMins = ordered.reduce((s, x) => s + (Number(x.duration) || 0), 0);
+  const sumSecs = ordered.reduce((s, x) => s + songSecs(x.duration), 0);
+  const sumMins = sumSecs ? Math.round(sumSecs / 60) : 0;
   const mins = setlist.total_duration || sumMins || null;
 
   bodyEl.innerHTML = `
