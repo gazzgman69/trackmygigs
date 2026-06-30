@@ -637,3 +637,15 @@ ALL of "do them all" now done: fee-splitter decision, agency UI verify, mark-as-
 1. Edit-form venue autocomplete: #editVenue gains the same saved-venues + Google Places picker as the wizard (searchVenuesEdit/selectRecentVenueEdit/selectVenueEdit, targeting the edit inputs; picking a saved venue reuses its mileage). Verified live in the browser: focusing the edit venue field shows "Your venues" (4 of his 6 saved venues, e.g. Tyneside Cinema), picker wired.
 2. Splitter commission row: verified by rendering renderGigSplitsSection with a mock gig (fee 400, 15% agency, 2-member equal split) - commission row shows "-£60", net pot 340 splits to £170/£170 (not £200). No premium lineup needed for the check.
 NOTHING outstanding from the whole Gigflow-parity + extras + safety-sweep arc. TMG matches/beats Gigflow on gig tracking + invoicing.
+
+## Gigflow UX head-to-head response — BUILT + VERIFIED 2026-06-30
+Full side-by-side walk of both apps (live). TMG matches/beats every Gigflow feature; the only true gaps were income goals + a dedicated forecast. Acted on the 5-point response:
+WAVE 1 (UX polish, no new screens):
+- Money tab added to the bottom nav (6 tabs now), opens the Finance dashboard. Verified.
+- Remembered gig-entry mode (wizard vs full form) per device via localStorage; "Full form" now a visible pill; toggles preserve entered data. switchGigEntryMode. Verified.
+- Deposit-at-creation on the FULL gig form ("Payment so far": Not paid / Deposit paid / Paid in full + amount); records into gig_payments on save (kind balance/deposit). setFullFormPayment. Verified.
+- Hide-figures eye toggle on the Finance dashboard; masks every figure incl the chart to "£•••" via fmtGBP/fmtBar; device-local localStorage. toggleHideFigures. Verified.
+WAVE 2 (new Finance sections, mockup-signed-off first):
+- Income goal: users.income_goal + GET/POST /api/finance/goal; card shows confirmed income vs annual target, % there, to-go, monthly pace over tax-year months left; "Set a goal" empty state + Edit (prompt() v1, could be a styled sheet later). Tracks `earnings` (confirmed). Verified live (£3,490/£20k → 17%, £1,651/mo over 10mo).
+- Income forecast: GET /api/finance/forecast?months=3 sums upcoming CONFIRMED gig fees by month (rule #7 enforced server-side; months=12 still returned only the 3 confirmed). Card: per-month + Projected total + "confirmed only". Verified live (£720/£380/£500 = £1,600).
+Commits: bdabb40 (nav+entry-mode), 10c438d (deposit+hide-figures), f8fb32c (chart mask), 30481d8 (goals+forecast). Remaining tiny: hide-figures only masks the Finance dashboard (not gig-card fees app-wide, by design); goal editor is a prompt(); roadmap .docx not yet updated this session.
