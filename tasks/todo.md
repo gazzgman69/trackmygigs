@@ -39,9 +39,13 @@ tasks/calendar-parity-spec.md.
   * A deleted-gig whose Google event survives re-appears as a personal event
     (correct: it is still in the calendar). One [TEST] orphan from old sync testing
     is in Gareth's Google Calendar this way.
-### C2 - proper in-app calendar
-- [ ] Render gigs + personal events properly on the calendar, "Other events" layer ON
-      by default, tappable detail (full own-data: title, time, location, notes).
+### C2 - proper in-app calendar  [DONE, verified live in browser 2026-06-30]
+- [x] Calendar sources personal events from the synced store (personalEventsToPins),
+      not live /pins; multi-day all-day events expand per day. "Other events" layer
+      ON by default. Tapping a personal event opens a clean detail sheet (title,
+      time, location, notes) with Delete that propagates to Google. List-view and
+      day-detail paths both route personal events to the detail; gig-candidates keep
+      the import sheet. Verified: calendar shows the synced events; tap opens detail.
 ### C3 - add anything
 - [ ] One "+" -> Gig (existing enriched flow) or Personal. Quick-create popup
       (title-alone creatable, date/time, all-day, Save + More options) -> full editor
