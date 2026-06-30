@@ -58,11 +58,15 @@ function wallClockInTz(isoOrDate, tz) {
   };
 }
 
-// A Postgres DATE/string -> 'YYYY-MM-DD'. pg returns DATE as a JS Date at UTC
-// midnight, so toISOString gives the intended calendar day.
+// A Postgres DATE/string -> 'YYYY-MM-DD'. node-postgres parses DATE at LOCAL
+// midnight, so read local components (not toISOString, which would shift the
+// day on any server not in UTC).
 function dateColToStr(v) {
   if (!v) return null;
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (v instanceof Date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
+  }
   return String(v).slice(0, 10);
 }
 
@@ -1900,7 +1904,18 @@ function buildPersonalEventResource(pe) {
   if (pe.reminders) {
     try {
       const r = typeof pe.reminders === 'string' ? JSON.parse(pe.reminders) : pe.reminders;
-      if (r && (typeof r.useDefault === 'boolean' || Array.isArray(r.overrides))) event.reminders = r;
+      // Google rejects useDefault:true alongside overrides, and caps overrides at 5.
+      // Normalise to one valid shape so a bad combo never 400s the push.
+      if (r && r.useDefault === true) {
+        event.reminders = { useDefault: true };
+      } else if (r && Array.isArray(r.overrides)) {
+        const overrides = r.overrides
+          .filter(o => o && (o.method === 'popup' || o.method === 'email') && Number.isFinite(o.minutes))
+          .slice(0, 5);
+        event.reminders = { useDefault: false, overrides };
+      } else if (r && r.useDefault === false) {
+        event.reminders = { useDefault: false, overrides: [] };
+      }
     } catch (_) {}
   }
   if (pe.rrule) {
@@ -1914,7 +1929,9 @@ function buildPersonalEventResource(pe) {
     event.start = { date: startDate };
     event.end = { date: addDaysStr(lastDay, 1) };
   } else {
-    const tz = pe.timezone || 'Europe/London';
+    let tz = pe.timezone || 'Europe/London';
+    // A bad free-text timezone would make Intl throw and crash the whole push.
+    try { new Intl.DateTimeFormat('en-GB', { timeZone: tz }); } catch (_) { tz = 'Europe/London'; }
     const s = wallClockInTz(pe.start_at, tz);
     const eInstant = pe.end_at || pe.start_at;
     const e = wallClockInTz(eInstant, tz);
@@ -2006,13 +2023,30 @@ async function removePersonalEventFromGoogle(userId, googleEventId) {
 // Map a Google event (from a singleEvents=true pull) into personal_events. Skips
 // our own write echoing back (etag === last_pushed_etag). Recurring series come
 // pre-expanded as instances, each its own google_event_id, so each lands as a row.
+// Returns true if it wrote a row, false if it skipped (own echo).
 async function upsertPersonalEventFromGoogle(userId, event) {
   const existing = await db.query(
     'SELECT id, last_pushed_etag FROM personal_events WHERE user_id = $1 AND google_event_id = $2 LIMIT 1',
     [userId, event.id]
   );
   if (existing.rows.length && existing.rows[0].last_pushed_etag && existing.rows[0].last_pushed_etag === event.etag) {
-    return; // own echo, nothing changed
+    return false; // our own write echoing back, nothing changed
+  }
+
+  // Orphan adoption: a locally-created event whose google_event_id never reached
+  // the DB (push insert succeeded at Google but the follow-up UPDATE failed)
+  // carries our private marker. Backfill its id so we update that row instead of
+  // inserting a twin.
+  if (!existing.rows.length) {
+    const marker = event.extendedProperties && event.extendedProperties.private && event.extendedProperties.private.tmg_personal_event_id;
+    if (marker) {
+      try {
+        await db.query(
+          'UPDATE personal_events SET google_event_id = $1 WHERE id = $2 AND user_id = $3 AND google_event_id IS NULL',
+          [event.id, marker, userId]
+        );
+      } catch (_) { /* id taken: the ON CONFLICT below still resolves it */ }
+    }
   }
 
   const allDay = !!(event.start?.date && !event.start?.dateTime);
@@ -2030,35 +2064,32 @@ async function upsertPersonalEventFromGoogle(userId, event) {
     ? new Date(event.originalStartTime.dateTime)
     : (event.originalStartTime?.date ? new Date(event.originalStartTime.date + 'T00:00:00Z') : null);
   const reminders = event.reminders ? JSON.stringify(event.reminders) : null;
-  const vals = [
-    event.iCalUID || null, event.etag || null, event.summary || '(No title)',
-    event.description || null, event.location || null, allDay, startAt, endAt,
-    startDate, endDate, tz, rrule, event.recurringEventId || null, origStart,
-    !!rrule, event.status || 'confirmed', event.transparency || 'opaque',
-    event.visibility || 'default', event.colorId || null, reminders,
-  ];
 
-  if (existing.rows.length) {
-    await db.query(
-      `UPDATE personal_events SET ical_uid=$1, etag=$2, summary=$3, description=$4,
-         location=$5, all_day=$6, start_at=$7, end_at=$8, start_date=$9, end_date=$10,
-         timezone=$11, rrule=$12, recurring_event_id=$13, original_start=$14,
-         is_recurring_master=$15, status=$16, transparency=$17, visibility=$18,
-         color_id=$19, reminders=$20::jsonb, source='google', deleted_at=NULL, updated_at=NOW()
-       WHERE id=$21 AND user_id=$22`,
-      [...vals, existing.rows[0].id, userId]
-    );
-  } else {
-    await db.query(
-      `INSERT INTO personal_events
-         (user_id, google_event_id, ical_uid, etag, summary, description, location,
-          all_day, start_at, end_at, start_date, end_date, timezone, rrule,
-          recurring_event_id, original_start, is_recurring_master, status,
-          transparency, visibility, color_id, reminders, source)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::jsonb,'google')`,
-      [userId, event.id, ...vals]
-    );
-  }
+  // Atomic upsert: a plain SELECT-then-INSERT races on the partial unique index
+  // under concurrent/doubled pulls; ON CONFLICT closes that window.
+  await db.query(
+    `INSERT INTO personal_events
+       (user_id, google_event_id, ical_uid, etag, summary, description, location,
+        all_day, start_at, end_at, start_date, end_date, timezone, rrule,
+        recurring_event_id, original_start, is_recurring_master, status,
+        transparency, visibility, color_id, reminders, source)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::jsonb,'google')
+     ON CONFLICT (user_id, google_event_id) WHERE google_event_id IS NOT NULL
+     DO UPDATE SET ical_uid=EXCLUDED.ical_uid, etag=EXCLUDED.etag, summary=EXCLUDED.summary,
+       description=EXCLUDED.description, location=EXCLUDED.location, all_day=EXCLUDED.all_day,
+       start_at=EXCLUDED.start_at, end_at=EXCLUDED.end_at, start_date=EXCLUDED.start_date,
+       end_date=EXCLUDED.end_date, timezone=EXCLUDED.timezone, rrule=EXCLUDED.rrule,
+       recurring_event_id=EXCLUDED.recurring_event_id, original_start=EXCLUDED.original_start,
+       is_recurring_master=EXCLUDED.is_recurring_master, status=EXCLUDED.status,
+       transparency=EXCLUDED.transparency, visibility=EXCLUDED.visibility,
+       color_id=EXCLUDED.color_id, reminders=EXCLUDED.reminders,
+       source='google', deleted_at=NULL, updated_at=NOW()`,
+    [userId, event.id, event.iCalUID || null, event.etag || null, event.summary || '(No title)',
+     event.description || null, event.location || null, allDay, startAt, endAt, startDate, endDate,
+     tz, rrule, event.recurringEventId || null, origStart, !!rrule, event.status || 'confirmed',
+     event.transparency || 'opaque', event.visibility || 'default', event.colorId || null, reminders]
+  );
+  return true;
 }
 
 // Uses Google's incremental sync via syncToken. On first call we establish a
@@ -2094,6 +2125,28 @@ async function pullFromGoogle(userId) {
   let updated = 0;
   let cancelled = 0;
   let personalUpserted = 0;
+
+  // Events owned by a gig or a blocked date must NOT become personal events
+  // (they would double-display). Gigs link to Google by either google_event_id
+  // OR the legacy source='gcal:<id>' tag; blocked dates link by google_event_id.
+  const ownedIds = new Set();
+  try {
+    const gigRows = await db.query(
+      `SELECT google_event_id, source FROM gigs
+        WHERE user_id = $1 AND (google_event_id IS NOT NULL OR source LIKE '%gcal:%')`,
+      [userId]
+    );
+    for (const g of gigRows.rows) {
+      if (g.google_event_id) ownedIds.add(g.google_event_id);
+      const m = g.source && String(g.source).match(/gcal:([^+]+)/);
+      if (m) ownedIds.add(m[1]);
+    }
+    const blkRows = await db.query(
+      `SELECT google_event_id FROM blocked_dates WHERE user_id = $1 AND google_event_id IS NOT NULL`,
+      [userId]
+    );
+    for (const b of blkRows.rows) ownedIds.add(b.google_event_id);
+  } catch (_) { /* best-effort; the marker guard in the loop still helps */ }
 
   try {
     do {
@@ -2162,11 +2215,16 @@ async function pullFromGoogle(userId) {
         );
         if (r.rowCount > 0) { updated++; continue; }
 
-        // No gig owns this event, so it is a personal / busy event. Store it
-        // (the helper skips our own echo and handles all-day + recurring instances).
+        // Skip events owned by a gig (by id or legacy gcal: tag) or a blocked
+        // date, plus TMG's own gig/block markers, so they are not double-stored.
+        if (ownedIds.has(event.id)) continue;
+        const priv = event.extendedProperties && event.extendedProperties.private;
+        if (priv && (priv.tmg_source === 'blocked_date' || priv.tmg_gig_id)) continue;
+
+        // Otherwise it is a personal / busy event. Store it (the helper skips our
+        // own echo, adopts orphans, and handles all-day + recurring instances).
         try {
-          await upsertPersonalEventFromGoogle(userId, event);
-          personalUpserted++;
+          if (await upsertPersonalEventFromGoogle(userId, event)) personalUpserted++;
         } catch (peErr) {
           console.error('pullFromGoogle personal upsert error:', peErr.message || peErr);
         }
@@ -2176,9 +2234,18 @@ async function pullFromGoogle(userId) {
       if (response.data.nextSyncToken) nextSyncToken = response.data.nextSyncToken;
     } while (pageToken);
   } catch (err) {
-    // Sync token invalidated — clear it so the next pull re-baselines
+    // Sync token invalidated — clear it so the next pull re-baselines. We can't
+    // know what was deleted in Google while the token was dead, so soft-delete
+    // our Google-sourced personal events; the retry re-baselines and the upsert
+    // clears deleted_at on the ones still present, leaving only the truly-gone
+    // ones soft-deleted (no ghosts).
     if (err && err.code === 410) {
       await db.query('UPDATE users SET google_sync_token = NULL WHERE id = $1', [userId]);
+      await db.query(
+        `UPDATE personal_events SET deleted_at = NOW(), updated_at = NOW()
+         WHERE user_id = $1 AND source = 'google' AND deleted_at IS NULL`,
+        [userId]
+      );
       return { error: 'sync_token_expired', retry: true };
     }
     console.error('pullFromGoogle error:', err.message || err);
@@ -2401,7 +2468,10 @@ function normalizePersonalEventInput(body) {
     visibility: ['public', 'private', 'confidential'].includes(body.visibility) ? body.visibility : 'default',
     color_id: body.color_id ? String(body.color_id) : null,
     reminders: body.reminders ? JSON.stringify(body.reminders) : null,
-    rrule: body.rrule ? String(body.rrule) : null,
+    // Recurrence-create lands in C5: it needs master/instance reconciliation on
+    // pull (singleEvents=true returns instances whose ids differ from the master),
+    // so accepting an rrule here now would create duplicate instance rows. Ignore.
+    rrule: null,
     start_at: null, end_at: null, start_date: null, end_date: null,
   };
   if (allDay) {
@@ -2505,7 +2575,13 @@ router.delete('/personal-events/:id', async (req, res) => {
     );
     if (cur.rows.length === 0) return res.status(404).json({ error: 'not found' });
     const row = cur.rows[0];
-    if (row.google_event_id) { try { await removePersonalEventFromGoogle(req.user.id, row.google_event_id); } catch (_) {} }
+    if (row.google_event_id) {
+      // Only soft-delete locally if Google actually removed it; otherwise the
+      // event survives in Google but vanishes from TMG (an invisible live ghost
+      // the pull won't resurrect). Leave it visible and retryable instead.
+      const ok = await removePersonalEventFromGoogle(req.user.id, row.google_event_id);
+      if (!ok) return res.status(502).json({ error: 'Could not remove from Google, not deleted. Try again.' });
+    }
     await db.query(
       `UPDATE personal_events SET deleted_at = NOW(), status = 'cancelled', updated_at = NOW()
        WHERE id = $1 AND user_id = $2`,

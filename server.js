@@ -450,6 +450,40 @@ app.get('/api/admin/migrate-attachments', async (req, res) => {
   }
 });
 
+// One-shot cleanup (2026-06-30): the first C1 pull stored gig-owned and
+// blocked-date Google events as personal_events. Remove those duplicates so the
+// in-app calendar doesn't double-render them. Idempotent. Gated by RELOAD_SECRET.
+app.get('/api/admin/cleanup-personal-events', async (req, res) => {
+  const expected = process.env.RELOAD_SECRET;
+  if (!expected || req.query.key !== expected) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  try {
+    const db = require('./db');
+    const result = await db.query(`
+      DELETE FROM personal_events pe
+       WHERE pe.google_event_id IS NOT NULL
+         AND (
+           EXISTS (
+             SELECT 1 FROM gigs g
+              WHERE g.user_id = pe.user_id
+                AND (g.google_event_id = pe.google_event_id
+                     OR g.source LIKE '%gcal:' || pe.google_event_id)
+           )
+           OR EXISTS (
+             SELECT 1 FROM blocked_dates b
+              WHERE b.user_id = pe.user_id
+                AND b.google_event_id = pe.google_event_id
+           )
+         )
+       RETURNING id`);
+    res.json({ ok: true, deleted: result.rowCount });
+  } catch (e) {
+    console.error('[cleanup-personal-events]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Debug endpoint (Demo 2026-04-28): inspect cross-source dedup state and
 // optionally run the cleanup query out-of-cycle. Gated by RELOAD_SECRET.
 // Kept around because the cross-source dedup is exactly the kind of thing
