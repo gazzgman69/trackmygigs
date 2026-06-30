@@ -699,6 +699,14 @@ function setupNavigation() {
         item.classList.add('active');
         return;
       }
+      // Money is the Finance dashboard, also an overlay panel. Same tab dance.
+      if (screen === 'money') {
+        openPanel('panel-finance');
+        if (typeof renderFinancePanel === 'function') renderFinancePanel();
+        document.querySelectorAll('.nav-item').forEach((n) => n.classList.remove('active'));
+        item.classList.add('active');
+        return;
+      }
       showScreen(screen);
     });
   });
@@ -5781,9 +5789,19 @@ function openGigWizard() {
     client_phone: '',
     rate_per_hour: '',
   };
-  renderCreateGigScreen();
+  // Returning users land on whichever entry mode they used last; the wizard
+  // stays the friendly default for first-timers. switchGigEntryMode persists it.
+  let entryMode = null;
+  try { entryMode = localStorage.getItem('tmg_gig_entry_mode'); } catch (e) {}
+  if (entryMode === 'full') { renderFullGigForm(); } else { renderCreateGigScreen(); }
   showScreen('createGig');
 }
+
+function switchGigEntryMode(mode) {
+  try { localStorage.setItem('tmg_gig_entry_mode', mode); } catch (e) {}
+  if (mode === 'full') { renderFullGigForm(); } else { renderCreateGigScreen(); }
+}
+window.switchGigEntryMode = switchGigEntryMode;
 
 function renderCreateGigScreen() {
   const content = document.getElementById('createGigScreen');
@@ -5795,7 +5813,7 @@ function renderCreateGigScreen() {
         <div class="wizard-title" style="font-size:16px;font-weight:700;">New Gig</div>
         <div style="display:flex;align-items:center;gap:12px;">
           <button type="button" onclick="window.aiSmartPasteGig && window.aiSmartPasteGig()" title="Paste booking text and I will fill the form" style="background:var(--accent-dim, rgba(240,165,0,.18));color:var(--accent,#f0a500);border:1px solid rgba(240,165,0,.4);border-radius:12px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;">&#10024; Smart Paste</button>
-          <div onclick="renderFullGigForm()" style="font-size:12px;color:var(--text-3);cursor:pointer;">Show full form</div>
+          <div onclick="switchGigEntryMode('full')" style="font-size:11px;color:var(--text-2);cursor:pointer;border:1px solid var(--border);border-radius:12px;padding:4px 10px;">Full form</div>
         </div>
       </div>
       <div style="display:flex;gap:4px;padding:0 20px;margin-bottom:20px;" id="wizardProgress">
@@ -6887,7 +6905,7 @@ function renderFullGigForm() {
 
   content.innerHTML = `
     <div style="background:var(--surface);padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
-      <button onclick="openGigWizard()" style="color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;background:none;border:none;">&#8249; Wizard</button>
+      <button onclick="switchGigEntryMode('wizard')" style="color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;background:none;border:none;">&#8249; Wizard</button>
       <div style="font-size:16px;font-weight:700;color:var(--text);">Full Form</div>
       <div style="width:50px;"></div>
     </div>
