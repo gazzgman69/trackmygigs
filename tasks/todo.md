@@ -19,15 +19,26 @@ tasks/calendar-parity-spec.md.
   [Gareth 2026-06-30]
 
 ## First cut (v1 core) - the foundation that makes TMG the one calendar
-### C1 - personal_events schema + two-way sync
-- [ ] personal_events table per the spec (google_event_id, etag, all_day, start/end,
-      timezone, rrule, recurring_event_id, status, transparency, reminders jsonb,
-      source, last_pushed_etag, ...). Startup migration.
-- [ ] Extend pullFromGoogle: singleEvents=true + showDeleted=true, fixed params,
-      UPSERT ALL events (not just gig-linked), cancelled -> soft-delete, page to
-      nextSyncToken, 410 -> full resync, skip own-echo by last_pushed_etag.
-- [ ] Add pushPersonalEventToGoogle (mirror pushGigToGoogle): insert/patch+If-Match/
-      delete; store returned id+etag. Last-writer-wins on 412 for v1, log conflict.
+### C1 - personal_events schema + two-way sync  [DONE + adversarially reviewed, verified live 2026-06-30]
+- [x] personal_events table + indexes. Startup migration.
+- [x] pullFromGoogle upserts non-gig events (atomic ON CONFLICT, own-echo skip,
+      cancelled -> soft-delete, 410 -> wipe google rows + re-baseline). Excludes
+      gig-owned (id OR legacy gcal: tag) and blocked-date events.
+- [x] pushPersonalEventToGoogle / removePersonalEventFromGoogle; CRUD endpoints;
+      gig-promotion drops the personal mirror.
+- [x] Verified live on Gareth's account: 978 events pulled (Google->TMG); create
+      pushed to Google with correct tz; delete propagated both ways. His data was
+      clean (gigs all have google_event_id, no legacy duplicates).
+- Deferred from the C1 review (low / can't-trigger-yet, handle later):
+  * C3 must send offset-qualified ISO datetimes (naive strings would parse in the
+    server tz). Handle in C3.
+  * GET range filter + DST-ambiguous wall-clock hardcode Europe/London (fine for a
+    UK user). calendar_id column not yet stamped (latent).
+  * Recurring expansion via singleEvents=true is heavy (978 rows, ~83 future
+    "Lock up shuts at 12pm"). Cap the horizon or store masters in C5.
+  * A deleted-gig whose Google event survives re-appears as a personal event
+    (correct: it is still in the calendar). One [TEST] orphan from old sync testing
+    is in Gareth's Google Calendar this way.
 ### C2 - proper in-app calendar
 - [ ] Render gigs + personal events properly on the calendar, "Other events" layer ON
       by default, tappable detail (full own-data: title, time, location, notes).
