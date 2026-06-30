@@ -9089,6 +9089,7 @@ async function renderFinancePanel() {
     });
     const fmtGBP = (n) => window._hideFigures ? '£•••' : _gbpFormatter.format(Number(n) || 0);
     const fmtBar = (n) => {
+      if (window._hideFigures) return '£•••';
       const v = Math.round(Number(n) || 0);
       if (v >= 1000) return '£' + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k';
       return '£' + v;
