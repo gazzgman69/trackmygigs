@@ -22646,6 +22646,11 @@ if (typeof invalidateGigsCache !== 'function') {
   window.invalidateGigsCache = function () {
     try { window._cachedGigs = null; } catch (_) {}
     try { window._gigsCacheTime = 0; } catch (_) {}
+    // Also drop the persisted calendar cache + its freshness stamp, otherwise a
+    // page reload re-hydrates the stale gig list and a just-created gig (e.g.
+    // from quick-log) goes missing from the calendar until the cache expires.
+    try { window._cachedBlockedTime = 0; } catch (_) {}
+    try { localStorage.removeItem('tmg_cachedCalendar_v1'); } catch (_) {}
   };
 }
 
