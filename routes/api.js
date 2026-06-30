@@ -4181,7 +4181,7 @@ router.get('/finance/month-detail', async (req, res) => {
 
     const [gigsR, invR, expR, nextGigsR, outstandingR] = await Promise.all([
       db.query(
-        `SELECT date, band_name, venue_name, fee, status
+        `SELECT id, date, band_name, venue_name, fee, status
          FROM gigs
          WHERE user_id = $1 AND date BETWEEN $2 AND $3
          ORDER BY date ASC`,

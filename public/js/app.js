@@ -9134,14 +9134,21 @@ async function openMonthBreakdown(year, month, label) {
     bodyEl.innerHTML = `
       <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px;">${escapeHtml(monthName)}</div>
       <div style="font-size:11px;color:var(--text-2);margin-bottom:12px;">${gigs.length} gig${gigs.length === 1 ? '' : 's'} &middot; ${money(total)}</div>
-      ${gigs.length ? gigs.map((g) => `
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+      ${gigs.length ? gigs.map((g) => {
+        const tappable = !!g.id;
+        const open = tappable ? `onclick="document.querySelectorAll('.sheet-overlay').forEach(o=>o.remove()); if (typeof closePanel==='function') closePanel('panel-finance'); openGigDetail('${escapeAttr(String(g.id))}');"` : '';
+        return `
+        <div ${open} style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);${tappable ? 'cursor:pointer;' : ''}">
           <div style="min-width:0;flex:1;">
             <div style="font-size:13px;color:var(--text);font-weight:500;">${escapeHtml(g.band_name || g.venue_name || 'Gig')}${statusChip(g.status)}</div>
             <div style="font-size:11px;color:var(--text-3);margin-top:2px;">${escapeHtml(typeof formatDateLong === 'function' ? formatDateLong(g.date) : String(g.date).slice(0, 10))}${g.venue_name && g.band_name ? ' &middot; ' + escapeHtml(g.venue_name) : ''}</div>
           </div>
-          <div style="font-size:13px;font-weight:700;color:var(--text);margin-left:10px;white-space:nowrap;">${money(g.fee)}</div>
-        </div>`).join('') : '<div style="text-align:center;color:var(--text-3);font-size:12px;padding:16px 0;">No gigs this month.</div>'}
+          <div style="display:flex;align-items:center;gap:8px;margin-left:10px;">
+            <span style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;">${money(g.fee)}</span>
+            ${tappable ? '<span style="color:var(--text-3);font-size:15px;line-height:1;">&rsaquo;</span>' : ''}
+          </div>
+        </div>`;
+      }).join('') : '<div style="text-align:center;color:var(--text-3);font-size:12px;padding:16px 0;">No gigs this month.</div>'}
     `;
   } catch (e) {
     bodyEl.innerHTML = '<div style="text-align:center;color:var(--text-3);font-size:12px;padding:20px 0;">Couldn\'t load this month.</div>';
