@@ -46,11 +46,19 @@ tasks/calendar-parity-spec.md.
       time, location, notes) with Delete that propagates to Google. List-view and
       day-detail paths both route personal events to the detail; gig-candidates keep
       the import sheet. Verified: calendar shows the synced events; tap opens detail.
-### C3 - add anything
-- [ ] One "+" -> Gig (existing enriched flow) or Personal. Quick-create popup
-      (title-alone creatable, date/time, all-day, Save + More options) -> full editor
-      (title, date/time+all-day+tz, repeat preset, location, notification, busy/free,
-      visibility, description). Writes locally + pushes to Google.
+### C3 - add anything  [DONE, verified live 2026-06-30]
+- [x] "Add event" on the day-action sheet (alongside Add gig / Block) + "Edit event"
+      on the detail sheet open a New/Edit event form: title, all-day, date, start/end
+      time, location, busy/free, reminder, notes. Save -> POST/PATCH -> pushes to
+      Google -> calendar refreshes. Verified live: created a timed event (19:00 BST
+      stored 18:00 UTC), it pushed to Google (google_event_id set), then deleted both
+      ways. Recurrence (repeat preset) still deferred to C5; gig add unchanged.
+
+## FIRST CUT COMPLETE (C1+C2+C3, 2026-06-30): TMG is the one calendar.
+Personal events sync both ways with Google, render properly on the in-app calendar
+(layer on by default, tappable detail), and can be added/edited/deleted in TMG with
+changes pushed to Google. Next: C4 (gig-entry day context + fee nudge), C5
+(recurrence + reminders), then the public link.
 
 ## Fast-follows (in order)
 ### C4 - gig-entry day context + premium-date fee nudge
