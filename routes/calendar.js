@@ -95,6 +95,22 @@ function getAnthropicSource() {
   return resolved ? resolved.source : null;
 }
 
+// Normalise the classifier-provenance fields the client passes through at
+// import time (they originate in the GET /events payload) into safe column
+// values: a clean enum, an integer confidence, and a JSONB-ready reasons blob.
+function classifierCols(src) {
+  const used = src && (src.classifier_used === 'ai' || src.classifier_used === 'keyword')
+    ? src.classifier_used : null;
+  // Clamp to 0-100: the keyword scorer is additive and uncapped, so a very
+  // keyword-y title can produce a raw score above 100. The column is a
+  // normalised confidence, so keep both classifier paths on the same scale.
+  const conf = src && Number.isFinite(src.classify_confidence)
+    ? Math.max(0, Math.min(100, Math.round(src.classify_confidence))) : null;
+  const reasons = src && Array.isArray(src.classify_reasons)
+    ? JSON.stringify(src.classify_reasons) : null;
+  return { used, conf, reasons };
+}
+
 function eventSummaryForAI(event, index) {
   const start = event.start?.dateTime || event.start?.date;
   const end = event.end?.dateTime || event.end?.date;
@@ -184,7 +200,31 @@ Return ONLY the JSON array. No markdown fences. No prose. No explanation.`;
     text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
     const parsed = JSON.parse(text);
     if (!Array.isArray(parsed)) return null;
-    return parsed;
+
+    // The model is asked to echo each input's 0-based [N] prefix as an `index`
+    // field. Map results back by that index, and trust the AI batch ONLY if the
+    // indices form a clean permutation of {0..N-1}: every event covered exactly
+    // once, nothing out of range, nothing duplicated, no object missing its
+    // index. Array-position mapping silently corrupts the whole batch if the
+    // model drops, reorders, or 1-bases its output (every later event inherits a
+    // neighbour's verdict), so anything short of a clean bijection fails the
+    // entire batch to the deterministic keyword scorer rather than returning a
+    // shifted or partially-correct alignment.
+    const aligned = new Array(events.length).fill(null);
+    let placed = 0;
+    let clean = true;
+    for (const obj of parsed) {
+      if (!obj || !Number.isInteger(obj.index)) { clean = false; continue; }
+      const idx = obj.index;
+      if (idx < 0 || idx >= events.length || aligned[idx] != null) { clean = false; continue; }
+      aligned[idx] = obj;
+      placed++;
+    }
+    if (!clean || placed !== events.length) {
+      console.warn(`[ai] classifyEventsBatch: AI result did not cleanly align to ${events.length} events (placed ${placed} of ${parsed.length} objects); using keyword fallback for this batch`);
+      return null;
+    }
+    return aligned;
   } catch (err) {
     console.error('[ai] classifyEventsBatch failed:', err.message || err);
     return null;
@@ -787,7 +827,8 @@ router.get('/events', async (req, res) => {
       let suggested_load_in_time = null;
       let suggested_notes = null;
 
-      if (aiResults && aiResults[i]) {
+      const usedAi = !!(aiResults && aiResults[i]);
+      if (usedAi) {
         const ai = aiResults[i];
         score = ai.is_gig ? (typeof ai.confidence === 'number' ? ai.confidence : 50) : Math.min(ai.confidence || 0, 10);
         reasons = Array.isArray(ai.reasons) ? ai.reasons : [];
@@ -852,7 +893,7 @@ router.get('/events', async (req, res) => {
         suggested_dress_code,
         suggested_load_in_time,
         suggested_notes,
-        classifier_used: aiResults ? 'ai' : 'keyword',
+        classifier_used: usedAi ? 'ai' : 'keyword',
         source: 'google_calendar',
         already_imported: false,
       };
@@ -972,6 +1013,7 @@ router.get('/pins', async (req, res) => {
 router.post('/import', async (req, res) => {
   try {
     const { event_id, title, location, start, end, fee, band_name, dress_code } = req.body;
+    const prov = classifierCols(req.body);
 
     // `start` / `end` may be either a full dateTime ("2026-04-23T00:00:00+01:00")
     // or an all-day bare date ("2026-04-23"). Split parts in Europe/London so
@@ -1069,7 +1111,10 @@ router.post('/import', async (req, res) => {
                fee = $7,
                dress_code = $8,
                google_event_id = $9,
-               source = $10
+               source = $10,
+               classifier_used = COALESCE(classifier_used, $13),
+               classify_confidence = COALESCE(classify_confidence, $14),
+               classify_reasons = COALESCE(classify_reasons, $15::jsonb)
          WHERE id = $11 AND user_id = $12
          RETURNING *`,
         [
@@ -1085,6 +1130,9 @@ router.post('/import', async (req, res) => {
           newSource,
           g.id,
           req.user.id,
+          prov.used,
+          prov.conf,
+          prov.reasons,
         ]
       );
 
@@ -1101,8 +1149,8 @@ router.post('/import', async (req, res) => {
     // cancellation handler and removeGigFromGoogle key on google_event_id.
     // source is kept for backwards compat + provenance labeling.
     const result = await db.query(
-      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, fee, status, source, dress_code, google_event_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO gigs (user_id, band_name, venue_name, venue_address, date, start_time, end_time, fee, status, source, dress_code, google_event_id, classifier_used, classify_confidence, classify_reasons)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)
        RETURNING *`,
       [
         req.user.id,
@@ -1117,6 +1165,9 @@ router.post('/import', async (req, res) => {
         `gcal:${event_id}`,
         dress_code || null,
         event_id,
+        prov.used,
+        prov.conf,
+        prov.reasons,
       ]
     );
 
@@ -1226,6 +1277,7 @@ router.post('/import-bulk', async (req, res) => {
           if (softBand.rows.length) existing = softBand;
         }
 
+        const prov = classifierCols(ev);
         if (existing.rows.length) {
           // Merge path: caller values win when non-null, existing wins for
           // anything the caller didn't supply. Keeps re-runs safe AND lets a
@@ -1256,7 +1308,10 @@ router.post('/import-bulk', async (req, res) => {
                    client_phone = COALESCE($12, client_phone),
                    notes = COALESCE($13, notes),
                    google_event_id = $14,
-                   source = $15
+                   source = $15,
+                   classifier_used = COALESCE(classifier_used, $18),
+                   classify_confidence = COALESCE(classify_confidence, $19),
+                   classify_reasons = COALESCE(classify_reasons, $20::jsonb)
              WHERE id = $16 AND user_id = $17
              RETURNING *`,
             [
@@ -1277,6 +1332,9 @@ router.post('/import-bulk', async (req, res) => {
               newSource,
               g.id,
               req.user.id,
+              prov.used,
+              prov.conf,
+              prov.reasons,
             ]
           );
           gigs.push(updated.rows[0]);
@@ -1286,8 +1344,9 @@ router.post('/import-bulk', async (req, res) => {
             `INSERT INTO gigs (user_id, band_name, venue_name, venue_address,
                                date, start_time, end_time, fee, status, source,
                                dress_code, load_in_time, client_name, client_email,
-                               client_phone, notes, google_event_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                               client_phone, notes, google_event_id,
+                               classifier_used, classify_confidence, classify_reasons)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb)
              RETURNING *`,
             [
               req.user.id,
@@ -1307,6 +1366,9 @@ router.post('/import-bulk', async (req, res) => {
               ev.client_phone || null,
               ev.notes || null,
               ev.event_id,
+              prov.used,
+              prov.conf,
+              prov.reasons,
             ]
           );
           gigs.push(inserted.rows[0]);

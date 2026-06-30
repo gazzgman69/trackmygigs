@@ -2074,6 +2074,13 @@ async function runMigrations() {
     // Explicit "this gig happened" stamp, separate from the date-derived "Played"
     // (lets a gig be marked played early / confirmed done).
     await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`);
+    // Classifier provenance for calendar-imported gigs: which path flagged the
+    // event (ai | keyword), how confident it was (0-100), and the reasons it
+    // gave. Persisted at import so we can answer "why was this suggested" after
+    // the fact instead of losing it with the request.
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS classifier_used VARCHAR(16)`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS classify_confidence INTEGER`);
+    await db.query(`ALTER TABLE gigs ADD COLUMN IF NOT EXISTS classify_reasons JSONB`);
     // Opt-in automated invoice chasing (off by default; the app's principle is
     // nothing auto-sends, so only opted-in users are ever swept).
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_chase_enabled BOOLEAN DEFAULT FALSE`);

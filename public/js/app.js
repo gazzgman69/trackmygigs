@@ -2632,8 +2632,11 @@ async function barImportNudge(eventId) {
         location: e.location,
         start: e.start,
         end: e.end,
-        fee: e.fee || null,
-        band_name: e.band_name || null,
+        fee: e.suggested_fee || null,
+        band_name: e.suggested_band_name || null,
+        classifier_used: e.classifier_used || null,
+        classify_confidence: typeof e.score === 'number' ? e.score : null,
+        classify_reasons: e.reasons || null,
       }),
     });
     if (!resp.ok) throw new Error('import failed');
@@ -16181,6 +16184,9 @@ async function quickImportNudge(index) {
         location: e.location,
         start: e.start,
         end: e.end,
+        classifier_used: e.classifier_used || null,
+        classify_confidence: typeof e.score === 'number' ? e.score : null,
+        classify_reasons: e.reasons || null,
       }),
     });
 
@@ -16221,6 +16227,9 @@ async function importNudgeFromDetail(index) {
         fee: fee || null,
         band_name: bandName || null,
         dress_code: dressCode || null,
+        classifier_used: e.classifier_used || null,
+        classify_confidence: typeof e.score === 'number' ? e.score : null,
+        classify_reasons: e.reasons || null,
       }),
     });
 
@@ -22356,6 +22365,9 @@ window.isTimeAutoBlocked = isTimeAutoBlocked;
         client_email: e.suggested_client_email || null,
         client_phone: e.suggested_client_phone || null,
         notes: e.suggested_notes || null,
+        classifier_used: e.classifier_used || null,
+        classify_confidence: typeof e.score === 'number' ? e.score : null,
+        classify_reasons: e.reasons || null,
       })),
     };
 
