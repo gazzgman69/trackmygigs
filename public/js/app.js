@@ -7240,18 +7240,19 @@ function renderFullGigForm() {
         </div>
         <div class="form-group">
           <label class="form-label">Date</label>
-          <input type="date" class="form-input" name="date" value="${d.date}" required>
+          <input type="date" class="form-input" name="date" value="${d.date}" onchange="updateGigDayContext()" required>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div class="form-group">
             <label class="form-label">Start time</label>
-            <input type="time" class="form-input" name="start_time" value="${d.start_time}">
+            <input type="time" class="form-input" name="start_time" value="${d.start_time}" onchange="updateGigDayContext()">
           </div>
           <div class="form-group">
             <label class="form-label">End time</label>
-            <input type="time" class="form-input" name="end_time" value="${d.end_time}">
+            <input type="time" class="form-input" name="end_time" value="${d.end_time}" onchange="updateGigDayContext()">
           </div>
         </div>
+        <div id="gigDayContext" style="margin-bottom:16px;"></div>
         <div class="form-group">
           <label class="form-label">Load-in / arrival</label>
           <input type="time" class="form-input" name="load_in_time" value="${d.load_in_time}" style="max-width:50%;">
@@ -7401,6 +7402,114 @@ function renderFullGigForm() {
       submitBtn.disabled = false;
     }
   });
+
+  // C4: populate the "that day" context panel for the prefilled date.
+  setTimeout(() => { try { updateGigDayContext(); } catch (_) {} }, 0);
+}
+
+// ── C4: gig-entry day context + premium-date fee nudge ───────────────────────
+function _fmtYMD(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function _firstMonday(year, m0) { const d = new Date(year, m0, 1); d.setDate(1 + ((8 - d.getDay()) % 7)); return d; }
+function _lastMonday(year, m0) { const d = new Date(year, m0 + 1, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; }
+
+// Is this a high-demand date worth charging more for? Fixed seasonal dates plus
+// the computable England & Wales Monday-rule bank holidays. Easter is omitted
+// for now (no fixed rule); the scarcity hint covers already-busy days.
+function premiumDateInfo(dateStr) {
+  if (!dateStr || dateStr.length < 10) return null;
+  const md = dateStr.slice(5);
+  const year = parseInt(dateStr.slice(0, 4), 10);
+  const seasonal = {
+    '12-31': 'New Year’s Eve', '12-24': 'Christmas Eve', '12-25': 'Christmas Day',
+    '12-26': 'Boxing Day', '01-01': 'New Year’s Day', '02-14': 'Valentine’s Day', '10-31': 'Halloween',
+  };
+  if (seasonal[md]) return { label: seasonal[md] };
+  if (!Number.isFinite(year)) return null;
+  if (dateStr === _fmtYMD(_firstMonday(year, 4))) return { label: 'Early May bank holiday' };
+  if (dateStr === _fmtYMD(_lastMonday(year, 4))) return { label: 'Spring bank holiday' };
+  if (dateStr === _fmtYMD(_lastMonday(year, 7))) return { label: 'Summer bank holiday' };
+  return null;
+}
+
+function _timeOverlap(aStart, aEnd, bStart, bEnd) {
+  if (!aStart || !bStart) return false;
+  const ae = aEnd || aStart, be = bEnd || bStart;
+  return aStart < be && ae > bStart;
+}
+
+// Show what's already on the chosen gig date, flag clashes, and nudge the fee on
+// premium / already-busy days. Wired to the date + time inputs in the full form.
+async function updateGigDayContext() {
+  const el = document.getElementById('gigDayContext');
+  if (!el) return;
+  const q = (sel) => document.querySelector('#createGigScreen ' + sel);
+  const date = (q('input[name="date"]') || {}).value || '';
+  if (!date) { el.innerHTML = ''; return; }
+  const newStart = (q('input[name="start_time"]') || {}).value || '';
+  const newEnd = (q('input[name="end_time"]') || {}).value || '';
+
+  const gigs = (Array.isArray(window._cachedGigs) ? window._cachedGigs : [])
+    .filter(g => g && g.status !== 'cancelled' && String(g.date || '').slice(0, 10) === date)
+    .map(g => ({ kind: 'gig', title: g.band_name || g.venue_name || 'Gig', start: g.start_time ? String(g.start_time).slice(0, 5) : null, end: g.end_time ? String(g.end_time).slice(0, 5) : null, allDay: !g.start_time }));
+  const blocks = (Array.isArray(window._cachedBlocked) ? window._cachedBlocked : [])
+    .filter(b => {
+      if (!b) return false;
+      if (Array.isArray(b.expanded_dates) && b.expanded_dates.length) return b.expanded_dates.includes(date);
+      return String(b.start_date || b.date || '').slice(0, 10) === date;
+    })
+    .map(b => ({ kind: 'block', title: b.reason || 'Unavailable', allDay: true }));
+
+  let personal = [];
+  try {
+    const r = await fetch(`/api/calendar/personal-events?start=${date}&end=${date}`);
+    if (r.ok) {
+      const data = await r.json();
+      personal = (data.events || []).map(pe => {
+        let start = null, end = null; const allDay = !!pe.all_day;
+        if (!allDay && pe.start_at) {
+          const s = new Date(pe.start_at);
+          start = `${String(s.getHours()).padStart(2, '0')}:${String(s.getMinutes()).padStart(2, '0')}`;
+          if (pe.end_at) { const e = new Date(pe.end_at); end = `${String(e.getHours()).padStart(2, '0')}:${String(e.getMinutes()).padStart(2, '0')}`; }
+        }
+        return { kind: 'personal', title: pe.summary || 'Busy', start, end, allDay };
+      });
+    }
+  } catch (_) {}
+
+  // Stale-guard: the date may have changed while we awaited the fetch.
+  if (((q('input[name="date"]') || {}).value || '') !== date) return;
+
+  const items = [...gigs, ...personal, ...blocks];
+  const prem = premiumDateInfo(date);
+  if (!items.length && !prem) { el.innerHTML = ''; return; }
+
+  const rows = items.map(it => {
+    const clash = !it.allDay && !!newStart && !!it.start && _timeOverlap(newStart, newEnd, it.start, it.end);
+    const color = (clash || it.kind === 'block') ? 'var(--danger)' : 'var(--info)';
+    const timeLabel = it.allDay ? 'All day' : (it.start ? (it.start + (it.end ? '–' + it.end : '')) : '');
+    const tag = clash ? ' <span style="color:var(--danger);font-weight:700;font-size:10px;">CLASHES</span>' : '';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;">
+      <div style="width:6px;height:6px;border-radius:50%;background:${color};flex:none;"></div>
+      <div style="flex:1;font-size:12.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(it.title)}${tag}</div>
+      <div style="font-size:11.5px;color:var(--text-2);flex:none;">${timeLabel}</div>
+    </div>`;
+  }).join('');
+
+  const anyClash = items.some(it => !it.allDay && !!newStart && !!it.start && _timeOverlap(newStart, newEnd, it.start, it.end));
+  const clashWarn = anyClash ? `<div style="font-size:11.5px;color:var(--danger);font-weight:600;margin-top:6px;">⚠ This overlaps something already on that day.</div>` : '';
+  const headsUp = (items.length && !anyClash) ? `<div style="font-size:11px;color:var(--text-2);margin-top:6px;">Heads up: you’ve already got ${items.length} thing${items.length > 1 ? 's' : ''} on this day.</div>` : '';
+  const premHtml = prem
+    ? `<div style="margin-top:10px;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:10px;padding:9px 11px;font-size:12px;color:var(--accent);"><b>${escapeHtml(prem.label)}</b> – premium date. Consider charging above your usual.</div>`
+    : (items.length ? `<div style="margin-top:10px;background:var(--accent-dim);border:1px solid rgba(240,165,0,.3);border-radius:10px;padding:9px 11px;font-size:12px;color:var(--accent);">You’re already booked that day, so your time’s scarcer. Worth a higher fee.</div>` : '');
+
+  el.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;">
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">That day</div>
+      ${items.length ? rows : '<div style="font-size:12px;color:var(--text-2);">Nothing else on this day.</div>'}
+      ${clashWarn}${headsUp}${premHtml}
+    </div>`;
 }
 
 function selectFullFormSource(value) {
