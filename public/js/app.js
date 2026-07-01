@@ -21864,16 +21864,26 @@ const ONBOARDING_STEPS = [
       // server-side in findOrCreateUser) so the marketplace has a healthy
       // pool from day one. Users who don't want dep offers can flip it
       // off in Profile > Edit Profile.
+      // Chips cover the common cases; the free-text row covers everyone else
+      // (cello, trombone, harp, percussion...) so no player is locked out of
+      // answering, and the marketplace matching gets real data.
+      const others = current.filter(c => !options.map(o => o.toLowerCase()).includes(c.toLowerCase()));
       return `
         <div style="text-align:left;margin-bottom:14px;">
           <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Instruments</label>
           <div id="onbInstrChips" style="display:flex;flex-wrap:wrap;gap:6px;">${chips}</div>
+          <input id="onbInstrOther" type="text" value="${escapeHtml(others.join(', '))}" placeholder="Anything else? e.g. Cello, Trombone" style="width:100%;margin-top:10px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;box-sizing:border-box;">
         </div>`;
     },
     collect: () => {
       const body = {};
       const inputs = document.querySelectorAll('input[name="onbInstrument"]:checked');
-      body.instruments = Array.from(inputs).map(i => i.value);
+      const picked = Array.from(inputs).map(i => i.value);
+      const otherRaw = (document.getElementById('onbInstrOther')?.value || '');
+      const others = otherRaw.split(',').map(s => s.trim()).filter(Boolean).map(s => s.slice(0, 40));
+      const seen = new Set(picked.map(p => p.toLowerCase()));
+      others.forEach(o => { if (!seen.has(o.toLowerCase())) { picked.push(o); seen.add(o.toLowerCase()); } });
+      body.instruments = picked;
       return body;
     },
     cta: 'Next',
@@ -21932,12 +21942,13 @@ const ONBOARDING_STEPS = [
     // upcoming bookings can pull both in during the same setup session.
     //
     // Time framing matters: this step is the moment a user decides "is this
-    // worth the effort?". The body copy sets the 15-20 minute expectation
-    // honestly so the user doesn't bail when the picker takes a minute.
+    // worth the effort?". The copy closes the 30-second promise ("basics
+    // done") before setting an honest per-import expectation, so the two
+    // never read as contradicting each other.
     kind: 'picker',
     emoji: '📥',
     title: 'Bring your gigs in',
-    body: "Importing what you've already got is the fastest way to make TrackMyGigs useful. Pick a source: calendar, spreadsheet, or Google Sheet. You can do more than one. Plan for 15 to 20 minutes total if you want everything in.",
+    body: "That's the basics done. Now bring in what you've already got - calendar, spreadsheet, or Google Sheet (you can do more than one). Each import takes a few minutes, and everything you connect is managed from Profile.",
     final: true,
   },
 ];

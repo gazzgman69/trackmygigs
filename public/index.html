@@ -157,7 +157,7 @@
             <span class="nav-label">Home</span>
           </div>
           <div class="nav-item" data-screen="gigs">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
             <span class="nav-label">Gigs</span>
           </div>
           <div class="nav-item" data-screen="calendar">
@@ -461,17 +461,17 @@
       </div>
       <div style="display:flex;gap:8px;margin-bottom:16px">
         <button onclick="window.aiScanReceipt && window.aiScanReceipt({ onApply: window.applyAIScannedReceipt })" class="receipt-add-btn" style="border:1px solid rgba(240,165,0,.45);">
-          <div style="font-size:20px">✨</div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto;"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3z"/></svg>
           <div style="font-size:11px;font-weight:600;color:var(--accent,#f0a500);margin-top:4px">Scan with AI</div>
           <div style="font-size:9px;color:var(--text-3);margin-top:2px">Photo or paste → auto-fill</div>
         </button>
         <button onclick="showReceiptForm('snap');var _rsp=document.getElementById('receiptSnapPhoto');if(_rsp)_rsp.click();" class="receipt-add-btn">
-          <div style="font-size:20px">📸</div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
           <div style="font-size:11px;font-weight:600;color:var(--text);margin-top:4px">Snap receipt</div>
           <div style="font-size:9px;color:var(--text-3);margin-top:2px">Camera opens → fill in details</div>
         </button>
         <button onclick="showReceiptForm('manual')" class="receipt-add-btn">
-          <div style="font-size:20px">✏️</div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto;"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
           <div style="font-size:11px;font-weight:600;color:var(--text);margin-top:4px">Manual entry</div>
           <div style="font-size:9px;color:var(--text-3);margin-top:2px">Type it in yourself</div>
         </button>
@@ -646,7 +646,7 @@
   </div>
 
   <!-- Finance Panel -->
-  <div class="panel-overlay" id="panel-finance">
+  <div class="panel-overlay panel-keep-header" id="panel-finance">
     <div class="panel-header">
       <button class="panel-back" onclick="closePanel('panel-finance')">&#8249; Back</button>
       <div class="panel-title">Finance Dashboard</div>
