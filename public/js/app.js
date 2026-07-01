@@ -50,6 +50,14 @@ function setAppHeight() {
   // beyond the real viewport.
   var z = parseFloat(document.body && document.body.style.zoom) || 1;
   document.documentElement.style.setProperty('--app-height', (vh / z) + 'px');
+  // --app-nav-h positions panel-keep-header panels above the bottom nav. The
+  // nav's height varies by device (safe-area inset padding), so measure the
+  // real thing; a stale constant leaves a strip of the underlying screen
+  // visible between the panel bottom and the nav.
+  var nav = document.querySelector('.app-nav');
+  if (nav && nav.offsetHeight) {
+    document.documentElement.style.setProperty('--app-nav-h', (nav.offsetHeight / z) + 'px');
+  }
 }
 window.setAppHeight = setAppHeight;
 setAppHeight();
@@ -967,14 +975,14 @@ function determineHomeState(stats) {
   const next7Count = parseInt(stats.gigs_next_7_days || 0, 10);
   if (next7Count >= 2 && daysUntil <= 7) return { kind: 'busy', gig: next, count: next7Count };
   if (daysUntil <= 14) return { kind: 'upcoming', gig: next, daysUntil };
-  return { kind: 'quiet', daysUntil };
+  return { kind: 'quiet', daysUntil, gig: next };
 }
 
 function buildHomeHero(state) {
   if (state.kind === 'day-of')   return buildHomeHeroDayOf(state.gig);
   if (state.kind === 'busy')     return buildHomeHeroBusy(state.gig, state.count);
   if (state.kind === 'upcoming') return buildHomeHeroUpcoming(state.gig, state.daysUntil);
-  return buildHomeHeroQuiet(state.daysUntil);
+  return buildHomeHeroQuiet(state.daysUntil, state.gig);
 }
 
 // ── Hero: Day of gig ─────────────────────────────────────────────────────────
@@ -1107,14 +1115,38 @@ function buildHomeHeroBusy(gig, count) {
 }
 
 // ── Hero: Quiet day (no gig within 14 days) ──────────────────────────────────
-function buildHomeHeroQuiet(daysUntil) {
-  const titleLine = (daysUntil != null && daysUntil > 0)
-    ? `Nothing on for ${daysUntil} day${daysUntil === 1 ? '' : 's'}`
-    : 'No gigs scheduled';
+// Two variants: with a far-out next gig, lead with that gig (function players
+// book months ahead; "Nothing on for 73 days" reads as "you have no work" and
+// contradicts the vitals row). Only a truly empty diary gets the empty state.
+function buildHomeHeroQuiet(daysUntil, gig) {
+  if (gig && daysUntil != null && daysUntil > 0) {
+    const feePart = (gig.fee != null && gig.fee !== '')
+      ? ` · <span style="color:var(--success);font-weight:700;">£${escapeHtml(String(gig.fee))}</span>`
+      : '';
+    return `
+      <div style="margin:0 16px 10px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 16px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <span style="font-size:10px;font-weight:700;color:var(--text-3);letter-spacing:1.2px;text-transform:uppercase;">Next gig</span>
+          <span style="margin-left:auto;background:var(--accent-dim);color:var(--accent);font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;">in ${daysUntil} day${daysUntil === 1 ? '' : 's'}</span>
+        </div>
+        <div onclick="openGigDetail('${escapeAttr(gig.id)}')" style="display:flex;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;cursor:pointer;">
+          <div style="width:3px;height:32px;border-radius:2px;background:var(--success);flex-shrink:0;"></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(gig.band_name || gig.venue_name || 'Next gig')}</div>
+            <div style="font-size:11px;color:var(--text-2);margin-top:1px;">${formatDateLong(gig.date)}${feePart}</div>
+          </div>
+          <span style="color:var(--text-3);font-size:16px;flex-shrink:0;">›</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+          <div style="flex:1;font-size:11px;color:var(--text-3);">Quiet until then. Fill the gap?</div>
+          <button onclick="openQuickLogSheet()" style="background:var(--accent);color:#000;border:none;font-size:12px;font-weight:700;padding:8px 16px;border-radius:999px;cursor:pointer;">+ Log a gig</button>
+        </div>
+      </div>`;
+  }
   return `
     <div style="margin:0 16px 10px;background:var(--card);border:1px dashed var(--border);border-radius:14px;padding:18px 16px;text-align:center;">
       <div style="font-size:28px;margin-bottom:8px;">🎷</div>
-      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">${titleLine}</div>
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">No gigs scheduled</div>
       <div style="font-size:12px;color:var(--text-2);margin-bottom:12px;">Diary's clear. Log your next gig to get it on the board.</div>
       <button onclick="openQuickLogSheet()" style="background:var(--accent);color:#000;border:none;font-size:12px;font-weight:700;padding:9px 18px;border-radius:999px;cursor:pointer;">+ Log a gig</button>
     </div>`;
@@ -22723,21 +22755,16 @@ async function finishOnboarding(opts) {
     }
     return;
   }
-  // All other paths land on Profile with the rows the wizard just touched
-  // pulsing, so people learn where their connections and payment details
-  // live before they ever need to change them.
+  // All other paths land on Home: the day-zero dashboard (vitals, week strip,
+  // "Finish setting up" checklist) is the guided next step, and stranding a
+  // brand-new user on the Profile sub-screen made their first landing a
+  // Back-button dead end. A toast still teaches where connections and payment
+  // details live without dragging them there.
   try {
-    openPanel('profile-panel');
-    if (typeof renderProfileScreen === 'function') renderProfileScreen();
+    if (typeof showScreen === 'function') showScreen('home');
     setTimeout(() => {
-      ['profileCalendarRow', 'profileSheetsRow', 'profileEditBtn'].forEach((id) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.classList.add('onb-pulse');
-        setTimeout(() => el.classList.remove('onb-pulse'), 4000);
-      });
-      try { showToast('Your Google connections and payment details live here in Profile'); } catch (_) {}
-    }, 500);
+      try { showToast('Tip: Google connections and payment details live in Profile'); } catch (_) {}
+    }, 700);
   } catch (err) {
     console.error('Onboarding settings tour failed (non-fatal):', err);
   }

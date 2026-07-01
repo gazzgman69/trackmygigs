@@ -39,7 +39,9 @@
   --radius-lg: 0.75rem;
 
   --app-header-h: 56px;
-  --app-nav-h: 104px;
+  /* Fallback only: setAppHeight() measures the real .app-nav height (which
+     includes the safe-area inset) and overrides this at boot and on resize. */
+  --app-nav-h: 60px;
 }
 
 * {
@@ -130,12 +132,6 @@ body {
 
 .avatar:active {
   transform: scale(0.95);
-}
-
-.onb-pulse { animation: onbPulse 1.2s ease-in-out 3; }
-@keyframes onbPulse {
-  0%, 100% { box-shadow: none; }
-  50% { box-shadow: inset 0 0 0 2px var(--accent); }
 }
 
 .greeting {
