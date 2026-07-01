@@ -3047,6 +3047,7 @@ function personalEventsToPins(events) {
       transparency: pe.transparency || 'opaque',
       reminders: pe.reminders || null,
       timezone: pe.timezone || 'Europe/London',
+      recurring_event_id: pe.recurring_event_id || null,
     };
     if (pe.all_day) {
       const s = (pe.start_date || '').slice(0, 10);
@@ -3125,7 +3126,11 @@ function closePersonalEventDetail() {
 }
 
 async function deletePersonalEvent(peId) {
-  if (!confirm('Delete this event? It will be removed from your Google Calendar too.')) return;
+  const p = (Array.isArray(window._googlePins) ? window._googlePins : []).find(x => x.pe_id === peId);
+  const msg = (p && p.recurring_event_id)
+    ? 'This is a repeating event. Delete it and all its occurrences? It will be removed from your Google Calendar too.'
+    : 'Delete this event? It will be removed from your Google Calendar too.';
+  if (!confirm(msg)) return;
   try {
     const r = await fetch(`/api/calendar/personal-events/${encodeURIComponent(peId)}`, { method: 'DELETE' });
     if (!r.ok) { showToast('Could not delete. Try again.'); return; }
@@ -3170,16 +3175,25 @@ function _weekdayCode(dateStr) {
   return ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'][d.getDay()] || 'MO';
 }
 // Build an RFC5545 RRULE from a preset + the event's date. Matches Google's
-// preset set; the custom builder (interval/until) is a later add.
-function buildRRule(preset, dateStr) {
+// preset set; a custom builder (interval, user-chosen end) is a later add.
+function buildRRule(preset, dateStr, allDay) {
+  let base;
   switch (preset) {
-    case 'daily': return 'FREQ=DAILY';
-    case 'weekly': return `FREQ=WEEKLY;BYDAY=${_weekdayCode(dateStr)}`;
-    case 'weekday': return 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR';
-    case 'monthly': return 'FREQ=MONTHLY';
-    case 'annually': return 'FREQ=YEARLY';
+    case 'daily': base = 'FREQ=DAILY'; break;
+    case 'weekly': base = `FREQ=WEEKLY;BYDAY=${_weekdayCode(dateStr)}`; break;
+    case 'weekday': base = 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'; break;
+    case 'monthly': base = 'FREQ=MONTHLY'; break;
+    case 'annually': base = 'FREQ=YEARLY'; break;
     default: return null;
   }
+  // Bound the series ~2 years out so Google caps its own expansion (no endless
+  // instances, and none lost by incremental sync). UNTIL must match DTSTART's
+  // type: a bare date for all-day, a UTC datetime for timed.
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setFullYear(d.getFullYear() + 2);
+  const pad = (n) => String(n).padStart(2, '0');
+  const ymd = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  return `${base};UNTIL=${allDay ? ymd : ymd + 'T235959Z'}`;
 }
 function _peToggleAllDay() {
   const cb = document.getElementById('pefAllDay');
@@ -3309,7 +3323,7 @@ async function savePersonalEventForm() {
   const repeatEl = document.getElementById('pefRepeat');
   const repeat = repeatEl ? repeatEl.value : 'none';
   if (!peId && repeat && repeat !== 'none') {
-    const rr = buildRRule(repeat, date);
+    const rr = buildRRule(repeat, date, allDay);
     if (rr) body.rrule = rr;
   }
 
@@ -3319,7 +3333,9 @@ async function savePersonalEventForm() {
     const url = peId ? `/api/calendar/personal-events/${encodeURIComponent(peId)}` : '/api/calendar/personal-events';
     const r = await fetch(url, { method: peId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!r.ok) {
-      showToast('Could not save. Try again.');
+      let msg = 'Could not save. Try again.';
+      try { const e = await r.json(); if (e && e.error) msg = e.error; } catch (_) {}
+      showToast(msg);
       if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = peId ? 'Save changes' : 'Add event'; }
       return;
     }

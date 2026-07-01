@@ -2221,18 +2221,13 @@ async function pullFromGoogle(userId) {
         const priv = event.extendedProperties && event.extendedProperties.private;
         if (priv && (priv.tmg_source === 'blocked_date' || priv.tmg_gig_id)) continue;
 
-        // Cap recurring-instance storage: occurrences expand endlessly, so don't
-        // store recurring instances more than ~18 months out (keeps the table lean).
-        if (event.recurringEventId) {
-          const startStr = event.start && (event.start.dateTime || event.start.date);
-          if (startStr) {
-            const horizon = new Date(); horizon.setMonth(horizon.getMonth() + 18);
-            if (new Date(startStr) > horizon) continue;
-          }
-        }
+        // (No storage cap here: a storage-time skip is incompatible with
+        // incremental sync, which would never re-fetch a skipped instance as it
+        // ages into range. TMG-created series are bounded with an RRULE UNTIL so
+        // Google caps expansion at the source; the row count stays finite.)
 
-        // Otherwise it is a personal / busy event. Store it (the helper skips our
-        // own echo, adopts orphans, and handles all-day + recurring instances).
+        // Store it (the helper skips our own echo, adopts orphans, and handles
+        // all-day + recurring instances).
         try {
           if (await upsertPersonalEventFromGoogle(userId, event)) personalUpserted++;
         } catch (peErr) {
@@ -2538,7 +2533,16 @@ router.post('/personal-events', async (req, res) => {
        v.start_date, v.end_date, v.timezone, v.transparency, v.visibility, v.color_id, v.reminders, v.rrule, !!v.rrule]
     );
     const row = ins.rows[0];
-    try { await pushPersonalEventToGoogle(req.user.id, row); } catch (_) {}
+    let pushedId = null;
+    try { pushedId = await pushPersonalEventToGoogle(req.user.id, row); } catch (_) {}
+    if (v.rrule && !pushedId) {
+      // A repeating event relies on Google to expand the series into occurrences.
+      // Without a successful push there is no series and the master row would be
+      // invisible (excluded from the display query), so roll it back and tell the
+      // user instead of silently losing the event.
+      await db.query('DELETE FROM personal_events WHERE id = $1 AND user_id = $2', [row.id, req.user.id]);
+      return res.status(409).json({ error: 'Connect your Google Calendar to add repeating events.' });
+    }
     const fresh = await db.query('SELECT * FROM personal_events WHERE id = $1 AND user_id = $2', [row.id, req.user.id]);
     res.json({ event: fresh.rows[0] || row, success: true });
   } catch (err) {
@@ -2581,11 +2585,27 @@ router.patch('/personal-events/:id', async (req, res) => {
 router.delete('/personal-events/:id', async (req, res) => {
   try {
     const cur = await db.query(
-      'SELECT id, google_event_id FROM personal_events WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
+      'SELECT id, google_event_id, recurring_event_id FROM personal_events WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
       [req.params.id, req.user.id]
     );
     if (cur.rows.length === 0) return res.status(404).json({ error: 'not found' });
     const row = cur.rows[0];
+
+    // Recurring occurrence: delete the whole series. Otherwise deleting one
+    // occurrence leaves the hidden master orphaned and the series can re-expand.
+    // The master's Google id equals each instance's recurring_event_id.
+    if (row.recurring_event_id) {
+      const seriesId = row.recurring_event_id;
+      const ok = await removePersonalEventFromGoogle(req.user.id, seriesId);
+      if (!ok) return res.status(502).json({ error: 'Could not remove from Google, not deleted. Try again.' });
+      await db.query(
+        `UPDATE personal_events SET deleted_at = NOW(), status = 'cancelled', updated_at = NOW()
+         WHERE user_id = $1 AND (google_event_id = $2 OR recurring_event_id = $2)`,
+        [req.user.id, seriesId]
+      );
+      return res.json({ success: true, series: true });
+    }
+
     if (row.google_event_id) {
       // Only soft-delete locally if Google actually removed it; otherwise the
       // event survives in Google but vanishes from TMG (an invisible live ghost
