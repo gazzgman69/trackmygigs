@@ -85,11 +85,20 @@ changes pushed to Google. Next: C4 (gig-entry day context + fee nudge), C5
 - Also done 2026-07-01: deleted the [TEST] orphan from Google; "Add gig" from a day
   now prefills that date into the full form (C4 panel populates on open).
 
+## Public link  [DONE, logic-verified 2026-07-01]
+- [x] /share folds busy personal events into unavailable days on the D1 default:
+      all-day events block every day they cover; timed events block the day only if
+      they run into the evening (17:00+, cross-midnight handled via start time), so
+      daytime appointments still leave the evening bookable. Free-marked events
+      skipped, recurring masters excluded, no title/time ever exposed. Live
+      end-to-end needs a public_slug (opt-in to publish availability), not set here.
+
 ## Later / parked
-- [ ] events.watch push channel (replace polling), custom recurrence editor, event
+- [ ] events.watch push channel (replace polling), custom recurrence editor
+      (interval / until), series-level recurrence edit (this-and-following), event
       colour, per-calendar selection UI, natural-language time parse.
-- [ ] D1 Public link: does a personal EVENING event make you unavailable? (needs the
-      stored events from C1 + a >= 17:00 boundary). Decide after the calendar lands.
+- [ ] Easter bank holidays in the premium-date detector (no fixed rule; needs a
+      small hardcoded map or an Easter computation).
 
 Verify: events created in Google appear properly in TMG and vice versa; deletes
 propagate both ways; an all-day event spans the right single day; a recurring Google
