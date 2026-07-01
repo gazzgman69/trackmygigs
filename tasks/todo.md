@@ -71,7 +71,14 @@ changes pushed to Google. Next: C4 (gig-entry day context + fee nudge), C5
       omitted (no fixed rule) - add later.
 - Note (not C4): "Add gig" from a day doesn't prefill that date into the full form
   (pre-existing wizard->full handoff gap). Worth a small fix.
-### C5 - recurrence + reminders  [DONE, verified live 2026-07-01; adversarial review running]
+### C5 - recurrence + reminders  [DONE + adversarially reviewed & fixed, verified live 2026-07-01]
+- Review caught real recurrence bugs, all fixed + re-verified: series now bounded
+  with an RRULE UNTIL (~2 years) so Google caps expansion (removed the buggy
+  storage cap that lost far-future instances under incremental sync); recurring
+  create rejects with a clear message if Google isn't reachable (no invisible
+  master / silent data loss); deleting any occurrence removes the WHOLE series
+  (105-instance series deleted from one occurrence, 0 remaining). Series-level
+  EDIT and single-occurrence delete remain deferred.
 - [x] Preset recurrence create (Daily / Weekly on <day> / Every weekday / Monthly /
       Annually) as real RRULE. Stored as one hidden master row; Google expands it and
       the instances render. Verified live: weekly event -> 78 capped instances, 13
