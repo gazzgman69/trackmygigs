@@ -21947,8 +21947,9 @@ const ONBOARDING_STEPS = [
     // never read as contradicting each other.
     kind: 'picker',
     emoji: '📥',
+    // Copy lives in renderImportPicker (the picker bypasses the standard
+    // step renderer, so a body here would be dead text that drifts).
     title: 'Bring your gigs in',
-    body: "That's the basics done. Now bring in what you've already got - calendar, spreadsheet, or Google Sheet (you can do more than one). Each import takes a few minutes, and everything you connect is managed from Profile.",
     final: true,
   },
 ];
@@ -22162,7 +22163,7 @@ function renderImportPicker(stepIndex, opts) {
     ? (allDone
         ? "Everything imported. Hit done to land on your home screen, and you can pull more in later from Profile."
         : "You can chain as many imports as you want. Hit done when you're finished.")
-    : "Importing what you've already got is the fastest way to make TrackMyGigs useful. Pick a source: calendar, spreadsheet, or Google Sheet. You can do more than one, and your Sheet can live on a different Google account than your calendar. Everything you connect here is managed from Profile afterwards. Plan for 15 to 20 minutes total if you want everything in.";
+    : "That's the basics done. Now bring in what you've already got - calendar, spreadsheet, or Google Sheet (you can do more than one). Each import takes a few minutes, and everything you connect is managed from Profile.";
 
   const cardsHtml = remaining.map(src => {
     const usedTag = completed.includes(src.key)
