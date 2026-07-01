@@ -1186,7 +1186,7 @@ function buildHomeNeedsStrip(stats, state) {
 
   if (chips.length === 0) {
     if (state && state.kind === 'quiet') {
-      return `<div style="margin:0 16px 12px;padding:10px 12px;background:transparent;border:1px dashed var(--border);border-radius:10px;text-align:center;font-size:11px;color:var(--text-3);font-style:italic;">All clear. Enjoy the quiet.</div>`;
+      return `<div style="margin:0 16px 12px;padding:10px 12px;background:transparent;border:1px dashed var(--border);border-radius:10px;text-align:center;font-size:11px;color:var(--text-3);font-style:italic;">Nothing needs you right now.</div>`;
     }
     return '';
   }
@@ -1901,7 +1901,10 @@ function _gigsPaintHero() {
   const dateLabel = dObj ? dObj.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long' }) : '';
   const times = [g.start_time, g.end_time].filter(Boolean).map(t => String(t).slice(0, 5)).join(' – ');
   const title = g.band_name || g.venue_name || 'Gig';
-  const sub = [dateLabel, times, g.band_name && g.venue_name ? g.venue_name : (g.venue_address || '')].filter(Boolean).join(' · ');
+  // Only repeat the venue in the subtitle when it's actually different from
+  // the title (quick-logged gigs often carry the venue as the act name too).
+  const venueDistinct = g.venue_name && String(g.venue_name).trim().toLowerCase() !== String(title).trim().toLowerCase();
+  const sub = [dateLabel, times, venueDistinct ? g.venue_name : (g.venue_address || '')].filter(Boolean).join(' · ');
   const maps = _gpInvoiceMaps();
 
   const chips = [];
@@ -2033,8 +2036,10 @@ function _gigsPaintTasks() {
       <div style="margin:0 16px;background:var(--card);border:1px dashed var(--border);border-radius:12px;padding:14px;text-align:center;font-size:12px;color:var(--text-3);">All clear. Nothing waiting on you. 🎉</div>`;
     return;
   }
+  // Cap the collapsed view at 3 so the actual gig list stays above the fold;
+  // "Show N more" expands the full stack.
   const expanded = !!window._gigsTasksExpanded;
-  const visible = expanded ? tasks : tasks.slice(0, 5);
+  const visible = expanded ? tasks : tasks.slice(0, 3);
   const cards = visible.map(t => `
     <div style="margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-left:3px solid ${t.color};border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;">
       <span style="font-size:18px;flex-shrink:0;">${t.ico}</span>
@@ -2047,8 +2052,8 @@ function _gigsPaintTasks() {
         <span onclick="${t.skipOnclick || `snoozeGigTask('${escapeAttr(t.key)}', ${t.snoozeDays || 7})`}" style="font-size:10px;color:var(--text-3);cursor:pointer;padding:2px 6px;">later</span>
       </div>
     </div>`).join('');
-  const more = (!expanded && tasks.length > 5)
-    ? `<div onclick="window._gigsTasksExpanded=true;_gigsPaintTasks();" style="margin:0 16px;text-align:center;font-size:12px;color:var(--accent);font-weight:600;padding:8px;cursor:pointer;">Show ${tasks.length - 5} more</div>`
+  const more = (!expanded && tasks.length > 3)
+    ? `<div onclick="window._gigsTasksExpanded=true;_gigsPaintTasks();" style="margin:0 16px;text-align:center;font-size:12px;color:var(--accent);font-weight:600;padding:8px;cursor:pointer;">Show ${tasks.length - 3} more</div>`
     : '';
   slot.innerHTML = `
     <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:0.8px;margin:18px 16px 8px;display:flex;justify-content:space-between;">Needs attention <span style="color:var(--accent);">${tasks.length} thing${tasks.length === 1 ? '' : 's'}</span></div>
@@ -5195,11 +5200,11 @@ function buildOffersHTML(content, offers) {
       <div style="display:flex;align-items:center;gap:6px;">
         <div onclick="showAcceptedOffers()" title="Accepted offers" style="display:flex;align-items:center;gap:4px;background:var(--success-dim);border:1px solid rgba(63,185,80,.3);border-radius:12px;padding:5px 10px;cursor:pointer;">
           <span style="font-size:12px;font-weight:700;color:var(--success);">${acceptedN}</span>
-          <span style="font-size:10px;color:var(--success);">&#x2713;</span>
+          <span style="font-size:10px;color:var(--success);">accepted</span>
         </div>
         <div onclick="showDeclinedOffers()" title="Declined or expired" style="display:flex;align-items:center;gap:4px;background:var(--danger-dim);border:1px solid rgba(248,81,73,.3);border-radius:12px;padding:5px 10px;cursor:pointer;">
           <span style="font-size:12px;font-weight:700;color:var(--danger);">${declinedN}</span>
-          <span style="font-size:10px;color:var(--danger);">&#x2715;</span>
+          <span style="font-size:10px;color:var(--danger);">declined</span>
         </div>
         <button onclick="openDepPicker()" style="background:var(--accent);color:#000;border:none;border-radius:20px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">Send dep</button>
       </div>
@@ -11025,10 +11030,16 @@ async function openGigDetail(gigId) {
   if (editBtn) editBtn.onclick = () => openEditGig(gig.id);
   setTimeout(() => loadGigWeather(gig.id, 'gigDetailWeather'), 0);
 
+  // Title carries whichever identity the gig has; the act eyebrow only renders
+  // when it adds information (quick-logged gigs often carry the venue as the
+  // act name too, which used to print the same string twice).
+  const actName = String(gig.band_name || '').trim();
+  const venueTitle = String(gig.venue_name || '').trim() || actName || 'Untitled gig';
+  const showActEyebrow = actName && actName.toLowerCase() !== venueTitle.toLowerCase();
   body.innerHTML = `
     <div style="background:var(--surface);padding:16px 20px 20px;">
-      <div style="font-size:13px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${escapeHtml(gig.band_name || 'Unnamed Gig')}</div>
-      <div style="font-size:22px;font-weight:700;color:var(--text);margin-bottom:16px;">${escapeHtml(gig.venue_name || 'No venue')}</div>
+      ${showActEyebrow ? `<div style="font-size:13px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${escapeHtml(actName)}</div>` : ''}
+      <div style="font-size:22px;font-weight:700;color:var(--text);margin-bottom:16px;">${escapeHtml(venueTitle)}</div>
       <div style="font-size:14px;color:var(--text-2);margin-bottom:6px;">\uD83D\uDCC5 ${formatDateLong(gig.date)}</div>
       ${gig.start_time ? `<div style="font-size:14px;color:var(--text-2);margin-bottom:6px;">\uD83D\uDD56 ${formatTime(gig.start_time)}${gig.end_time ? '\u2013' + formatTime(gig.end_time) : ''}${gig.load_in_time ? ' \u00B7 Load-in: ' + formatTime(gig.load_in_time) : ''}</div>` : ''}
       ${gig.venue_address ? `<div onclick="openDirections('${escapeHtml(gig.venue_address).replace(/'/g, '&#39;')}')" style="font-size:14px;color:var(--text-2);margin-bottom:6px;cursor:pointer;"><span style="color:var(--accent);">\uD83D\uDCCD</span> ${escapeHtml(gig.venue_address)} <span style="color:var(--accent);font-size:12px;font-weight:600;margin-left:4px;">Open in Maps \u203A</span></div>` : ''}
