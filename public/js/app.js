@@ -1296,25 +1296,25 @@ function buildHomeActionGrid() {
         <div style="font-size:11px;font-weight:700;color:var(--text);">New invoice</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">From gig or blank</div>
       </div>
-      <div class="feat-marketplace" onclick="openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        <div style="font-size:11px;font-weight:700;color:var(--text);">Find dep</div>
-        <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Marketplace</div>
-      </div>
       <div onclick="openPanel('panel-chat-inbox'); renderChatInbox();" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
         <div style="font-size:11px;font-weight:700;color:var(--text);">Inbox</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Chats &amp; offers</div>
       </div>
-      <div onclick="showScreen('calendar')" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-        <div style="font-size:11px;font-weight:700;color:var(--text);">Calendar</div>
+      <div onclick="openPanel('panel-block')" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M9 16l6-6M15 16l-6-6"/></svg>
+        <div style="font-size:11px;font-weight:700;color:var(--text);">Availability</div>
         <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Block / unblock</div>
+      </div>
+      <div onclick="openPanel('panel-repertoire'); if (typeof openRepertoirePanel === 'function') openRepertoirePanel();" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        <div style="font-size:11px;font-weight:700;color:var(--text);">Repertoire</div>
+        <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Songs &amp; setlists</div>
       </div>
       <div onclick="openHomeMoreSheet()" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><circle cx="5" cy="12" r="1.6" fill="var(--accent)" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="var(--accent)" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="var(--accent)" stroke="none"/></svg>
         <div style="font-size:11px;font-weight:700;color:var(--text);">More</div>
-        <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Repertoire, EPK…</div>
+        <div style="font-size:9px;color:var(--text-3);margin-top:1px;">Network, EPK…</div>
       </div>
     </div>`;
 }
@@ -1579,7 +1579,7 @@ function openHomeMoreSheet() {
   overlay.className = 'sheet-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
   const items = [
-    { ico: '🎵', label: 'Repertoire', onclick: "openPanel('panel-repertoire'); if (typeof openRepertoirePanel === 'function') openRepertoirePanel();" },
+    { ico: '🎭', label: 'Find a dep', cls: 'feat-marketplace', onclick: "openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" },
     { ico: '🤝', label: 'My Network', onclick: "openPanel('panel-network'); if (typeof openNetworkPanel === 'function') openNetworkPanel();" },
     { ico: '🎤', label: 'Professional EPK', onclick: "if (typeof viewEPK === 'function') viewEPK();" },
     { ico: '📈', label: 'Finance', onclick: "if (window.openFinanceAt) window.openFinanceAt('tax-year');" },
@@ -1590,7 +1590,7 @@ function openHomeMoreSheet() {
     <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;">
       <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
       <div style="font-size:12px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">More</div>
-      ${items.map(it => `<div onclick="document.querySelectorAll('.sheet-overlay').forEach(o => o.remove()); ${it.onclick}" style="display:flex;align-items:center;gap:12px;padding:12px 8px;border-bottom:1px solid var(--border);cursor:pointer;"><span style="font-size:18px;">${it.ico}</span><span style="flex:1;font-size:14px;color:var(--text);font-weight:500;">${it.label}</span><span style="color:var(--text-3);font-size:14px;">›</span></div>`).join('')}
+      ${items.map(it => `<div class="${it.cls || ''}" onclick="document.querySelectorAll('.sheet-overlay').forEach(o => o.remove()); ${it.onclick}" style="display:flex;align-items:center;gap:12px;padding:12px 8px;border-bottom:1px solid var(--border);cursor:pointer;"><span style="font-size:18px;">${it.ico}</span><span style="flex:1;font-size:14px;color:var(--text);font-weight:500;">${it.label}</span><span style="color:var(--text-3);font-size:14px;">›</span></div>`).join('')}
       <button onclick="document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());" style="width:100%;margin-top:14px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;">Close</button>
     </div>`;
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
