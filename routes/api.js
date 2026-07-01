@@ -1700,12 +1700,16 @@ router.patch('/user/profile', async (req, res) => {
       }
     }
 
-    // instruments comes as a comma-separated string from the client but the
-    // column is TEXT[].  Convert it to a proper PG array (or null to keep
-    // the existing value via COALESCE).
+    // instruments arrives as a comma-separated string (Profile edit form) or
+    // an array (onboarding tour). The column is TEXT[]; normalise either shape
+    // to a proper PG array (or null to keep the existing value via COALESCE).
+    // The old string-only version threw on arrays, which 500'd the whole PATCH
+    // and silently lost the instruments picked during onboarding.
     let instrumentsArr = null;
     if (instruments) {
-      instrumentsArr = instruments.split(',').map(s => s.trim()).filter(Boolean);
+      const list = Array.isArray(instruments) ? instruments : String(instruments).split(',');
+      instrumentsArr = list.map(s => String(s).trim()).filter(Boolean);
+      if (instrumentsArr.length === 0) instrumentsArr = null;
     }
 
     // Phase IX-E: Directory profile fields.
