@@ -411,7 +411,7 @@ router.get('/share/:slug', async (req, res) => {
 
     // Pull next 400 days of gigs and blocked dates (~13 months, to cover any
     // partial month at the end of the 12-month window).
-    const [gigsR, blockedR] = await Promise.all([
+    const [gigsR, blockedR, personalR] = await Promise.all([
       db.query(
         `SELECT date, start_time, end_time FROM gigs
          WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '400 days'`,
@@ -422,10 +422,47 @@ router.get('/share/:slug', async (req, res) => {
          WHERE user_id = $1 AND date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '400 days'`,
         [user.id]
       ).catch(() => ({ rows: [] })),
+      // Personal events count toward "unavailable" on the public link, but only
+      // busy ones (Free events skip), and never with any detail. Recurring master
+      // rows are excluded (their instances carry the times).
+      db.query(
+        `SELECT all_day, start_date, end_date,
+                (start_at AT TIME ZONE 'Europe/London')::date AS start_day,
+                (start_at AT TIME ZONE 'Europe/London')::time AS start_local,
+                (COALESCE(end_at, start_at) AT TIME ZONE 'Europe/London')::time AS end_local
+           FROM personal_events
+          WHERE user_id = $1 AND deleted_at IS NULL AND status != 'cancelled'
+            AND is_recurring_master IS NOT TRUE
+            AND transparency != 'transparent'
+            AND COALESCE(start_date, (start_at AT TIME ZONE 'Europe/London')::date)
+                  BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '400 days'`,
+        [user.id]
+      ).catch(() => ({ rows: [] })),
     ]);
 
     const bookedSet = new Set(gigsR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
     const blockedSet = new Set(blockedR.rows.map(r => (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10))));
+
+    // Fold busy personal events into the unavailable (blocked) days. An all-day
+    // event blocks every day it covers; a timed event blocks the day only if it
+    // runs into the evening (17:00 or later), so a daytime dentist appointment
+    // still leaves the evening bookable. No title or time is ever exposed.
+    const ymd = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
+    for (const r of personalR.rows) {
+      if (r.all_day) {
+        const s = r.start_date ? ymd(r.start_date) : (r.start_day ? ymd(r.start_day) : null);
+        if (!s) continue;
+        const e = r.end_date ? ymd(r.end_date) : s;
+        let cur = new Date(s + 'T00:00:00Z');
+        const last = new Date(e + 'T00:00:00Z');
+        let guard = 0;
+        while (cur <= last && guard < 400) { blockedSet.add(cur.toISOString().slice(0, 10)); cur.setUTCDate(cur.getUTCDate() + 1); guard++; }
+      } else if (r.start_day) {
+        const startLate = r.start_local && String(r.start_local) >= '17:00:00';
+        const endLate = r.end_local && String(r.end_local) > '17:00:00';
+        if (startLate || endLate) blockedSet.add(ymd(r.start_day));
+      }
+    }
 
     // date → "19:00–23:00" (first gig's range per day; multiple gigs join).
     const timesByDate = new Map();
