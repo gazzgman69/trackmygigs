@@ -2064,7 +2064,12 @@ async function splitRecurringSeries(userId, instanceRow, v) {
   if (!instDate) return null;
 
   // Create the NEW series first, so a failure never truncates the old one.
-  const freshRrule = _rruleSetUntil(rruleLine, _untilToken(_addYearsStr(instDate, 2), allDay));
+  // Preserve the original end: if the old rule was bounded (UNTIL), keep that so
+  // the new series stops when it was meant to; if it was open-ended, bound the
+  // new one ~2 years out so Google does not expand it forever.
+  const freshRrule = /UNTIL=/i.test(rruleLine)
+    ? String(rruleLine)
+    : _rruleSetUntil(rruleLine, _untilToken(_addYearsStr(instDate, 2), allDay));
   const newMasterIns = await db.query(
     `INSERT INTO personal_events
        (user_id, summary, description, location, all_day, start_at, end_at,
