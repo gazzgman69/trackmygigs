@@ -71,11 +71,19 @@ changes pushed to Google. Next: C4 (gig-entry day context + fee nudge), C5
       omitted (no fixed rule) - add later.
 - Note (not C4): "Add gig" from a day doesn't prefill that date into the full form
   (pre-existing wizard->full handoff gap). Worth a small fix.
-### C5 - recurrence + reminders
-- [ ] Preset recurrence create/edit (Daily / Weekly on <day> / Monthly / Annually /
-      Every weekday) as real RRULE; edit scope this / all / this-and-following.
-      Recurring events FROM Google already display from C1 (singleEvents=true).
-- [ ] Reminders pass-through (default useDefault=true; one custom override).
+### C5 - recurrence + reminders  [DONE, verified live 2026-07-01; adversarial review running]
+- [x] Preset recurrence create (Daily / Weekly on <day> / Every weekday / Monthly /
+      Annually) as real RRULE. Stored as one hidden master row; Google expands it and
+      the instances render. Verified live: weekly event -> 78 capped instances, 13
+      Tuesdays shown, master hidden; deleting the master removed the series and the
+      instances cleaned up on the next pull.
+- [x] Recurring-instance storage capped at ~18 months (78 rows, not endless).
+- [x] Reminders pass-through already shipped in C3 (Reminder select -> Google).
+- Edit/delete of a recurring event acts on that occurrence (Google exception /
+  single cancellation). Series-level "this and following" / custom recurrence
+  (interval, until) still deferred to the parked list.
+- Also done 2026-07-01: deleted the [TEST] orphan from Google; "Add gig" from a day
+  now prefills that date into the full form (C4 panel populates on open).
 
 ## Later / parked
 - [ ] events.watch push channel (replace polling), custom recurrence editor, event
