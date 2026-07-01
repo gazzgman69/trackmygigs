@@ -3165,6 +3165,22 @@ function _selectToReminder(v) {
   if (Number.isFinite(m)) return { useDefault: false, overrides: [{ method: 'popup', minutes: m }] };
   return { useDefault: true };
 }
+function _weekdayCode(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'][d.getDay()] || 'MO';
+}
+// Build an RFC5545 RRULE from a preset + the event's date. Matches Google's
+// preset set; the custom builder (interval/until) is a later add.
+function buildRRule(preset, dateStr) {
+  switch (preset) {
+    case 'daily': return 'FREQ=DAILY';
+    case 'weekly': return `FREQ=WEEKLY;BYDAY=${_weekdayCode(dateStr)}`;
+    case 'weekday': return 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR';
+    case 'monthly': return 'FREQ=MONTHLY';
+    case 'annually': return 'FREQ=YEARLY';
+    default: return null;
+  }
+}
 function _peToggleAllDay() {
   const cb = document.getElementById('pefAllDay');
   const times = document.getElementById('pefTimes');
@@ -3226,6 +3242,15 @@ function openPersonalEventForm(opts) {
         <div style="flex:1;"><label style="${lab}">Start</label><input type="time" id="pefStart" value="${startTime}" style="${inp}"></div>
         <div style="flex:1;"><label style="${lab}">End</label><input type="time" id="pefEnd" value="${endTime}" style="${inp}"></div>
       </div>
+      ${editing ? '' : `<label style="${lab}">Repeat</label>
+      <select id="pefRepeat" style="${inp}">
+        <option value="none">Does not repeat</option>
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="weekday">Every weekday (Mon to Fri)</option>
+        <option value="monthly">Monthly</option>
+        <option value="annually">Annually</option>
+      </select>`}
       <label style="${lab}">Location</label>
       <input id="pefLocation" placeholder="Add location" value="${escapeAttr(location)}" style="${inp}">
       <div style="display:flex;gap:10px;">
@@ -3281,6 +3306,13 @@ async function savePersonalEventForm() {
     body = { summary, all_day: false, start: startISO, end: endISO, location, description, transparency, reminders };
   }
 
+  const repeatEl = document.getElementById('pefRepeat');
+  const repeat = repeatEl ? repeatEl.value : 'none';
+  if (!peId && repeat && repeat !== 'none') {
+    const rr = buildRRule(repeat, date);
+    if (rr) body.rrule = rr;
+  }
+
   const saveBtn = document.getElementById('pefSave');
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
   try {
@@ -3292,8 +3324,11 @@ async function savePersonalEventForm() {
       return;
     }
     closePersonalEventForm();
-    showToast(peId ? 'Event updated' : 'Event added');
+    showToast(peId ? 'Event updated' : (body.rrule ? 'Repeating event added' : 'Event added'));
     window._googlePinsKey = null;
+    // A recurring event needs a pull to bring in Google's expanded instances
+    // (the master row itself is hidden from the calendar).
+    if (body.rrule) { try { await fetch('/api/calendar/pull', { method: 'POST' }); } catch (_) {} }
     if (typeof loadGoogleCalendarPins === 'function') { await loadGoogleCalendarPins().catch(() => {}); }
   } catch (_) {
     showToast('Could not save. Try again.');
@@ -6086,6 +6121,12 @@ function openGigWizard() {
     client_phone: '',
     rate_per_hour: '',
   };
+  // Prefill the date when opened from a specific day (day-action sheet / "+"),
+  // so the full form lands on that day and the "that day" context panel populates.
+  if (window._prefillGigDate) {
+    gigWizardData.date = window._prefillGigDate;
+    window._prefillGigDate = null;
+  }
   // Returning users land on whichever entry mode they used last; the wizard
   // stays the friendly default for first-timers. switchGigEntryMode persists it.
   let entryMode = null;

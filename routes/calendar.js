@@ -2221,6 +2221,16 @@ async function pullFromGoogle(userId) {
         const priv = event.extendedProperties && event.extendedProperties.private;
         if (priv && (priv.tmg_source === 'blocked_date' || priv.tmg_gig_id)) continue;
 
+        // Cap recurring-instance storage: occurrences expand endlessly, so don't
+        // store recurring instances more than ~18 months out (keeps the table lean).
+        if (event.recurringEventId) {
+          const startStr = event.start && (event.start.dateTime || event.start.date);
+          if (startStr) {
+            const horizon = new Date(); horizon.setMonth(horizon.getMonth() + 18);
+            if (new Date(startStr) > horizon) continue;
+          }
+        }
+
         // Otherwise it is a personal / busy event. Store it (the helper skips our
         // own echo, adopts orphans, and handles all-day + recurring instances).
         try {
@@ -2468,10 +2478,10 @@ function normalizePersonalEventInput(body) {
     visibility: ['public', 'private', 'confidential'].includes(body.visibility) ? body.visibility : 'default',
     color_id: body.color_id ? String(body.color_id) : null,
     reminders: body.reminders ? JSON.stringify(body.reminders) : null,
-    // Recurrence-create lands in C5: it needs master/instance reconciliation on
-    // pull (singleEvents=true returns instances whose ids differ from the master),
-    // so accepting an rrule here now would create duplicate instance rows. Ignore.
-    rrule: null,
+    // A recurring event is stored as one master row (rrule set, is_recurring_master
+    // true, hidden from display); Google expands it into instances that come back
+    // on the next pull and are what actually render. Only accept a well-formed RRULE.
+    rrule: (body.rrule && /^(RRULE:)?FREQ=/i.test(String(body.rrule))) ? String(body.rrule) : null,
     start_at: null, end_at: null, start_date: null, end_date: null,
   };
   if (allDay) {
@@ -2499,6 +2509,7 @@ router.get('/personal-events', async (req, res) => {
     const rows = await db.query(
       `SELECT * FROM personal_events
         WHERE user_id = $1 AND deleted_at IS NULL AND status != 'cancelled'
+          AND is_recurring_master IS NOT TRUE
           AND COALESCE(start_date, (start_at AT TIME ZONE 'Europe/London')::date) <= $3::date
           AND COALESCE(end_date, (COALESCE(end_at, start_at) AT TIME ZONE 'Europe/London')::date) >= $2::date
         ORDER BY COALESCE(start_at, start_date::timestamptz) ASC`,
@@ -2520,11 +2531,11 @@ router.post('/personal-events', async (req, res) => {
       `INSERT INTO personal_events
          (user_id, summary, description, location, all_day, start_at, end_at,
           start_date, end_date, timezone, transparency, visibility, color_id,
-          reminders, rrule, source)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,'tmg')
+          reminders, rrule, is_recurring_master, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,'tmg')
        RETURNING *`,
       [req.user.id, v.summary, v.description, v.location, v.all_day, v.start_at, v.end_at,
-       v.start_date, v.end_date, v.timezone, v.transparency, v.visibility, v.color_id, v.reminders, v.rrule]
+       v.start_date, v.end_date, v.timezone, v.transparency, v.visibility, v.color_id, v.reminders, v.rrule, !!v.rrule]
     );
     const row = ins.rows[0];
     try { await pushPersonalEventToGoogle(req.user.id, row); } catch (_) {}
