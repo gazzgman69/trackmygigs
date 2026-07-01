@@ -20960,7 +20960,7 @@ async function paintHomeSetupCard(stats) {
   // Profile drives the EPK + instruments checks. Prefer cache, fetch once if cold.
   let profile = window._cachedProfile;
   if (!profile) {
-    try { const r = await fetch('/api/profile'); if (r.ok) profile = await r.json(); } catch (_) {}
+    try { const r = await fetch('/api/user/profile'); if (r.ok) { profile = await r.json(); window._cachedProfile = profile; } } catch (_) {}
   }
   profile = profile || {};
 
