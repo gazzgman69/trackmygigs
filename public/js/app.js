@@ -7515,10 +7515,29 @@ function _fmtYMD(d) {
 }
 function _firstMonday(year, m0) { const d = new Date(year, m0, 1); d.setDate(1 + ((8 - d.getDay()) % 7)); return d; }
 function _lastMonday(year, m0) { const d = new Date(year, m0 + 1, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; }
+function _easterSunday(year) {
+  // Anonymous Gregorian algorithm (Meeus/Jones/Butcher). Returns the local Date
+  // of Easter Sunday for the given year.
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31); // 3 = March, 4 = April
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
 
-// Is this a high-demand date worth charging more for? Fixed seasonal dates plus
-// the computable England & Wales Monday-rule bank holidays. Easter is omitted
-// for now (no fixed rule); the scarcity hint covers already-busy days.
+// Is this a high-demand date worth charging more for? Fixed seasonal dates, the
+// computable England & Wales Monday-rule bank holidays, and the moveable Easter
+// weekend (Good Friday, Easter Sunday, Easter Monday).
 function premiumDateInfo(dateStr) {
   if (!dateStr || dateStr.length < 10) return null;
   const md = dateStr.slice(5);
@@ -7532,6 +7551,12 @@ function premiumDateInfo(dateStr) {
   if (dateStr === _fmtYMD(_firstMonday(year, 4))) return { label: 'Early May bank holiday' };
   if (dateStr === _fmtYMD(_lastMonday(year, 4))) return { label: 'Spring bank holiday' };
   if (dateStr === _fmtYMD(_lastMonday(year, 7))) return { label: 'Summer bank holiday' };
+  const easter = _easterSunday(year);
+  const goodFriday = new Date(easter); goodFriday.setDate(easter.getDate() - 2);
+  const easterMonday = new Date(easter); easterMonday.setDate(easter.getDate() + 1);
+  if (dateStr === _fmtYMD(goodFriday)) return { label: 'Good Friday' };
+  if (dateStr === _fmtYMD(easter)) return { label: 'Easter Sunday' };
+  if (dateStr === _fmtYMD(easterMonday)) return { label: 'Easter Monday' };
   return null;
 }
 
