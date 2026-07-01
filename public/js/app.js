@@ -2517,7 +2517,7 @@ function renderGooglePinCard(p, { mode = 'month' } = {}) {
   const isNudge = !!(window._calendarNudgesById && window._calendarNudgesById[p.id]);
   const nudge = isNudge ? window._calendarNudgesById[p.id] : null;
   const d = new Date(p.date);
-  const accent = isNudge ? 'var(--accent)' : '#4285F4';
+  const accent = isNudge ? 'var(--accent)' : (_peColorHex(p.color_id) || '#4285F4');
   const bg = isNudge
     ? 'linear-gradient(135deg,rgba(240,165,0,.10),rgba(240,165,0,.02))'
     : 'var(--card)';
@@ -3093,6 +3093,7 @@ function personalEventsToPins(events) {
       reminders: pe.reminders || null,
       timezone: pe.timezone || 'Europe/London',
       recurring_event_id: pe.recurring_event_id || null,
+      color_id: pe.color_id || null,
     };
     if (pe.all_day) {
       const s = (pe.start_date || '').slice(0, 10);
@@ -3149,7 +3150,7 @@ function openPersonalEventDetail(peId) {
   sheet.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;';
   sheet.innerHTML = '<div style="width:100%;max-width:480px;background:var(--card);border-radius:16px 16px 0 0;padding:16px 16px 24px;border-top:1px solid var(--border);">'
     + '<div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
-    + '<div style="font-size:16px;font-weight:700;color:var(--text);">' + escapeHtml(p.summary || 'Event') + '</div>'
+    + '<div style="font-size:16px;font-weight:700;color:var(--text);">' + (_peColorHex(p.color_id) ? '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:' + _peColorHex(p.color_id) + ';margin-right:8px;vertical-align:middle;"></span>' : '') + escapeHtml(p.summary || 'Event') + '</div>'
     + '<div style="font-size:12px;color:var(--text-2);margin:4px 0 2px;">' + escapeHtml(when) + '</div>'
     + metaRows.join('')
     + '<div style="display:flex;flex-direction:column;gap:10px;margin-top:18px;">'
@@ -3240,6 +3241,54 @@ function buildRRule(preset, dateStr, allDay) {
   const ymd = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
   return `${base};UNTIL=${allDay ? ymd : ymd + 'T235959Z'}`;
 }
+// Google Calendar event-colour palette (colorId 1-11) mapped to display hex, so
+// a personal event can carry the same colour in TMG and in Google Calendar.
+const _PE_COLORS = [
+  ['1', '#7986CB', 'Lavender'], ['2', '#33B679', 'Sage'], ['3', '#8E24AA', 'Grape'],
+  ['4', '#E67C73', 'Flamingo'], ['5', '#F6BF26', 'Banana'], ['6', '#F4511E', 'Tangerine'],
+  ['7', '#039BE5', 'Peacock'], ['8', '#616161', 'Graphite'], ['9', '#3F51B5', 'Blueberry'],
+  ['10', '#0B8043', 'Basil'], ['11', '#D50000', 'Tomato'],
+];
+function _peColorHex(id) {
+  if (!id) return null;
+  const m = _PE_COLORS.find(c => c[0] === String(id));
+  return m ? m[1] : null;
+}
+function _pePickColor(id) {
+  const inp = document.getElementById('pefColor');
+  if (inp) inp.value = id || '';
+  document.querySelectorAll('#peFormSheet [data-pe-swatch]').forEach(el => {
+    el.style.outline = (el.getAttribute('data-pe-swatch') === String(id)) ? '2px solid var(--text)' : 'none';
+    el.style.outlineOffset = '2px';
+  });
+}
+function _peColorSwatches(selected) {
+  const sel = selected ? String(selected) : '';
+  const none = `<button type="button" data-pe-swatch="" onclick="_pePickColor('')" title="Default" style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border);background:var(--card);cursor:pointer;outline:${!sel ? '2px solid var(--text)' : 'none'};outline-offset:2px;color:var(--text-3);font-size:13px;line-height:24px;">/</button>`;
+  const sw = _PE_COLORS.map(([id, hex, name]) =>
+    `<button type="button" data-pe-swatch="${id}" onclick="_pePickColor('${id}')" title="${name}" style="width:26px;height:26px;border-radius:50%;border:none;background:${hex};cursor:pointer;outline:${sel === id ? '2px solid var(--text)' : 'none'};outline-offset:2px;"></button>`
+  ).join('');
+  return `<div style="display:flex;flex-wrap:wrap;gap:8px;">${none}${sw}</div>`;
+}
+function _peToggleRepeat() {
+  const sel = document.getElementById('pefRepeat');
+  const row = document.getElementById('pefCustomRow');
+  if (sel && row) row.style.display = sel.value === 'custom' ? 'flex' : 'none';
+}
+// Custom "every N days/weeks/months" RRULE. Weekly keeps the event's weekday.
+// Bounded ~2 years out like the presets so Google caps its expansion.
+function buildCustomRRule(n, unit, dateStr, allDay) {
+  n = Math.max(1, Math.min(99, parseInt(n, 10) || 1));
+  let base;
+  if (unit === 'days') base = `FREQ=DAILY;INTERVAL=${n}`;
+  else if (unit === 'months') base = `FREQ=MONTHLY;INTERVAL=${n}`;
+  else base = `FREQ=WEEKLY;INTERVAL=${n};BYDAY=${_weekdayCode(dateStr)}`;
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setFullYear(d.getFullYear() + 2);
+  const pad = (x) => String(x).padStart(2, '0');
+  const ymd = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  return `${base};UNTIL=${allDay ? ymd : ymd + 'T235959Z'}`;
+}
 function _peToggleAllDay() {
   const cb = document.getElementById('pefAllDay');
   const times = document.getElementById('pefTimes');
@@ -3302,14 +3351,24 @@ function openPersonalEventForm(opts) {
         <div style="flex:1;"><label style="${lab}">End</label><input type="time" id="pefEnd" value="${endTime}" style="${inp}"></div>
       </div>
       ${editing ? '' : `<label style="${lab}">Repeat</label>
-      <select id="pefRepeat" style="${inp}">
+      <select id="pefRepeat" onchange="_peToggleRepeat()" style="${inp}">
         <option value="none">Does not repeat</option>
         <option value="daily">Daily</option>
         <option value="weekly">Weekly</option>
         <option value="weekday">Every weekday (Mon to Fri)</option>
         <option value="monthly">Monthly</option>
         <option value="annually">Annually</option>
-      </select>`}
+        <option value="custom">Custom…</option>
+      </select>
+      <div id="pefCustomRow" style="display:none;gap:10px;align-items:center;margin-top:8px;">
+        <span style="font-size:13px;color:var(--text-2);">Every</span>
+        <input type="number" id="pefInterval" min="1" max="99" value="2" style="width:66px;box-sizing:border-box;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:14px;">
+        <select id="pefIntervalUnit" style="flex:1;box-sizing:border-box;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font-size:14px;">
+          <option value="days">days</option>
+          <option value="weeks" selected>weeks</option>
+          <option value="months">months</option>
+        </select>
+      </div>`}
       <label style="${lab}">Location</label>
       <input id="pefLocation" placeholder="Add location" value="${escapeAttr(location)}" style="${inp}">
       <div style="display:flex;gap:10px;">
@@ -3323,6 +3382,9 @@ function openPersonalEventForm(opts) {
       </div>
       <label style="${lab}">Notes</label>
       <textarea id="pefNotes" placeholder="Add notes" style="${inp}min-height:64px;resize:vertical;">${escapeHtml(notes)}</textarea>
+      <label style="${lab}">Colour</label>
+      <input type="hidden" id="pefColor" value="${pe ? escapeAttr(pe.color_id || '') : ''}">
+      ${_peColorSwatches(pe ? (pe.color_id || '') : '')}
       <div style="display:flex;gap:10px;margin-top:18px;">
         <button onclick="closePersonalEventForm()" style="flex:1;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;">Cancel</button>
         <button id="pefSave" onclick="savePersonalEventForm()" style="flex:2;background:var(--accent);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;">${editing ? 'Save changes' : 'Add event'}</button>
@@ -3365,10 +3427,20 @@ async function savePersonalEventForm() {
     body = { summary, all_day: false, start: startISO, end: endISO, location, description, transparency, reminders };
   }
 
+  const colorId = (document.getElementById('pefColor') || {}).value || '';
+  body.color_id = colorId || null;
+
   const repeatEl = document.getElementById('pefRepeat');
   const repeat = repeatEl ? repeatEl.value : 'none';
   if (!peId && repeat && repeat !== 'none') {
-    const rr = buildRRule(repeat, date, allDay);
+    let rr;
+    if (repeat === 'custom') {
+      const n = (document.getElementById('pefInterval') || {}).value || '2';
+      const unit = (document.getElementById('pefIntervalUnit') || {}).value || 'weeks';
+      rr = buildCustomRRule(n, unit, date, allDay);
+    } else {
+      rr = buildRRule(repeat, date, allDay);
+    }
     if (rr) body.rrule = rr;
   }
 
