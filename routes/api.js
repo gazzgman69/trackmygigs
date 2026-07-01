@@ -3620,6 +3620,11 @@ router.get('/stats', async (req, res) => {
       .toISOString()
       .split('T')[0];
 
+    // 30-day horizon for the Home vitals row ("Gigs · 30d"). Today + next 29.
+    const next30End = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 29)
+      .toISOString()
+      .split('T')[0];
+
     const [
       nextGigResult,
       thisMonthResult,
@@ -3633,6 +3638,8 @@ router.get('/stats', async (req, res) => {
       recentMessagesResult,
       missingFeeResult,
       gigsNext7DaysResult,
+      unpaidResult,
+      gigsNext30DaysResult,
     ] = await Promise.all([
       // Next gig
       db.query(
@@ -3772,6 +3779,22 @@ router.get('/stats', async (req, res) => {
            AND status IN ('confirmed', 'enquiry')`,
         [userId, today, next7End]
       ),
+      // Money awaiting payment: all sent (unpaid) invoices, count + total.
+      // Overdue is a subset. Confirmed money owed, never a forecast.
+      db.query(
+        `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0) AS total
+         FROM invoices WHERE user_id = $1 AND status = 'sent'`,
+        [userId]
+      ),
+      // Confirmed-or-enquiry gigs in the next 30 days (today + 29). Drives the
+      // Home vitals "Gigs · 30d" number.
+      db.query(
+        `SELECT COUNT(*)::int AS count FROM gigs
+         WHERE user_id = $1
+           AND date >= $2 AND date <= $3
+           AND status IN ('confirmed', 'enquiry')`,
+        [userId, today, next30End]
+      ),
     ]);
 
     const overdueRow = overdueCombinedResult.rows[0] || {};
@@ -3854,6 +3877,9 @@ router.get('/stats', async (req, res) => {
       active_dep_request: activeDepRequest,
       gigs_missing_fee: parseInt(missingFeeResult.rows[0]?.count || 0),
       gigs_next_7_days: parseInt(gigsNext7DaysResult.rows[0]?.count || 0),
+      unpaid_invoices: parseInt(unpaidResult.rows[0]?.count || 0),
+      unpaid_total: parseFloat(unpaidResult.rows[0]?.total || 0),
+      gigs_next_30_days: parseInt(gigsNext30DaysResult.rows[0]?.count || 0),
     });
   } catch (error) {
     console.error('Get stats error:', error);

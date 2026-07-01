@@ -1289,6 +1289,17 @@ body.theme-teal {
    centered column with no visible frame, matching how the panel overlays
    already render. */
 
+@media (min-width: 720px) {
+  /* Give the phone-width column a subtle floating-surface feel on desktop so
+     it reads as an intentional app rail rather than a strip lost in the void.
+     Depth comes from a differentiated page backdrop plus a soft shadow, not
+     the border lines that read as stray chrome. */
+  body { background-color: #080A0D; }
+  .app-container {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 18px 55px rgba(0, 0, 0, 0.6);
+  }
+}
+
 /* ── Wizard ─────────────────────────────────────────────── */
 .wizard-container {
   padding-bottom: var(--spacing-4);

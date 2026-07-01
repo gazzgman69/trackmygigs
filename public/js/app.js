@@ -880,22 +880,78 @@ function buildHomeHTML(content, stats) {
   const state = determineHomeState(stats);
 
   let html = '<div style="padding:8px 0 16px;">';
-  html += buildHomeHero(state, stats);
+  // On a gig day the tonight card is urgent, so it leads. Every other day the
+  // vitals + week strip lead so the home reads as a dashboard rather than an
+  // empty "nothing on" card.
+  if (state.kind === 'day-of') {
+    html += buildHomeHero(state, stats);
+    html += buildHomeVitals(stats);
+    html += buildHomeWeekStrip();
+  } else {
+    html += buildHomeVitals(stats);
+    html += buildHomeWeekStrip();
+    html += buildHomeHero(state, stats);
+  }
   html += buildHomeNeedsStrip(stats, state);
   html += '<div id="homeRebookSlot"></div>';
   html += '<div id="homeFollowupSlot"></div>';
+  html += '<div id="homeSetupSlot"></div>';
   html += buildHomeActionGrid();
   html += '</div>';
 
   content.innerHTML = html;
+  // The week strip is always in the DOM now, so hydrate its gig / blocked-day
+  // dots on every render, not just the busy state.
+  hydrateNext7DaysStrip();
   paintHomeRebookCard();
   paintHomeFollowupCard();
+  paintHomeSetupCard(stats);
+}
 
-  // Busy hero renders a 7-day strip with the same id the legacy hydrate
-  // helper expects, so we can reuse it without changes.
-  if (state.kind === 'busy') {
-    hydrateNext7DaysStrip();
+// ── Home vitals row ──────────────────────────────────────────────────────────
+// Three glanceable numbers at the top of Home: money booked this month, money
+// awaiting payment, and gigs in the next 30 days. Money figures are confirmed
+// only (month_earnings = confirmed gigs; unpaid_total = sent invoices), never
+// forecasts. Each cell taps through to the relevant screen.
+function buildHomeVitals(stats) {
+  const fmtGBP = (n) => '£' + Math.round(Number(n) || 0).toLocaleString('en-GB');
+  const owedTotal = Number(stats.unpaid_total) || 0;
+  const owedCount = parseInt(stats.unpaid_invoices || 0, 10);
+  const next30 = parseInt(stats.gigs_next_30_days || 0, 10);
+  const monthName = new Date().toLocaleDateString('en-GB', { month: 'short' });
+  const cell = (value, label, color, onclick) => `
+    <div onclick="${onclick}" style="flex:1;min-width:0;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px 11px;cursor:pointer;">
+      <div style="font-size:18px;font-weight:800;line-height:1.1;color:${color};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${value}</div>
+      <div style="font-size:10px;color:var(--text-3);margin-top:3px;font-weight:600;">${label}</div>
+    </div>`;
+  return `
+    <div style="margin:0 16px 12px;display:flex;gap:8px;">
+      ${cell(fmtGBP(stats.month_earnings), 'Booked · ' + monthName, 'var(--text)', "showScreen('money')")}
+      ${cell(fmtGBP(owedTotal), owedCount > 0 ? 'Awaiting pay' : 'Nothing owed', owedTotal > 0 ? 'var(--danger)' : 'var(--text)', "showScreen('invoices')")}
+      ${cell(String(next30), 'Gigs · 30d', 'var(--text)', "showScreen('gigs')")}
+    </div>`;
+}
+
+// ── Home week strip ──────────────────────────────────────────────────────────
+// A standalone 7-day strip (today + 6) rendered on every home state. Cells are
+// hydrated by hydrateNext7DaysStrip() which paints a gig dot or blocked-day
+// colour. Tapping a day opens that day's action sheet.
+function buildHomeWeekStrip() {
+  const today = new Date();
+  const dows = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  const cells = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dow = dows[d.getDay()];
+    const isToday = i === 0;
+    cells.push(`<div data-next7-iso="${iso}" onclick="if (typeof openDayActionSheet === 'function') openDayActionSheet('${iso}'); else showScreen('calendar');" style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:7px 0;border-radius:9px;background:var(--card);border:1px solid var(--border);${isToday ? 'box-shadow:inset 0 0 0 1px var(--accent);' : ''}cursor:pointer;"><div style="font-size:9px;color:var(--text-3);font-weight:700;letter-spacing:.3px;">${dow}</div><div data-next7-num style="font-size:14px;font-weight:700;color:var(--text);">${d.getDate()}</div></div>`);
   }
+  return `
+    <div style="margin:0 16px 12px;">
+      <div style="font-size:10px;font-weight:700;color:var(--text-3);letter-spacing:.8px;text-transform:uppercase;margin-bottom:7px;">This week</div>
+      <div id="next7DaysStrip" style="display:flex;gap:5px;">${cells.join('')}</div>
+    </div>`;
 }
 
 // Returns the hero variant to render. Priority: day-of > busy > upcoming > quiet.
@@ -1030,16 +1086,6 @@ function buildHomeHeroUpcoming(gig, daysUntil) {
 
 // ── Hero: Busy week (2+ gigs in next 7 days) ─────────────────────────────────
 function buildHomeHeroBusy(gig, count) {
-  const today = new Date();
-  const cells = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
-    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const dow = ['S','M','T','W','T','F','S'][d.getDay()];
-    const isToday = i === 0;
-    cells.push(`<div data-next7-iso="${iso}" onclick="event.stopPropagation(); if (typeof openDayActionSheet === 'function') openDayActionSheet('${iso}'); else { openPanel('panel-block'); }" style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px 0;border-radius:8px;background:var(--card);border:1px solid var(--border);${isToday ? 'box-shadow:inset 0 0 0 1px var(--accent);' : ''}cursor:pointer;"><div style="font-size:9px;color:var(--text-3);font-weight:600;letter-spacing:.3px;">${dow}</div><div data-next7-num style="font-size:13px;font-weight:700;color:var(--text);">${d.getDate()}</div></div>`);
-  }
-
   const timesPart = gig.start_time
     ? ' · ' + formatTime(gig.start_time) + (gig.end_time ? ' — ' + formatTime(gig.end_time) : '')
     : '';
@@ -1049,7 +1095,6 @@ function buildHomeHeroBusy(gig, count) {
 
   return `
     <div onclick="openGigDetail('${escapeAttr(gig.id)}')" style="margin:0 16px 10px;background:linear-gradient(160deg,#1C2A1A 0%,#182318 100%);border:1px solid rgba(63,185,80,.3);border-radius:14px;padding:14px 16px;cursor:pointer;">
-      <div id="next7DaysStrip" style="display:flex;gap:4px;margin-bottom:10px;">${cells.join('')}</div>
       <div style="display:flex;align-items:center;gap:10px;">
         <div style="width:3px;height:36px;border-radius:2px;background:var(--success);flex-shrink:0;"></div>
         <div style="flex:1;min-width:0;">
@@ -20901,6 +20946,80 @@ async function paintHomeFollowupCard() {
   });
   slot.innerHTML = bits.join('');
 }
+
+// ── Home setup checklist ─────────────────────────────────────────────────────
+// First-run onboarding card that turns an empty home into a guided setup. Each
+// row is a real, checkable action; ticked items strike through. When all four
+// are done, or the user dismisses it, the card retires itself via a
+// localStorage flag so it never nags an established user.
+async function paintHomeSetupCard(stats) {
+  const slot = document.getElementById('homeSetupSlot');
+  if (!slot) return;
+  try { if (localStorage.getItem('tmg_home_setup_done') === '1') { slot.innerHTML = ''; return; } } catch (_) {}
+
+  // Profile drives the EPK + instruments checks. Prefer cache, fetch once if cold.
+  let profile = window._cachedProfile;
+  if (!profile) {
+    try { const r = await fetch('/api/profile'); if (r.ok) profile = await r.json(); } catch (_) {}
+  }
+  profile = profile || {};
+
+  const s = stats || window._cachedStats || {};
+  const hasGig = !!(s.next_gig
+    || parseInt(s.year_gigs || 0, 10) > 0
+    || parseInt(s.month_gigs || 0, 10) > 0
+    || parseInt(s.gigs_missing_fee || 0, 10) > 0
+    || parseInt(s.gigs_next_30_days || 0, 10) > 0);
+  const calConnected = window._googleConnected === true || !!profile.google_access_token || !!profile.calendar_connected;
+  const hasInstruments = Array.isArray(profile.instruments) ? profile.instruments.length > 0 : !!profile.instruments;
+  const hasEpk = !!(profile.epk_bio && String(profile.epk_bio).trim());
+
+  const items = [
+    { done: calConnected,   label: 'Connect Google Calendar', sub: 'Two-way sync your diary',   onclick: "window.location.href='/auth/google/calendar'" },
+    { done: hasGig,         label: 'Log your first gig',      sub: 'Get it on the board',        onclick: "openQuickLogSheet()" },
+    { done: hasInstruments, label: 'Add your instruments',    sub: 'So bookers can find you',    onclick: "openPanel('profile-panel'); if (typeof renderProfileScreen === 'function') renderProfileScreen();" },
+    { done: hasEpk,         label: 'Build your EPK',          sub: 'Your shareable press kit',   onclick: "if (typeof openEpkPanel === 'function') openEpkPanel();" },
+  ];
+  const doneCount = items.filter((i) => i.done).length;
+
+  // Fully set up? Retire the card for good so it never flashes again.
+  if (doneCount >= items.length) {
+    try { localStorage.setItem('tmg_home_setup_done', '1'); } catch (_) {}
+    slot.innerHTML = '';
+    return;
+  }
+
+  const tick = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" stroke="var(--success)" stroke-width="1.4"/><path d="M8 12l3 3 5-6"/></svg>';
+  const empty = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.4"><circle cx="12" cy="12" r="10"/></svg>';
+  const rows = items.map((it) => `
+    <div ${it.done ? '' : `onclick="${it.onclick}"`} style="display:flex;align-items:center;gap:10px;padding:8px 0;${it.done ? 'opacity:.55;' : 'cursor:pointer;'}">
+      <span style="width:20px;height:20px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">${it.done ? tick : empty}</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);${it.done ? 'text-decoration:line-through;' : ''}">${it.label}</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:1px;">${it.sub}</div>
+      </div>
+      ${it.done ? '' : '<span style="color:var(--text-3);font-size:16px;flex-shrink:0;">›</span>'}
+    </div>`).join('');
+  const pct = Math.round((doneCount / items.length) * 100);
+
+  slot.innerHTML = `
+    <div style="margin:0 16px 12px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:13px;font-weight:800;color:var(--text);flex:1;">Finish setting up</span>
+        <span style="font-size:11px;color:var(--text-3);font-weight:700;">${doneCount} / ${items.length}</span>
+        <span onclick="dismissHomeSetupCard()" title="Hide" style="color:var(--text-3);font-size:18px;cursor:pointer;line-height:1;padding:0 2px;">&times;</span>
+      </div>
+      <div style="height:4px;background:var(--border);border-radius:9px;overflow:hidden;margin-bottom:6px;"><div style="width:${pct}%;height:100%;background:var(--accent);"></div></div>
+      ${rows}
+    </div>`;
+}
+
+function dismissHomeSetupCard() {
+  try { localStorage.setItem('tmg_home_setup_done', '1'); } catch (_) {}
+  const slot = document.getElementById('homeSetupSlot');
+  if (slot) slot.innerHTML = '';
+}
+window.dismissHomeSetupCard = dismissHomeSetupCard;
 
 async function askForTestimonial(gigId) {
   let out;
