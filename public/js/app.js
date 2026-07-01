@@ -3341,6 +3341,11 @@ function openPersonalEventForm(opts) {
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>
       <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px;">${editing ? 'Edit event' : 'New event'}</div>
       <input id="pefTitle" placeholder="Add title" value="${escapeAttr(title)}" style="${inp}font-weight:600;">
+      ${(editing && pe && pe.recurring_event_id) ? `<label style="${lab}">Apply to</label>
+      <select id="pefScope" style="${inp}">
+        <option value="single">This event</option>
+        <option value="following">This and following events</option>
+      </select>` : ''}
       <label style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;font-size:14px;color:var(--text);cursor:pointer;">
         <input type="checkbox" id="pefAllDay" ${allDay ? 'checked' : ''} onchange="_peToggleAllDay()"> All day
       </label>
@@ -3429,6 +3434,11 @@ async function savePersonalEventForm() {
 
   const colorId = (document.getElementById('pefColor') || {}).value || '';
   body.color_id = colorId || null;
+
+  if (peId) {
+    const scopeEl = document.getElementById('pefScope');
+    if (scopeEl && scopeEl.value) body.edit_scope = scopeEl.value;
+  }
 
   const repeatEl = document.getElementById('pefRepeat');
   const repeat = repeatEl ? repeatEl.value : 'none';

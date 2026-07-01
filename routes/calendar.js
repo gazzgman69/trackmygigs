@@ -1889,6 +1889,28 @@ router.post('/push-all', async (req, res) => {
 // ── PERSONAL (non-gig) EVENTS ────────────────────────────────────────────────
 // TMG as the one calendar: everything that isn't a gig lives in personal_events
 // and syncs two-way with Google. Build the Google event body from a row.
+// RRULE helpers for series splitting ("this and following"). _rruleSetUntil
+// preserves FREQ / BYDAY / INTERVAL and swaps in a fresh UNTIL; _untilToken
+// formats the bound to match the event type (bare date for all-day, UTC
+// datetime for timed) so Google accepts it.
+function _rruleSetUntil(rruleLine, untilToken) {
+  let s = String(rruleLine || '');
+  if (s.toUpperCase().startsWith('RRULE:')) s = s.slice(6);
+  const parts = s.split(';').filter(p => p && !/^UNTIL=/i.test(p) && !/^COUNT=/i.test(p));
+  parts.push('UNTIL=' + untilToken);
+  return 'RRULE:' + parts.join(';');
+}
+function _untilToken(dateStr, allDay) {
+  const ymd = String(dateStr).replace(/-/g, '');
+  return allDay ? ymd : ymd + 'T235959Z';
+}
+function _addYearsStr(dateStr, n) {
+  const d = new Date(String(dateStr).slice(0, 10) + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return dateStr;
+  d.setUTCFullYear(d.getUTCFullYear() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 function buildPersonalEventResource(pe) {
   const event = {
     summary: pe.summary || '(No title)',
@@ -1999,6 +2021,95 @@ async function pushPersonalEventToGoogle(userId, pe) {
     console.error('pushPersonalEventToGoogle error:', err.message || err);
     return null;
   }
+}
+
+// "This and following" edit: split a recurring series at the edited occurrence.
+// Creates a NEW series first (so a failure leaves the original intact), then
+// truncates the old series to end the day before this occurrence, then
+// reconciles local rows. Works for both TMG-created series (local master row)
+// and Google-origin series (instances only), because it truncates the Google
+// series directly by its id rather than relying on a local master. Returns
+// { ok, new_series_id } on success, { error, status } on a handled failure, or
+// null to signal the caller to fall back to a single-occurrence edit.
+async function splitRecurringSeries(userId, instanceRow, v) {
+  const handle = await getGoogleAuth(userId);
+  if (!handle) return { error: 'Connect your Google Calendar to edit repeating events.', status: 409 };
+  const { auth, calendarId } = handle;
+  const calendar = google.calendar({ version: 'v3', auth });
+  const seriesId = instanceRow.recurring_event_id;
+  if (!seriesId) return null;
+
+  // Read the master to get its recurrence rule.
+  let master;
+  try {
+    master = (await calendar.events.get({ calendarId, eventId: seriesId })).data;
+  } catch (err) {
+    if (err && (err.code === 404 || err.code === 410)) return null; // series gone, fall back
+    console.error('splitRecurringSeries get master error:', err.message || err);
+    return { error: 'Could not read the series from Google. Try again.', status: 502 };
+  }
+  const rruleLine = (Array.isArray(master.recurrence) ? master.recurrence : []).find(r => /^RRULE/i.test(String(r)));
+  if (!rruleLine) return null; // not a recurring master, fall back to single edit
+
+  // The local date of the occurrence being edited.
+  const allDay = !!instanceRow.all_day;
+  let instDate;
+  if (allDay) {
+    instDate = dateColToStr(instanceRow.start_date);
+  } else {
+    let tz = instanceRow.timezone || 'Europe/London';
+    try { new Intl.DateTimeFormat('en-GB', { timeZone: tz }); } catch (_) { tz = 'Europe/London'; }
+    instDate = wallClockInTz(instanceRow.start_at, tz).date;
+  }
+  if (!instDate) return null;
+
+  // Create the NEW series first, so a failure never truncates the old one.
+  const freshRrule = _rruleSetUntil(rruleLine, _untilToken(_addYearsStr(instDate, 2), allDay));
+  const newMasterIns = await db.query(
+    `INSERT INTO personal_events
+       (user_id, summary, description, location, all_day, start_at, end_at,
+        start_date, end_date, timezone, transparency, visibility, color_id,
+        reminders, rrule, is_recurring_master, source)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,TRUE,'tmg')
+     RETURNING *`,
+    [userId, v.summary, v.description, v.location, v.all_day, v.start_at, v.end_at,
+     v.start_date, v.end_date, v.timezone, v.transparency, v.visibility, v.color_id, v.reminders, freshRrule]
+  );
+  const newMaster = newMasterIns.rows[0];
+  let newId = null;
+  try { newId = await pushPersonalEventToGoogle(userId, newMaster); } catch (_) {}
+  if (!newId) {
+    await db.query('DELETE FROM personal_events WHERE id = $1 AND user_id = $2', [newMaster.id, userId]);
+    return { error: 'Could not create the new series in Google. Nothing changed. Try again.', status: 502 };
+  }
+
+  // Truncate the old series to end the day before this occurrence.
+  const truncRrule = _rruleSetUntil(rruleLine, _untilToken(addDaysStr(instDate, -1), allDay));
+  try {
+    await calendar.events.patch({ calendarId, eventId: seriesId, requestBody: { recurrence: [truncRrule] } });
+  } catch (err) {
+    console.error('splitRecurringSeries truncate error:', err.message || err);
+    return { error: 'The new series was created but the original could not be shortened. Check Google Calendar.', status: 502 };
+  }
+
+  // Reconcile local state: update the local master rrule (if we have one),
+  // then soft-delete the old series' occurrences from this date on. Google no
+  // longer returns them, so the pull will not resurrect them.
+  await db.query(
+    `UPDATE personal_events SET rrule = $1, updated_at = NOW()
+       WHERE user_id = $2 AND google_event_id = $3 AND is_recurring_master = TRUE`,
+    [truncRrule, userId, seriesId]
+  );
+  await db.query(
+    `UPDATE personal_events SET deleted_at = NOW(), status = 'cancelled', updated_at = NOW()
+       WHERE user_id = $1 AND recurring_event_id = $2 AND deleted_at IS NULL
+         AND COALESCE(start_date, (start_at AT TIME ZONE 'Europe/London')::date) >= $3::date`,
+    [userId, seriesId, instDate]
+  );
+
+  // Pull to bring in the new series' expanded occurrences.
+  try { await pullFromGoogle(userId); } catch (_) {}
+  return { ok: true, new_series_id: newId };
 }
 
 // Delete the Google event behind a personal event. Personal events are fully
@@ -2554,13 +2665,24 @@ router.post('/personal-events', async (req, res) => {
 // PATCH /calendar/personal-events/:id — edit (full event in body), then re-push.
 router.patch('/personal-events/:id', async (req, res) => {
   try {
-    const cur = await db.query(
-      'SELECT id FROM personal_events WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
+    const curRes = await db.query(
+      'SELECT * FROM personal_events WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
       [req.params.id, req.user.id]
     );
-    if (cur.rows.length === 0) return res.status(404).json({ error: 'not found' });
+    if (curRes.rows.length === 0) return res.status(404).json({ error: 'not found' });
+    const cur = curRes.rows[0];
     const v = normalizePersonalEventInput(req.body || {});
     if (!personalInputValid(v)) return res.status(400).json({ error: 'valid start required' });
+
+    // "This and following": split the series at this occurrence rather than
+    // editing one instance. Falls through to the single edit if the split can
+    // not run (series not actually recurring in Google, etc.).
+    if (req.body && req.body.edit_scope === 'following' && cur.recurring_event_id) {
+      const result = await splitRecurringSeries(req.user.id, cur, v);
+      if (result && result.ok) return res.json({ success: true, split: true });
+      if (result && result.error) return res.status(result.status || 502).json({ error: result.error });
+    }
+
     await db.query(
       `UPDATE personal_events SET summary=$1, description=$2, location=$3, all_day=$4,
          start_at=$5, end_at=$6, start_date=$7, end_date=$8, timezone=$9,
