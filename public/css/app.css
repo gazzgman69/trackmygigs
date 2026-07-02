@@ -988,7 +988,8 @@ body {
 
 .form-input,
 .form-textarea,
-.form-select {
+.form-select,
+.fi {
   width: 100%;
   padding: var(--spacing-3);
   background-color: var(--surface);
@@ -997,6 +998,7 @@ body {
   color: var(--text);
   font-size: var(--font-size-base);
   font-family: inherit;
+  box-sizing: border-box;
 }
 
 .form-textarea {
@@ -1006,7 +1008,8 @@ body {
 
 .form-input:focus,
 .form-textarea:focus,
-.form-select:focus {
+.form-select:focus,
+.fi:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(240, 165, 0, 0.2);
