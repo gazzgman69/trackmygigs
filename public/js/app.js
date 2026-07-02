@@ -9023,7 +9023,7 @@ async function shareDocumentLink(docId) {
       await navigator.clipboard.writeText(full);
       showToast('Link copied. Anyone with it can view this document until you revoke it.');
     } else {
-      prompt('Copy this link:', full);
+      _showShareLinkSheet(full);
     }
     openDocumentsPanel();
   } catch (err) {
@@ -12095,7 +12095,7 @@ window.clearGigSetlist = clearGigSetlist;
 async function editGigSetlistNotes(gigId) {
   const cached = (window._cachedGigs || []).find(g => g && g.id === gigId);
   const current = cached && cached.setlist_notes ? cached.setlist_notes : '';
-  const notes = prompt('Notes for this gig’s set (key changes, cuts, encore plan...)', current);
+  const notes = await _promptSheet({ title: 'Set notes for this gig', hint: 'Key changes, cuts, encore plan...', value: current, multiline: true });
   if (notes === null) return;
   const gig = await _patchGigSetlist(gigId, { setlist_notes: notes.trim() || null });
   if (gig) loadGigSetlistSection(gig);
@@ -13090,23 +13090,68 @@ async function _shareOrCopy(url, shareTitle, shareText) {
 // Last-resort share fallback. prompt() gets silently suppressed once the
 // click's user activation has expired, which read as "the button does
 // nothing", so render a real sheet with the link and a copy button instead.
-function _showShareLinkSheet(url) {
+function _showShareLinkSheet(url, title, multiline) {
+  _showCopySheet(title || 'Your share link', url, multiline);
+}
+
+// Generic copy sheet: a readonly value with a big copy button. Used for
+// links and embed code wherever the clipboard is refused or unavailable.
+function _showCopySheet(title, value, multiline) {
   const existing = document.getElementById('shareLinkSheet');
   if (existing) existing.remove();
   const sheet = document.createElement('div');
   sheet.id = 'shareLinkSheet';
   sheet.className = 'sheet-overlay';
   sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center;';
+  const field = multiline
+    ? `<textarea id="shareLinkSheetUrl" readonly rows="4" onclick="this.select()" style="width:100%;box-sizing:border-box;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;padding:11px;margin-bottom:10px;resize:vertical;font-family:monospace;">${escapeHtml(value)}</textarea>`
+    : `<input id="shareLinkSheetUrl" type="text" readonly value="${escapeHtml(value)}" onclick="this.select()" style="width:100%;box-sizing:border-box;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:11px;margin-bottom:10px;" />`;
   sheet.innerHTML = `
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:560px;box-sizing:border-box;" onclick="event.stopPropagation()">
-      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px;">Your share link</div>
-      <input id="shareLinkSheetUrl" type="text" readonly value="${escapeHtml(url)}" onclick="this.select()" style="width:100%;box-sizing:border-box;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:11px;margin-bottom:10px;" />
-      <button onclick="const i=document.getElementById('shareLinkSheetUrl'); i.select(); navigator.clipboard.writeText(i.value).then(()=>showToast('Link copied')).catch(()=>document.execCommand('copy')); " style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">Copy link</button>
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px;">${escapeHtml(title)}</div>
+      ${field}
+      <button onclick="const i=document.getElementById('shareLinkSheetUrl'); i.select(); navigator.clipboard.writeText(i.value).then(()=>showToast('Copied')).catch(()=>document.execCommand('copy')); " style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">Copy</button>
       <button onclick="document.getElementById('shareLinkSheet').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Close</button>
     </div>`;
   sheet.addEventListener('click', () => sheet.remove());
   document.body.appendChild(sheet);
 }
+
+// House-style replacement for window.prompt(). Resolves to the entered
+// string on save (may be empty) or null on cancel, keeping prompt()'s
+// contract so call sites convert mechanically. Enter saves on single-line
+// fields; backdrop tap and Cancel resolve null.
+function _promptSheet(opts) {
+  return new Promise((resolve) => {
+    const existing = document.getElementById('promptSheet');
+    if (existing) existing.remove();
+    const o = opts || {};
+    const sheet = document.createElement('div');
+    sheet.id = 'promptSheet';
+    sheet.className = 'sheet-overlay';
+    sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;';
+    const field = o.multiline
+      ? `<textarea id="promptSheetInput" rows="3" maxlength="${o.maxlength || 500}" placeholder="${escapeHtml(o.placeholder || '')}" style="width:100%;box-sizing:border-box;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;padding:11px;margin-bottom:14px;resize:vertical;font-family:inherit;">${escapeHtml(o.value || '')}</textarea>`
+      : `<input id="promptSheetInput" type="${o.type || 'text'}" maxlength="${o.maxlength || 200}" value="${escapeHtml(o.value || '')}" placeholder="${escapeHtml(o.placeholder || '')}" style="width:100%;box-sizing:border-box;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;padding:11px;margin-bottom:14px;" />`;
+    sheet.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:560px;box-sizing:border-box;" onclick="event.stopPropagation()">
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px;">${escapeHtml(o.title || '')}</div>
+        ${o.hint ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:10px;line-height:1.4;">${escapeHtml(o.hint)}</div>` : ''}
+        ${field}
+        <button id="promptSheetSave" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">${escapeHtml(o.saveLabel || 'Save')}</button>
+        <button id="promptSheetCancel" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Cancel</button>
+      </div>`;
+    const done = (val) => { sheet.remove(); resolve(val); };
+    sheet.addEventListener('click', () => done(null));
+    document.body.appendChild(sheet);
+    const input = document.getElementById('promptSheetInput');
+    document.getElementById('promptSheetSave').addEventListener('click', () => done(input.value));
+    document.getElementById('promptSheetCancel').addEventListener('click', () => done(null));
+    if (!o.multiline) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(input.value); });
+    setTimeout(() => { input.focus(); if (o.value) input.select(); }, 50);
+  });
+}
+
 
 async function shareProfile() {
   const slug = await _ensurePublicSlug();
@@ -13500,7 +13545,7 @@ async function copyShareEmbedCode() {
     await navigator.clipboard.writeText(code);
     showToast('Embed code copied. Paste it into your website.');
   } catch (_) {
-    prompt('Copy this embed code:', code);
+    _showCopySheet('Your embed code', code, true);
   }
 }
 window.copyShareEmbedCode = copyShareEmbedCode;
@@ -15402,7 +15447,7 @@ function openSetlistSongOptions(index) {
 }
 window.openSetlistSongOptions = openSetlistSongOptions;
 
-function editSetlistNote(index) {
+async function editSetlistNote(index) {
   const sheet = document.getElementById('slSongSheet');
   if (sheet) sheet.remove();
   const sl = window._setlistDetailCache;
@@ -15410,7 +15455,7 @@ function editSetlistNote(index) {
   const song = (sl.song_ids || []).map(id => byId.get(id)).filter(Boolean)[index];
   if (!song) return;
   const meta = _slMeta(sl);
-  const v = prompt('Stage note for "' + song.title + '" (shows big and orange in perform mode):', meta.notes[song.id] || '');
+  const v = await _promptSheet({ title: 'Stage note for "' + song.title + '"', hint: 'Shows big and orange in perform mode.', value: meta.notes[song.id] || '', maxlength: 120 });
   if (v === null) return;
   if (v.trim()) meta.notes[song.id] = v.trim().slice(0, 120);
   else delete meta.notes[song.id];
@@ -15419,13 +15464,13 @@ function editSetlistNote(index) {
 }
 window.editSetlistNote = editSetlistNote;
 
-function editSetlistMarker(index) {
+async function editSetlistMarker(index) {
   const sheet = document.getElementById('slSongSheet');
   if (sheet) sheet.remove();
   const sl = window._setlistDetailCache;
   const meta = _slMeta(sl);
   const cur = meta.markers.find(m => m && m.after === index);
-  const v = prompt('Announcement after this song (e.g. BIRTHDAY SHOUTOUT FOR KAREN). Empty removes it:', cur ? cur.text : '');
+  const v = await _promptSheet({ title: 'Announcement after this song', hint: 'e.g. BIRTHDAY SHOUTOUT FOR KAREN. Leave empty to remove.', value: cur ? cur.text : '', maxlength: 120 });
   if (v === null) return;
   meta.markers = meta.markers.filter(m => m && m.after !== index);
   if (v.trim()) meta.markers.push({ after: index, text: v.trim().slice(0, 120) });
@@ -15543,7 +15588,7 @@ window.removeSetlistSong = removeSetlistSong;
 async function renameSetlist() {
   const sl = window._setlistDetailCache;
   if (!sl) return;
-  const name = prompt('Setlist name', sl.name || '');
+  const name = await _promptSheet({ title: 'Setlist name', value: sl.name || '', maxlength: 80 });
   if (name === null) return;
   const trimmed = name.trim();
   if (!trimmed) return;
@@ -16410,7 +16455,7 @@ async function chaseInvoicePayment(invoiceId) {
     // Prefer the recipient_email we captured on Send; fall back to prompting.
     let toAddr = invoice.recipient_email || '';
     if (!toAddr) {
-      toAddr = prompt('Send reminder to which email address?') || '';
+      toAddr = (await _promptSheet({ title: 'Send reminder to which email?', type: 'email', placeholder: 'name@example.com', saveLabel: 'Continue' })) || '';
       if (!toAddr) return;
       // Persist it back so next chase is one click
       try {
@@ -21512,7 +21557,7 @@ async function saveChecklistAsTemplate(gigId) {
   const gig = (window._cachedGigs || []).find(g => g && g.id === gigId);
   const items = gig ? getGigChecklist(gig) : [];
   if (!items.length) { showToast('Add some items to the checklist first.'); return; }
-  const name = prompt('Name this checklist (e.g. Function rig):');
+  const name = await _promptSheet({ title: 'Name this checklist', placeholder: 'e.g. Function rig', maxlength: 80 });
   if (!name || !name.trim()) return;
   try {
     const resp = await fetch('/api/checklist-templates', {
@@ -21773,7 +21818,7 @@ function openReviewLinkChase() {
 }
 
 async function pasteReviewLink() {
-  const url = prompt('Paste your Google (or Facebook) review link:');
+  const url = await _promptSheet({ title: 'Your review link', hint: 'Paste your Google (or Facebook) review link.', type: 'url', placeholder: 'https://g.page/r/...', saveLabel: 'Save link' });
   if (!url) return;
   try {
     const resp = await fetch('/api/me/review-link', {
@@ -24183,7 +24228,7 @@ async function copyMessageText(msgId) {
     await navigator.clipboard.writeText(msg.content);
     try { toast('Copied'); } catch (_) {}
   } catch (_) {
-    prompt('Copy this message:', msg.content);
+    _showCopySheet('Message text', msg.content, true);
   }
 }
 window.copyMessageText = copyMessageText;
