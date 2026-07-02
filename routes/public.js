@@ -532,6 +532,7 @@ router.get('/share/:slug', async (req, res) => {
             <select id="enqType" style="width:100%;box-sizing:border-box;background:#0D1117;color:#E6EDF3;border:1px solid #30363D;border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:8px;">
               <option>Wedding</option><option>Corporate</option><option>Private party</option><option>Pub / Club</option><option>Festival</option><option>Other</option>
             </select>
+            <input id="enqBudget" type="number" min="0" max="1000000" step="1" inputmode="decimal" placeholder="Budget in £ (optional)" style="width:100%;box-sizing:border-box;background:#0D1117;color:#E6EDF3;border:1px solid #30363D;border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:8px;">
             <textarea id="enqMsg" placeholder="Tell them about your event (venue, times, what you need)" maxlength="1000" rows="3" style="width:100%;box-sizing:border-box;background:#0D1117;color:#E6EDF3;border:1px solid #30363D;border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:12px;resize:vertical;font-family:inherit;"></textarea>
             <div id="enqErr" style="display:none;font-size:12px;color:#F85149;margin-bottom:8px;"></div>
             <button onclick="enqSend()" id="enqSendBtn" style="width:100%;background:#F0A500;color:#000;border:none;border-radius:12px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;">Send request</button>
@@ -571,7 +572,7 @@ router.get('/share/:slug', async (req, res) => {
             var r = await fetch(window.location.pathname.replace(/\\/$/, '') + '/enquire', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ date: enqDate, name: name, email: email, phone: phone, event_type: document.getElementById('enqType').value, message: document.getElementById('enqMsg').value.trim() })
+              body: JSON.stringify({ date: enqDate, name: name, email: email, phone: phone, event_type: document.getElementById('enqType').value, budget: document.getElementById('enqBudget').value, message: document.getElementById('enqMsg').value.trim() })
             });
             var j = await r.json().catch(function () { return {}; });
             if (!r.ok) { err.textContent = j.error || 'Could not send. Try again.'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Send request'; return; }
@@ -630,6 +631,12 @@ router.post('/share/:slug/enquire', express.json({ limit: '16kb' }), async (req,
     const date = String(req.body.date || '').slice(0, 10);
     const EVENT_TYPES = ['Wedding', 'Corporate', 'Private party', 'Pub / Club', 'Festival', 'Other'];
     const eventType = EVENT_TYPES.includes(req.body.event_type) ? req.body.event_type : 'Other';
+    // Booker's stated budget lands as the gig fee, so a confirmed enquiry
+    // rolls into the invoice composer already priced. Enquiry-status gigs
+    // never feed finance totals, so this stays out of the money views until
+    // the musician confirms.
+    let budget = parseFloat(req.body.budget);
+    budget = (isFinite(budget) && budget > 0 && budget <= 1000000) ? Math.round(budget * 100) / 100 : null;
 
     if (!name) return res.status(400).json({ error: 'Name is required.' });
     if (!email && !phone) return res.status(400).json({ error: 'An email or phone number is required.' });
@@ -650,11 +657,11 @@ router.post('/share/:slug/enquire', express.json({ limit: '16kb' }), async (req,
     if (clash.rows.length > 0) return res.status(409).json({ error: 'That date has just been taken. Pick another.' });
 
     const ins = await db.query(
-      `INSERT INTO gigs (user_id, band_name, date, status, source, client_name, client_email, client_phone, notes)
-       VALUES ($1, $2, $3, 'enquiry', 'share-page', $4, $5, $6, $7)
+      `INSERT INTO gigs (user_id, band_name, date, status, source, client_name, client_email, client_phone, notes, fee)
+       VALUES ($1, $2, $3, 'enquiry', 'share-page', $4, $5, $6, $7, $8)
        RETURNING id`,
       [user.id, `${eventType} — ${name}`, date, name, email || null, phone || null,
-       message ? `Enquiry message:\n${message}` : null]
+       message ? `Enquiry message:\n${message}` : null, budget]
     );
 
     // Fire-and-forget notification; the in-app needs-you chip is the backstop.
@@ -664,7 +671,7 @@ router.post('/share/:slug/enquire', express.json({ limit: '16kb' }), async (req,
       sendEmail({
         to: user.email,
         subject: `New date enquiry: ${eventType} on ${prettyDate}`,
-        text: `${name} has requested ${prettyDate} via your availability page.\n\nEvent: ${eventType}\nContact: ${[email, phone].filter(Boolean).join(' / ')}\n${message ? `\nMessage:\n${message}\n` : ''}\nThe date is held as an enquiry in your diary. Open ${APP_NAME} to confirm or decline.`,
+        text: `${name} has requested ${prettyDate} via your availability page.\n\nEvent: ${eventType}\nContact: ${[email, phone].filter(Boolean).join(' / ')}\n${budget != null ? `Budget: £${budget}\n` : ''}${message ? `\nMessage:\n${message}\n` : ''}\nThe date is held as an enquiry in your diary. Open ${APP_NAME} to confirm or decline.`,
       }).catch((e) => console.warn('[enquire] notify email failed (non-fatal):', e.message));
     } catch (_) {}
 
