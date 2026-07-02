@@ -268,6 +268,42 @@ function handleReload(req, res) {
 app.get('/api/admin/reload', handleReload);
 app.post('/api/admin/reload', handleReload);
 
+// Test hygiene: delete [TEST]-prefixed events from a user's linked Google
+// Calendar. Create-then-instant-delete verification gigs can orphan their
+// pushed events (the async push lands after the row is gone, so delete has no
+// event id to unlink). Safe by construction: only summaries starting
+// "[TEST]", only future events, gated by RELOAD_SECRET.
+app.get('/api/admin/cleanup-test-events', async (req, res) => {
+  if (!process.env.RELOAD_SECRET || req.query.key !== process.env.RELOAD_SECRET) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  try {
+    const email = String(req.query.email || '');
+    const u = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (u.rows.length === 0) return res.status(404).json({ error: 'user not found' });
+    const { getGoogleAuth } = require('./routes/calendar');
+    const handle = await getGoogleAuth(u.rows[0].id);
+    if (!handle) return res.status(400).json({ error: 'no google connection' });
+    const { google } = require('googleapis');
+    const calendar = google.calendar({ version: 'v3', auth: handle.auth });
+    const list = await calendar.events.list({
+      calendarId: handle.calendarId, q: '[TEST]',
+      timeMin: new Date().toISOString(), maxResults: 50, singleEvents: true,
+    });
+    const victims = (list.data.items || []).filter(e => (e.summary || '').startsWith('[TEST]'));
+    const deleted = [];
+    for (const e of victims) {
+      const id = e.recurringEventId || e.id;
+      try { await calendar.events.delete({ calendarId: handle.calendarId, eventId: id }); deleted.push(e.summary); }
+      catch (err) { if (err.code !== 404 && err.code !== 410) throw err; }
+    }
+    res.json({ deleted: deleted.length, summaries: deleted });
+  } catch (err) {
+    console.error('[cleanup-test-events]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Opt-in auto-chase sweep, for an external cron to hit reliably (the in-process
 // interval below is best-effort on Replit's sleepy dyno). Gated by a dedicated
 // CHASE_CRON_SECRET when set, so the cron URL never has to carry the master
