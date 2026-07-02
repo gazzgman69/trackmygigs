@@ -1612,6 +1612,7 @@ function openHomeMoreSheet() {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
   const items = [
     { ico: '🎭', label: 'Find a dep', cls: 'feat-marketplace', onclick: "openPanel('panel-marketplace'); if (typeof openMarketplacePanel === 'function') openMarketplacePanel();" },
+    { ico: '📥', label: 'Import gigs (CSV / Excel)', onclick: "startImportFromUpload()" },
     { ico: '🤝', label: 'My Network', onclick: "openPanel('panel-network'); if (typeof openNetworkPanel === 'function') openNetworkPanel();" },
     { ico: '🎤', label: 'Professional EPK', onclick: "if (typeof viewEPK === 'function') viewEPK();" },
     { ico: '📈', label: 'Finance', onclick: "if (window.openFinanceAt) window.openFinanceAt('tax-year');" },
@@ -10213,10 +10214,11 @@ async function renderFinancePanel() {
       <!-- HMRC category breakdown (rendered async below) -->
       <div id="financeCategoryBreakdown" style="padding:0 16px 16px;"></div>
 
-      <!-- Export -->
+      <!-- Import / Export -->
       <div style="padding:0 16px 24px;">
-        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Export</div>
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Import &amp; export</div>
         <div style="display:flex;flex-direction:column;gap:6px;">
+          <button class="pill-g" onclick="startImportFromUpload()">Import gigs (CSV / Excel)</button>
           <button class="pill-g" onclick="exportGigsCSV()">Export gigs (CSV)</button>
           <button class="pill-g" onclick="exportExpensesCSV()">Export expenses (CSV)</button>
           <button class="pill-o" onclick="exportGigsPDF()">Export gigs (PDF)</button>
@@ -22932,6 +22934,9 @@ window.markImportSourceComplete = markImportSourceComplete;
 async function finishOnboarding(opts) {
   const overlay = document.getElementById('onboardingOverlay');
   if (overlay) overlay.remove();
+  // The import flows reuse this finish path when launched from the Gigs
+  // screen / More sheet; an established user doesn't need the first-run tip.
+  const wasAlreadyOnboarded = !!(window._cachedProfile && window._cachedProfile.onboarded_at);
   try {
     localStorage.setItem('tmg_onboarded', '1');
     // Clear any in-flight resume marker — the user has finished.
@@ -22960,9 +22965,11 @@ async function finishOnboarding(opts) {
   // details live without dragging them there.
   try {
     if (typeof showScreen === 'function') showScreen('home');
-    setTimeout(() => {
-      try { showToast('Tip: Google connections and payment details live in Profile'); } catch (_) {}
-    }, 700);
+    if (!wasAlreadyOnboarded) {
+      setTimeout(() => {
+        try { showToast('Tip: Google connections and payment details live in Profile'); } catch (_) {}
+      }, 700);
+    }
   } catch (err) {
     console.error('Onboarding settings tour failed (non-fatal):', err);
   }
