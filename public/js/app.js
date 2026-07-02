@@ -924,10 +924,14 @@ function buildHomeHTML(content, stats) {
 // ("this synced event looks like a gig") on Home with a one-tap-per-event
 // review sheet, instead of leaving them buried in the Calendar tab.
 async function paintHomeSyncReviewCard() {
-  const slot = document.getElementById('homeSyncReviewSlot');
-  if (!slot) return;
+  if (!document.getElementById('homeSyncReviewSlot')) return;
   let nudges = null;
   try { nudges = await loadCalendarNudges(); } catch (_) {}
+  // Re-resolve after the await: the nudge fetch is a live Google round-trip,
+  // and Home's stale-while-revalidate re-render can replace the DOM in the
+  // meantime, leaving the pre-await node detached.
+  const slot = document.getElementById('homeSyncReviewSlot');
+  if (!slot) return;
   if (!Array.isArray(nudges) || nudges.length === 0) { slot.innerHTML = ''; return; }
   const n = nudges.length;
   slot.innerHTML = `
