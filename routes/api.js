@@ -3649,6 +3649,7 @@ router.get('/stats', async (req, res) => {
       gigsNext7DaysResult,
       unpaidResult,
       gigsNext30DaysResult,
+      shareEnquiriesResult,
     ] = await Promise.all([
       // Next gig
       db.query(
@@ -3804,6 +3805,14 @@ router.get('/stats', async (req, res) => {
            AND status IN ('confirmed', 'enquiry')`,
         [userId, today, next30End]
       ),
+      // Booking enquiries from the public share page still awaiting a decision
+      // (future-dated, still enquiry status). Drives the needs-you chip.
+      db.query(
+        `SELECT COUNT(*)::int AS count FROM gigs
+         WHERE user_id = $1 AND status = 'enquiry' AND source = 'share-page'
+           AND date >= $2`,
+        [userId, today]
+      ),
     ]);
 
     const overdueRow = overdueCombinedResult.rows[0] || {};
@@ -3877,7 +3886,8 @@ router.get('/stats', async (req, res) => {
       // header dot lights up for anything the user needs to attend to, not
       // just chat. Previously both fields were identical which meant paid
       // invoices, incoming offers, and calendar imports never triggered the dot.
-      unread_notifications: unreadMessageCount + pendingOfferCount + overdueCount,
+      unread_notifications: unreadMessageCount + pendingOfferCount + overdueCount
+        + parseInt(shareEnquiriesResult.rows[0]?.count || 0),
       unread_messages: unreadMessageCount,
       offer_count: pendingOfferCount,
       network_offers: parseInt(offersRow.dep_count || 0),
@@ -3889,6 +3899,7 @@ router.get('/stats', async (req, res) => {
       unpaid_invoices: parseInt(unpaidResult.rows[0]?.count || 0),
       unpaid_total: parseFloat(unpaidResult.rows[0]?.total || 0),
       gigs_next_30_days: parseInt(gigsNext30DaysResult.rows[0]?.count || 0),
+      share_enquiries: parseInt(shareEnquiriesResult.rows[0]?.count || 0),
     });
   } catch (error) {
     console.error('Get stats error:', error);

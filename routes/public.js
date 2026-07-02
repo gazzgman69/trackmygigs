@@ -498,7 +498,10 @@ router.get('/share/:slug', async (req, res) => {
         const timeLabel = showTimes && timesByDate.has(dateStr) && !isPast
           ? `<div style="font-size:7px;line-height:1.1;opacity:.85;white-space:nowrap;overflow:hidden;">${esc(timesByDate.get(dateStr))}</div>`
           : '';
-        cells += `<div class="cal-cell ${cls}"${showTimes && timesByDate.has(dateStr) ? ` title="Booked ${esc(timesByDate.get(dateStr))}"` : ''}>${d}${timeLabel}</div>`;
+        // Book-me funnel: free future days are tappable and open the enquiry
+        // form with the date preselected.
+        const enquireAttr = (cls === 'free' && !isPast) ? ` onclick="enqOpen('${dateStr}')" style="cursor:pointer;"` : '';
+        cells += `<div class="cal-cell ${cls}"${enquireAttr}${showTimes && timesByDate.has(dateStr) ? ` title="Booked ${esc(timesByDate.get(dateStr))}"` : ''}>${d}${timeLabel}</div>`;
       }
       return `<div class="cal-month">${esc(monthLabel)}</div><div class="cal-grid">${cells}</div>`;
     }).join('');
@@ -516,7 +519,69 @@ router.get('/share/:slug', async (req, res) => {
         <span><span class="legend-dot" style="background:var(--danger);"></span>Booked</span>
         <span><span class="legend-dot" style="background:#6E7681;"></span>Unavailable</span>
       </div>
-      <div class="card">${monthsHtml}</div>`;
+      <p style="text-align:center;font-size:12px;color:#F0A500;margin:0 0 12px;">Tap a free day to request it</p>
+      <div class="card">${monthsHtml}</div>
+      <div id="enqOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;align-items:flex-end;justify-content:center;">
+        <div style="background:#161B22;border-top:1px solid #30363D;border-radius:16px 16px 0 0;padding:18px 16px 26px;width:100%;max-width:480px;">
+          <div id="enqFormWrap">
+            <div style="font-size:16px;font-weight:700;color:#E6EDF3;margin-bottom:2px;">Request this date</div>
+            <div id="enqDateLabel" style="font-size:13px;color:#F0A500;font-weight:600;margin-bottom:12px;"></div>
+            <input id="enqName" placeholder="Your name" maxlength="100" style="width:100%;box-sizing:border-box;background:#0D1117;color:#E6EDF3;border:1px solid #30363D;border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:8px;">
+            <input id="enqEmail" type="email" placeholder="Email" maxlength="200" style="width:100%;box-sizing:border-box;background:#0D1117;color:#E6EDF3;border:1px solid #30363D;border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:8px;">
+            <input id="enqPhone" type="tel" placeholder="Phone (optional)" maxlength="30" style="width:100%;box-sizing:border-box;background:#0D1117;color:#E6EDF3;border:1px solid #30363D;border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:8px;">
+            <select id="enqType" style="width:100%;box-sizing:border-box;background:#0D1117;color:#E6EDF3;border:1px solid #30363D;border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:8px;">
+              <option>Wedding</option><option>Corporate</option><option>Private party</option><option>Pub / Club</option><option>Festival</option><option>Other</option>
+            </select>
+            <textarea id="enqMsg" placeholder="Tell them about your event (venue, times, what you need)" maxlength="1000" rows="3" style="width:100%;box-sizing:border-box;background:#0D1117;color:#E6EDF3;border:1px solid #30363D;border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:12px;resize:vertical;font-family:inherit;"></textarea>
+            <div id="enqErr" style="display:none;font-size:12px;color:#F85149;margin-bottom:8px;"></div>
+            <button onclick="enqSend()" id="enqSendBtn" style="width:100%;background:#F0A500;color:#000;border:none;border-radius:12px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;">Send request</button>
+            <button onclick="enqClose()" style="width:100%;margin-top:8px;background:transparent;border:1px solid #30363D;color:#8B949E;border-radius:12px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
+          </div>
+          <div id="enqDone" style="display:none;text-align:center;padding:14px 0 6px;">
+            <div style="font-size:34px;margin-bottom:8px;">&#127881;</div>
+            <div style="font-size:16px;font-weight:700;color:#E6EDF3;margin-bottom:4px;">Request sent</div>
+            <div style="font-size:13px;color:#8B949E;margin-bottom:14px;">The date is pencilled in as an enquiry. You'll hear back soon.</div>
+            <button onclick="enqClose()" style="width:100%;background:#F0A500;color:#000;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">Done</button>
+          </div>
+        </div>
+      </div>
+      <script>
+        var enqDate = null;
+        function enqOpen(d) {
+          enqDate = d;
+          var dt = new Date(d + 'T00:00:00');
+          document.getElementById('enqDateLabel').textContent = dt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+          document.getElementById('enqFormWrap').style.display = 'block';
+          document.getElementById('enqDone').style.display = 'none';
+          document.getElementById('enqErr').style.display = 'none';
+          document.getElementById('enqOverlay').style.display = 'flex';
+        }
+        function enqClose() { document.getElementById('enqOverlay').style.display = 'none'; }
+        document.getElementById('enqOverlay').addEventListener('click', function (e) { if (e.target === this) enqClose(); });
+        async function enqSend() {
+          var err = document.getElementById('enqErr');
+          var name = document.getElementById('enqName').value.trim();
+          var email = document.getElementById('enqEmail').value.trim();
+          var phone = document.getElementById('enqPhone').value.trim();
+          if (!name) { err.textContent = 'Add your name so they know who is asking.'; err.style.display = 'block'; return; }
+          if (!email && !phone) { err.textContent = 'Add an email or phone so they can reply.'; err.style.display = 'block'; return; }
+          var btn = document.getElementById('enqSendBtn');
+          btn.disabled = true; btn.textContent = 'Sending...';
+          try {
+            var r = await fetch(window.location.pathname.replace(/\\/$/, '') + '/enquire', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ date: enqDate, name: name, email: email, phone: phone, event_type: document.getElementById('enqType').value, message: document.getElementById('enqMsg').value.trim() })
+            });
+            var j = await r.json().catch(function () { return {}; });
+            if (!r.ok) { err.textContent = j.error || 'Could not send. Try again.'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Send request'; return; }
+            document.getElementById('enqFormWrap').style.display = 'none';
+            document.getElementById('enqDone').style.display = 'block';
+          } catch (e) {
+            err.textContent = 'Could not send. Try again.'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Send request';
+          }
+        }
+      </script>`;
 
     // Anonymous OG: no name, no image, noindex so the link doesn't leak into
     // search engines. Bookers get a generic preview card when the link is
@@ -529,6 +594,84 @@ router.get('/share/:slug', async (req, res) => {
   } catch (err) {
     console.error('Public share error:', err);
     res.status(500).set('Content-Type', 'text/html').send(pageHtml('Error', `<div class="empty"><h1>Something went wrong</h1><p class="sub">Please try again.</p></div>`));
+  }
+});
+
+// ── Book-me funnel: date enquiry from the public share page ─────────────────
+// POST /share/:slug/enquire — a booker requests an open date. Lands as an
+// enquiry-status gig holding the date (client contact on the gig row, message
+// in the notes) and fires an email to the musician. Per-slug+IP throttle keeps
+// drive-by abuse from flooding a diary.
+const _enquiryHits = new Map();
+function _enquiryThrottled(key) {
+  const now = Date.now();
+  const hits = (_enquiryHits.get(key) || []).filter(t => now - t < 3600000);
+  if (hits.length >= 5) return true;
+  hits.push(now);
+  _enquiryHits.set(key, hits);
+  if (_enquiryHits.size > 5000) _enquiryHits.clear();
+  return false;
+}
+
+router.post('/share/:slug/enquire', express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const user = await findUserBySlug(req.params.slug);
+    if (!user) return res.status(404).json({ error: 'This link is no longer active.' });
+
+    const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+    if (_enquiryThrottled(`${req.params.slug}|${ip}`)) {
+      return res.status(429).json({ error: 'Too many requests. Try again later.' });
+    }
+
+    const name = String(req.body.name || '').trim().slice(0, 100);
+    const email = String(req.body.email || '').trim().slice(0, 200);
+    const phone = String(req.body.phone || '').trim().slice(0, 30);
+    const message = String(req.body.message || '').trim().slice(0, 1000);
+    const date = String(req.body.date || '').slice(0, 10);
+    const EVENT_TYPES = ['Wedding', 'Corporate', 'Private party', 'Pub / Club', 'Festival', 'Other'];
+    const eventType = EVENT_TYPES.includes(req.body.event_type) ? req.body.event_type : 'Other';
+
+    if (!name) return res.status(400).json({ error: 'Name is required.' });
+    if (!email && !phone) return res.status(400).json({ error: 'An email or phone number is required.' });
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'That email does not look right.' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Pick a date.' });
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const maxIso = new Date(Date.now() + 400 * 86400000).toISOString().slice(0, 10);
+    if (date < todayIso || date > maxIso) return res.status(400).json({ error: 'That date is out of range.' });
+
+    // The date must still be open: no gig on it, not blocked. (Personal-event
+    // evening nuance deliberately skipped; the musician triages the enquiry.)
+    const clash = await db.query(
+      `SELECT 1 FROM gigs WHERE user_id = $1 AND date = $2 AND status <> 'cancelled'
+       UNION ALL
+       SELECT 1 FROM blocked_dates WHERE user_id = $1 AND date = $2 LIMIT 1`,
+      [user.id, date]
+    );
+    if (clash.rows.length > 0) return res.status(409).json({ error: 'That date has just been taken. Pick another.' });
+
+    const ins = await db.query(
+      `INSERT INTO gigs (user_id, band_name, date, status, source, client_name, client_email, client_phone, notes)
+       VALUES ($1, $2, $3, 'enquiry', 'share-page', $4, $5, $6, $7)
+       RETURNING id`,
+      [user.id, `${eventType} — ${name}`, date, name, email || null, phone || null,
+       message ? `Enquiry message:\n${message}` : null]
+    );
+
+    // Fire-and-forget notification; the in-app needs-you chip is the backstop.
+    try {
+      const { sendEmail, APP_NAME } = require('../lib/email');
+      const prettyDate = new Date(date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      sendEmail({
+        to: user.email,
+        subject: `New date enquiry: ${eventType} on ${prettyDate}`,
+        text: `${name} has requested ${prettyDate} via your availability page.\n\nEvent: ${eventType}\nContact: ${[email, phone].filter(Boolean).join(' / ')}\n${message ? `\nMessage:\n${message}\n` : ''}\nThe date is held as an enquiry in your diary. Open ${APP_NAME} to confirm or decline.`,
+      }).catch((e) => console.warn('[enquire] notify email failed (non-fatal):', e.message));
+    } catch (_) {}
+
+    res.json({ success: true, id: ins.rows[0].id });
+  } catch (err) {
+    console.error('Share enquiry error:', err);
+    res.status(500).json({ error: 'Something went wrong. Try again.' });
   }
 });
 

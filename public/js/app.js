@@ -1165,6 +1165,9 @@ function buildHomeHeroQuiet(daysUntil, gig) {
 // surface; the sheet is the precision surface.
 function buildHomeNeedsStrip(stats, state) {
   const chips = [];
+  if (stats.share_enquiries > 0) {
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--success-dim, rgba(63,185,80,.15));color:var(--success);border:1px solid rgba(63,185,80,.3);"><span style="font-size:10px;">🎉</span>${stats.share_enquiries} booking enquir${stats.share_enquiries === 1 ? 'y' : 'ies'}</span>`);
+  }
   if (stats.overdue_invoices > 0) {
     chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--danger-dim);color:var(--danger);border:1px solid rgba(248,81,73,.3);"><span style="font-size:10px;">⚠</span>${stats.overdue_invoices} overdue</span>`);
   }
@@ -1211,6 +1214,16 @@ function openNeedsYouSheet() {
   const items = [];
   const fmt = (n) => Math.round(Number(n) || 0).toLocaleString('en-GB');
 
+  if (stats.share_enquiries > 0) {
+    items.push({
+      ico: '🎉',
+      color: 'var(--success)',
+      bg: 'var(--success-dim, rgba(63,185,80,.15))',
+      label: `${stats.share_enquiries} booking enquir${stats.share_enquiries === 1 ? 'y' : 'ies'} from your page`,
+      meta: 'Reply fast, win the gig',
+      onclick: "showScreen('gigs')",
+    });
+  }
   if (stats.overdue_invoices > 0) {
     items.push({
       ico: '⚠',
@@ -3636,6 +3649,40 @@ async function selectCalendar(calendarId) {
     alert('Could not switch calendar. Please try again.');
   }
 }
+
+// Book-me funnel: confirm or decline a share-page enquiry from the gig detail.
+// Confirm flips the gig to confirmed and rolls straight into the invoice
+// composer (prefilled from the gig) so the deposit can go out in the same
+// breath; decline cancels the gig, freeing the date on the public page.
+async function confirmEnquiryGig(gigId) {
+  try {
+    const r = await fetch('/api/gigs/' + encodeURIComponent(gigId), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'confirmed' }) });
+    if (!r.ok) { showToast('Could not confirm. Try again.'); return; }
+    window._cachedGigs = null;
+    window._cachedStats = null;
+    showToast('Booking confirmed 🎉');
+    openGigDetail(gigId);
+    if (typeof createInvoiceForGig === 'function') setTimeout(() => createInvoiceForGig(gigId), 700);
+  } catch (_) { showToast('Could not confirm. Try again.'); }
+}
+window.confirmEnquiryGig = confirmEnquiryGig;
+
+async function declineEnquiryGig(gigId) {
+  const ok = window.confirmModal
+    ? await window.confirmModal('Decline this enquiry? The date frees up on your public page.')
+    : confirm('Decline this enquiry? The date frees up on your public page.');
+  if (!ok) return;
+  try {
+    const r = await fetch('/api/gigs/' + encodeURIComponent(gigId), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'cancelled' }) });
+    if (!r.ok) { showToast('Could not decline. Try again.'); return; }
+    window._cachedGigs = null;
+    window._cachedStats = null;
+    closePanel('panel-gig-detail');
+    showToast('Enquiry declined');
+    if (typeof renderGigsScreen === 'function' && currentScreen === 'gigs') renderGigsScreen();
+  } catch (_) { showToast('Could not decline. Try again.'); }
+}
+window.declineEnquiryGig = declineEnquiryGig;
 
 // iCal subscribe feed (Apple Calendar / Outlook). The URL carries a per-user
 // secret token; copy hands it to the clipboard, regenerate rotates it.
@@ -11172,6 +11219,11 @@ async function openGigDetail(gigId) {
       ${gig.venue_name ? `<div onclick="openVenueMemory('${escapeAttr(gig.venue_name)}')" style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:6px;cursor:pointer;">\uD83D\uDCD2 Venue history &amp; heads-ups \u203A</div>` : ''}
       <div style="font-size:14px;color:var(--text-2);">\uD83D\uDCB7 ${gig.fee ? '\u00A3' + parseFloat(gig.fee).toFixed(0) : 'No fee set'} <span class="badge badge-${statusBadgeClass(gig.status)}" style="margin-left:6px;">${statusLabel(gig.status)}</span></div>
       ${(gig.gig_type || gig.set_type) ? `<div style="font-size:13px;color:var(--text-2);margin-top:6px;">\uD83C\uDFF7\uFE0F ${escapeHtml([gig.gig_type, gig.set_type].filter(Boolean).join(' \u00B7 '))}</div>` : ''}
+      ${gig.status === 'enquiry' ? `
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button onclick="confirmEnquiryGig('${escapeAttr(gig.id)}')" style="flex:1.6;background:var(--success);color:#000;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">\u2713 Confirm booking</button>
+        <button onclick="declineEnquiryGig('${escapeAttr(gig.id)}')" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text-2);border-radius:12px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;">Decline</button>
+      </div>` : ''}
       ${(() => {
         if (!gig.agency_name) return '';
         const agPct = effectiveCommissionPct(gig.agency_commission_pct, gig.agency_commission_tiers, parseFloat(gig.fee || 0));
