@@ -67,6 +67,63 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('scroll', setAppHeight);
 }
 
+// ── Navigation integrity guard ───────────────────────────────────────────────
+// Doctrine (Gareth 2026-07-02): never a place you can't easily go back from.
+// The hardware/browser Back button must close the topmost layer (sheet, then
+// panel, then non-home screen) instead of exiting the app. One synthetic
+// history entry sits under the UI whenever something dismissible is open;
+// popstate consumes it, dismisses the top layer, and re-arms while layers
+// remain. On Home with nothing open, Back exits naturally.
+var _navGuardArmed = false;
+function _armNavGuard() {
+  if (_navGuardArmed) return;
+  try { history.pushState({ tmgNavGuard: true }, ''); _navGuardArmed = true; } catch (_) {}
+}
+window._armNavGuard = _armNavGuard;
+
+function _topDismissible() {
+  const adHoc = ['peFormSheet', 'peDetailSheet', 'onboardingOverlay'];
+  for (const id of adHoc) {
+    const el = document.getElementById(id);
+    if (el) return { kind: 'adhoc', el };
+  }
+  const sheets = document.querySelectorAll('.sheet-overlay');
+  if (sheets.length) return { kind: 'sheet', el: sheets[sheets.length - 1] };
+  const panels = document.querySelectorAll('.panel-overlay.open');
+  if (panels.length) return { kind: 'panel', el: panels[panels.length - 1] };
+  if (typeof currentScreen !== 'undefined' && currentScreen !== 'home') return { kind: 'screen' };
+  return null;
+}
+
+window.addEventListener('popstate', function () {
+  _navGuardArmed = false;
+  const top = _topDismissible();
+  if (!top) return; // Home, nothing open: let the browser continue back out.
+  if (top.kind === 'sheet' || top.kind === 'adhoc') {
+    if (top.el.parentNode) top.el.parentNode.removeChild(top.el);
+  } else if (top.kind === 'panel') {
+    closePanel(top.el.id);
+  } else {
+    showScreen('home');
+  }
+  if (_topDismissible()) _armNavGuard();
+});
+
+// Ad-hoc bottom sheets are created all over the codebase; watch for them
+// appearing rather than hooking every creation site.
+new MutationObserver(function (muts) {
+  for (const m of muts) {
+    for (const node of m.addedNodes) {
+      if (node.nodeType !== 1) continue;
+      if ((node.classList && node.classList.contains('sheet-overlay'))
+          || node.id === 'peFormSheet' || node.id === 'peDetailSheet' || node.id === 'onboardingOverlay') {
+        _armNavGuard();
+        return;
+      }
+    }
+  }
+}).observe(document.documentElement, { childList: true, subtree: true });
+
 // Desktop scroll-anywhere: on viewports wider than the 390px app column,
 // the gutters to the left and right of the centered content don't respond
 // to mouse-wheel or trackpad scroll because body is overflow:hidden and the
@@ -759,6 +816,7 @@ function showScreen(screenName) {
   }
 
   currentScreen = screenName;
+  if (screenName !== 'home') _armNavGuard();
 
   if (screenName === 'home') {
     renderHomeScreen();
@@ -8109,6 +8167,7 @@ function openPanel(id) {
   if (id === 'panel-teaching-term') { if (typeof initTeachingTermPanel === 'function') initTeachingTermPanel(); }
   if (id === 'panel-block') { if (typeof openMyAvailabilityPanel === 'function') openMyAvailabilityPanel(); }
   if (id === 'panel-add-contact') { if (typeof initAddContactPanel === 'function') initAddContactPanel(); }
+  _armNavGuard();
 }
 
 // ── Teaching term (bulk weekly lesson creator) ──────────────────────────────
