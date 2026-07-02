@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
+const features = require('../lib/features');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -748,15 +749,19 @@ router.get('/contacts', async (req, res) => {
 
     const params = [req.user.id, like];
     let directoryClause = '';
-    if (actorOpen) {
+    // Directory candidates ride the directory flag, match on NAME only, and
+    // never ship the email column: a keystroke-by-keystroke picker with
+    // partial email matching doubles as an address-harvesting endpoint.
+    // Deliberate lookups (rate-limited, exact-match) live in /discover.
+    if (actorOpen && features.isVisible('find_musicians_directory')) {
       directoryClause = `
         UNION
-        SELECT u.id, u.name, u.email, u.avatar_url, 'directory'::text AS source
+        SELECT u.id, u.name, NULL::text AS email, u.avatar_url, 'directory'::text AS source
           FROM users u
          WHERE u.id <> $1
            AND u.allow_direct_messages = TRUE
            AND u.discoverable = TRUE
-           AND (LOWER(u.name) LIKE $2 OR LOWER(u.email) LIKE $2)
+           AND LOWER(u.name) LIKE $2
            AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_id = u.id)
            AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $1)
       `;

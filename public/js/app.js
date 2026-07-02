@@ -10644,7 +10644,7 @@ function renderChatComposeResults() {
   if (!_chatComposeCandidates.length) {
     results.innerHTML = `
       <div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">
-        ${q ? 'No matches.' : 'No contacts yet. Start typing to search the directory.'}
+        ${q ? 'No matches.' : (featureVisible('find_musicians_directory') ? 'No contacts yet. Start typing to search the directory.' : 'No contacts yet. Add people from My Network first.')}
       </div>`;
     return;
   }
