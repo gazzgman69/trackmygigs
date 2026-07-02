@@ -13604,14 +13604,16 @@ async function openNetworkPanel() {
 
   // Keep previously-selected tab across panel re-opens within the same
   // session. Default to Find on first open.
-  if (!window._netTab) window._netTab = featureVisible('find_musicians_directory') ? 'find' : 'contacts';
+  const dirOn = featureVisible('find_musicians_directory');
+  const findTabOn = dirOn || featureVisible('people_search');
+  if (!window._netTab) window._netTab = findTabOn ? 'find' : 'contacts';
 
   body.innerHTML = `
     <div style="padding:12px 20px 0;display:flex;justify-content:flex-end;">
       <button onclick="openPanel('panel-add-contact')" style="background:var(--accent);color:#000;border:none;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
     </div>
     <div class="net-tabs">
-      <button class="net-tab feat-directory ${window._netTab === 'find' ? 'ac' : ''}" onclick="switchNetTab('find')">Find musicians</button>
+      ${findTabOn ? `<button class="net-tab ${window._netTab === 'find' ? 'ac' : ''}" onclick="switchNetTab('find')">${dirOn ? 'Find musicians' : 'Find people'}</button>` : ''}
       <button class="net-tab ${window._netTab === 'contacts' ? 'ac' : ''}" onclick="switchNetTab('contacts')">My contacts</button>
     </div>
     <div id="netTabBody"></div>`;
@@ -13730,7 +13732,7 @@ function renderFindTab() {
       <button class="disc-mode ${st.mode === 'email' ? 'ac' : ''}" onclick="setDiscoverMode('email')">Email</button>
       <button class="disc-mode ${st.mode === 'phone' ? 'ac' : ''}" onclick="setDiscoverMode('phone')">Phone</button>
     </div>
-    <div class="disc-chips" id="discoverChips">${renderDiscoverChips()}</div>
+    ${featureVisible('find_musicians_directory') ? `<div class="disc-chips" id="discoverChips">${renderDiscoverChips()}</div>` : ''}
     <div id="discoverResults"></div>`;
 
   // Empty on first render = show empty-state rails; otherwise re-run last search
@@ -13863,6 +13865,12 @@ async function renderDiscoverEmptyState() {
   const results = document.getElementById('discoverResults');
   if (!results) return;
   const st = window._discoverState;
+  if (!featureVisible('find_musicians_directory')) {
+    // Lookup-only mode: no browse rails to suggest from, so explain the
+    // search instead of fetching sealed endpoints.
+    results.innerHTML = `<div style="padding:24px 20px;text-align:center;color:var(--text-3);font-size:12px;line-height:1.6;">Search for someone by name, or use their exact email or phone number.<br>If they're on TrackMyGigs, their profile shows up here.</div>`;
+    return;
+  }
   results.innerHTML = '<div class="disc-loading">Loading suggestions...</div>';
 
   const instrumentsQs = (st.instruments && st.instruments.length)

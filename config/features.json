@@ -3,6 +3,7 @@
 
   "marketplace": { "tier": "free", "mvp": false },
   "dep_offers": { "tier": "free", "mvp": false },
+  "people_search": { "tier": "free", "mvp": true },
   "find_musicians_directory": { "tier": "free", "mvp": false },
   "apple_wallet": { "tier": "free", "mvp": false },
   "voice_notes": { "tier": "paid", "mvp": false },

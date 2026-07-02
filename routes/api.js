@@ -33,13 +33,20 @@ router.use((req, res, next) => {
       !features.isVisible('dep_offers')) {
     return res.status(404).json({ error: 'not_found' });
   }
-  // And the Find Musicians directory browse/search surface. Contacts and
-  // Add Contact lookups are separate and stay on.
+  // And the Find Musicians directory browse surface. Person LOOKUP by
+  // name, email or phone (plus opening a found profile) survives the cut
+  // under the people_search flag; only browse modes stay sealed.
   if ((req.path === '/discover' || req.path === '/discover-mini'
        || req.path.startsWith('/discover/')
        || req.path.startsWith('/network/shared-history/')) &&
       !features.isVisible('find_musicians_directory')) {
-    return res.status(404).json({ error: 'not_found' });
+    const lookupMode = ['name', 'email', 'phone'].includes(String(req.query.mode || '').toLowerCase());
+    const isLookupPath = (req.path === '/discover' && lookupMode)
+      || req.path.startsWith('/discover/user/')
+      || req.path.startsWith('/network/shared-history/');
+    if (!(isLookupPath && features.isVisible('people_search'))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
   }
   next();
 });
