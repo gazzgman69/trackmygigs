@@ -6068,7 +6068,7 @@ function buildProfileHTML(content, profile) {
         const anyTouched = bioSet || genresSet || photoSet || profile.discoverable === false;
         if (!anyTouched && discoverable) {
           // Quiet encouragement: one line, nudging the user to the editor.
-          return `<div onclick="editProfile()" style="margin:0 16px 12px;padding:10px 12px;background:var(--card);border:1px dashed var(--border);border-radius:var(--rs);cursor:pointer;display:flex;align-items:center;gap:10px;">
+          return `<div class="feat-directory" onclick="editProfile()" style="margin:0 16px 12px;padding:10px 12px;background:var(--card);border:1px dashed var(--border);border-radius:var(--rs);cursor:pointer;display:flex;align-items:center;gap:10px;">
             <span style="font-size:18px;">🔍</span>
             <div style="flex:1;min-width:0;font-size:12px;color:var(--text-2);">Add a bio and genres to fill out your Find Musicians card</div>
             <span style="color:var(--accent);font-size:14px;">›</span>
@@ -6083,7 +6083,7 @@ function buildProfileHTML(content, profile) {
         const genreLine = genresSet
           ? `<div style="font-size:10px;color:var(--text-3);margin-top:6px;">${profile.genres.slice(0,6).map(g => escapeHtml(g)).join(' · ')}</div>`
           : '';
-        return `<div onclick="editProfile()" style="margin:0 16px 12px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);cursor:pointer;">
+        return `<div class="feat-directory" onclick="editProfile()" style="margin:0 16px 12px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);cursor:pointer;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
             <div style="font-size:12px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:1px;">Directory profile</div>
             ${chip}
@@ -12736,30 +12736,6 @@ function buildDirectoryProfileEditor(profile) {
       </label>
       <textarea id="editBio" rows="3" maxlength="280" placeholder="One or two lines about you. Shown on your directory card." oninput="const c=document.getElementById('editBioCount'); if(c){c.textContent=this.value.length+'/280'; c.style.color=this.value.length>280?'var(--danger)':'var(--text-3)';}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;min-height:60px;font-family:inherit;">${escapeHtml(bioText)}</textarea>
     </div>
-    <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Reminders</div>
-    ${(() => {
-      // Push reminders toggle. Browser-permission gated: tapping ON
-      // triggers Notification.requestPermission(), subscribes via
-      // PushManager, and POSTs the subscription to /api/push/subscribe.
-      // Tapping OFF unsubscribes and clears the server-side record.
-      // Reads the saved `push_reminders_enabled` flag to initialise.
-      const pushOn = profile.push_reminders_enabled === true;
-      return `
-    <div style="margin-bottom:14px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">
-      <div style="display:flex;align-items:flex-start;gap:12px;">
-        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
-          <input id="editPushReminders" type="checkbox" ${pushOn ? 'checked' : ''} onchange="togglePushReminders(this)" style="opacity:0;width:0;height:0;" />
-          <span class="tmg-toggle-bg" style="position:absolute;inset:0;background:${pushOn ? 'var(--accent)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
-          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${pushOn ? 'translateX(20px)' : 'translateX(0)'};"></span>
-        </label>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Gig day reminders</div>
-          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">Get a push notification on the morning of a confirmed gig with the venue and load-in time. Requires browser permission. Disable any time.</div>
-          ${pushOn ? '<button onclick="sendTestPushNotification()" style="margin-top:8px;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.4);border-radius:8px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;">Send test notification</button>' : ''}
-        </div>
-      </div>
-    </div>`;
-    })()}
     <div style="margin-bottom:14px;">
       <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Genres &amp; tags</label>
       <div id="editGenresGrid" style="display:flex;flex-wrap:wrap;gap:6px;">${chipHTML}</div>
@@ -12835,6 +12811,30 @@ function editProfile() {
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Comma separated</div>
       </div>
       ${featureVisible('find_musicians_directory') ? buildDirectoryProfileEditor(profile) : ''}
+    <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Reminders</div>
+    ${(() => {
+      // Push reminders toggle. Browser-permission gated: tapping ON
+      // triggers Notification.requestPermission(), subscribes via
+      // PushManager, and POSTs the subscription to /api/push/subscribe.
+      // Tapping OFF unsubscribes and clears the server-side record.
+      // Reads the saved `push_reminders_enabled` flag to initialise.
+      const pushOn = profile.push_reminders_enabled === true;
+      return `
+    <div style="margin-bottom:14px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">
+      <div style="display:flex;align-items:flex-start;gap:12px;">
+        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
+          <input id="editPushReminders" type="checkbox" ${pushOn ? 'checked' : ''} onchange="togglePushReminders(this)" style="opacity:0;width:0;height:0;" />
+          <span class="tmg-toggle-bg" style="position:absolute;inset:0;background:${pushOn ? 'var(--accent)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
+          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${pushOn ? 'translateX(20px)' : 'translateX(0)'};"></span>
+        </label>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Gig day reminders</div>
+          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">Get a push notification on the morning of a confirmed gig with the venue and load-in time. Requires browser permission. Disable any time.</div>
+          ${pushOn ? '<button onclick="sendTestPushNotification()" style="margin-top:8px;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.4);border-radius:8px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;">Send test notification</button>' : ''}
+        </div>
+      </div>
+    </div>`;
+    })()}
       <div style="margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Home Postcode</label>
         <input id="editHomePostcode" type="text" value="${escapeHtml(profile.home_postcode || '')}" placeholder="e.g. CF10 1AA" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;" />
@@ -13604,7 +13604,7 @@ async function openNetworkPanel() {
 
   // Keep previously-selected tab across panel re-opens within the same
   // session. Default to Find on first open.
-  if (!window._netTab) window._netTab = 'find';
+  if (!window._netTab) window._netTab = featureVisible('find_musicians_directory') ? 'find' : 'contacts';
 
   body.innerHTML = `
     <div style="padding:12px 20px 0;display:flex;justify-content:flex-end;">

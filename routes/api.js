@@ -29,8 +29,16 @@ router.use((req, res, next) => {
   // and stays on). Flip config/features.json dep_offers.mvp to restore whole.
   if ((req.path === '/offers' || req.path.startsWith('/offers/')
        || req.path === '/dep-offers' || req.path.startsWith('/dep-offers/')
-       || req.path === '/network/top-deps') &&
+       || req.path === '/network/top-deps' || req.path === '/network/suggested-deps') &&
       !features.isVisible('dep_offers')) {
+    return res.status(404).json({ error: 'not_found' });
+  }
+  // And the Find Musicians directory browse/search surface. Contacts and
+  // Add Contact lookups are separate and stay on.
+  if ((req.path === '/discover' || req.path === '/discover-mini'
+       || req.path.startsWith('/discover/')
+       || req.path.startsWith('/network/shared-history/')) &&
+      !features.isVisible('find_musicians_directory')) {
     return res.status(404).json({ error: 'not_found' });
   }
   next();
