@@ -9052,11 +9052,13 @@ async function openMyAvailabilityPanel() {
           <div style="font-size:12px;color:var(--text-2);line-height:1.5;">
             Tap a free day to block it. Tap a blocked day to unblock. Gig days are locked.
           </div>
-          ${slugUrl ? `
           <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;">
             <span style="font-size:11px;color:var(--text-3);">Share your availability with bookers</span>
-            <button onclick="shareAvailability()" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;">Share link</button>
-          </div>` : ''}
+            <span style="display:flex;gap:6px;flex-shrink:0;">
+              ${slugUrl ? `<button onclick="shareAvailability()" style="background:var(--accent);border:none;color:#000;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;">Share link</button>` : ''}
+              <button onclick="generateAvailabilityPoster()" style="background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;">Poster</button>
+            </span>
+          </div>
         </div>
 
         <div class="avail-legend">
@@ -13109,6 +13111,86 @@ async function previewEPK() {
 window.previewEPK = previewEPK;
 
 window._shareOrCopy = _shareOrCopy;
+
+// Availability poster: a shareable 1080x1350 graphic of upcoming open dates,
+// rendered client-side from the same state the availability grid shows
+// (gig days and blocked days are busy, everything else is open). Weekend
+// dates lead because they are the money nights; widens to weekdays when the
+// diary is weekend-heavy. Web Share where supported, download otherwise.
+async function generateAvailabilityPoster() {
+  const booked = _myAvailState.bookedSet || new Set();
+  const blocked = _myAvailState.blockedMap || new Map();
+  const open = [];
+  const openWeekend = [];
+  const today = new Date();
+  for (let i = 1; i <= 56; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (booked.has(iso) || blocked.has(iso)) continue;
+    open.push(d);
+    if (d.getDay() === 5 || d.getDay() === 6) openWeekend.push(d);
+  }
+  const dates = (openWeekend.length >= 4 ? openWeekend : open).slice(0, 12);
+  if (!dates.length) { showToast('No open dates in the next 8 weeks to poster.'); return; }
+
+  const W = 1080, H = 1350;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  const chip = (x, y, w, h, r) => {
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+    else { ctx.beginPath(); ctx.rect(x, y, w, h); }
+  };
+  ctx.fillStyle = '#0D1117'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#F0A500'; ctx.fillRect(0, 0, W, 14);
+  const name = (window._cachedProfile && (window._cachedProfile.display_name || window._cachedProfile.name)) || (window._currentUser && window._currentUser.name) || 'Available';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#F0A500';
+  ctx.font = '700 40px -apple-system, Helvetica, Arial, sans-serif';
+  ctx.fillText('AVAILABLE FOR BOOKINGS', W / 2, 130);
+  ctx.fillStyle = '#E6EDF3';
+  ctx.font = '800 76px -apple-system, Helvetica, Arial, sans-serif';
+  ctx.fillText(name, W / 2, 230);
+  ctx.fillStyle = '#8B949E';
+  ctx.font = '400 34px -apple-system, Helvetica, Arial, sans-serif';
+  ctx.fillText('Open dates - book before they go', W / 2, 292);
+
+  const cols = 2, cw = 460, ch = 118, gx = 40, gy = 34, startY = 370;
+  const startX = (W - (cols * cw + gx)) / 2;
+  dates.forEach((d, i) => {
+    const x = startX + (i % cols) * (cw + gx);
+    const y = startY + Math.floor(i / cols) * (ch + gy);
+    ctx.fillStyle = '#21262D';
+    chip(x, y, cw, ch, 22); ctx.fill();
+    ctx.strokeStyle = 'rgba(240,165,0,.45)'; ctx.lineWidth = 2;
+    chip(x, y, cw, ch, 22); ctx.stroke();
+    ctx.fillStyle = '#E6EDF3';
+    ctx.font = '700 42px -apple-system, Helvetica, Arial, sans-serif';
+    ctx.fillText(d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }), x + cw / 2, y + 72);
+  });
+
+  const slug = (window._cachedProfile || {}).public_slug;
+  ctx.fillStyle = '#F0A500';
+  ctx.font = '600 34px -apple-system, Helvetica, Arial, sans-serif';
+  ctx.fillText(slug ? `${window.location.host}/share/${slug}` : 'Message me to book a date', W / 2, H - 90);
+  ctx.fillStyle = '#8B949E';
+  ctx.font = '400 26px -apple-system, Helvetica, Arial, sans-serif';
+  ctx.fillText('Powered by TrackMyGigs', W / 2, H - 44);
+
+  const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+  if (!blob) { showToast('Could not build the poster. Try again.'); return; }
+  const file = new File([blob], 'availability-poster.png', { type: 'image/png' });
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'My open dates' }); return; } catch (_) { /* fall through to download */ }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'availability-poster.png';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  showToast('Poster downloaded.');
+}
+window.generateAvailabilityPoster = generateAvailabilityPoster;
 
 async function shareAvailability() {
   const slug = await _ensurePublicSlug();
