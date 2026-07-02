@@ -1,4 +1,4 @@
-# Gigflow parity closure (plan 2026-07-01, SIGNED OFF Gareth 2026-07-01: ALL FIVE waves, iCal = gigs + busy blocks)
+# Gigflow parity closure - COMPLETE 2026-07-01 (all five waves shipped + verified live)
 
 Goal: close the last 5 gaps in tasks/gigflow-parity.md so TMG has EVERYTHING
 Gigflow has, then we better it. Register verified against code 2026-07-01;
@@ -6,23 +6,23 @@ Gigflow has, then we better it. Register verified against code 2026-07-01;
 
 ## Build order (estimates at my pace)
 
-- [ ] W1: iCal subscribe feed (~35 min)
+- [x] W1: iCal subscribe feed (~35 min)
       GET /api/calendar/feed/<token>.ics - per-user random token (users column,
       regenerate endpoint), VEVENTs from non-cancelled gigs (title, venue,
       times or all-day, address in LOCATION). Settings row under Calendar sync:
       "Subscribe on Apple Calendar / Outlook" + copy URL + regenerate.
       Free (Gigflow Pro-gates their one-way feed = we beat it).
-- [ ] W2: Set types (~30 min)
+- [x] W2: Set types (~30 min)
       set_types managed list (settings, seeded defaults: Solo, Duo, Full band,
       DJ set, Sax + DJ), set_type on gigs (form + detail + edit), filter chip
       on Gigs screen. Mirrors the existing gig_type pattern.
-- [ ] W3: Tiered agency commission (~25 min)
+- [x] W3: Tiered agency commission (~25 min)
       Optional tiers JSONB on agencies (fee bands -> pct). Take-home calc uses
       the matching band, falls back to flat pct. Editor rows in the agency form.
-- [ ] W4: CSV import entry point (~15 min)
+- [x] W4: CSV import entry point (~15 min)
       Reuse the onboarding spreadsheet-upload flow; add "Import gigs (CSV)"
       next to the existing "Export gigs (CSV)" + a More-sheet row.
-- [ ] W5: availability poster (~40 min)
+- [x] W5: availability poster (~40 min)
       Shareable open-dates graphic. Lowest value; marketing fluff.
 
 Each wave: build -> syntax check -> ONE commit -> deploy -> live verify

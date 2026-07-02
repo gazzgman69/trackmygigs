@@ -1,6 +1,7 @@
 # Gigflow parity register (verified against code 2026-07-01)
 
 THE GOAL (Gareth, 2026-07-01): TMG has everything Gigflow has, then betters it.
+STATUS: FULL PARITY REACHED 2026-07-01. 23/23 features MATCH or BEAT.
 Gigflow = the floor. Source feature map: 2026-06-11 logged-in sweep + 2026-06-26
 live corrections (memory: reference_gigflow_competitor). Statuses below verified
 against the current codebase, not the stale memory list.
@@ -26,14 +27,16 @@ against the current codebase, not the stale memory list.
 | Hide financial figures mask | Free | MATCH |
 | One-tap Google review requests | PRO | MATCH free (review chase, Wave E) |
 | Shared calendar / availability link | Free | MATCH (public share + embed) |
-| Calendar sync | PRO, iCal ONE-WAY only | BEATS for Google users (two-way + Sheets), see gap 1 for the rest |
+| Calendar sync | PRO, iCal ONE-WAY only | BEATS: two-way Google + Sheets, PLUS a free iCal subscribe feed (gigs + busy) for Apple/Outlook (W1, 2026-07-01) |
 | Gig types (managed list) | Free | MATCH |
-| CSV gig import | PRO | PARTIAL, flow exists but only reachable in onboarding (gap 4) |
-| Set types (2nd categorisation axis) | Free | MISSING (gap 2) |
-| Tiered agency commission rules | PRO | PARTIAL, flat % only (gap 3) |
-| Availability poster (shareable graphic) | PRO | MISSING (gap 5, lowest value) |
+| CSV gig import | PRO | BEATS, free: upload + column-map reachable from Finance and the More sheet (W4, 2026-07-01) |
+| Set types (2nd categorisation axis) | Free | MATCH: set_type on gigs, wizard/full-form/edit + search (W2, 2026-07-01) |
+| Tiered agency commission rules | PRO | MATCH free: fee-banded commission_tiers + band editor (W3, 2026-07-01) |
+| Availability poster (shareable graphic) | PRO | MATCH free: canvas poster of open dates, share/download (W5, 2026-07-01) |
 
-## Remaining gaps (the whole list)
+## Remaining gaps: NONE (all five closed 2026-07-01, see todo.md)
+
+## Closed gaps (were the whole list)
 
 1. **iCal subscribe feed** - Apple Calendar / Outlook users have NO sync at all
    (Google two-way doesn't help them). Token-authed `/api/calendar/feed/<token>.ics`
