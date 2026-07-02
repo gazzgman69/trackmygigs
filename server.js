@@ -1044,6 +1044,56 @@ app.post('/api/admin/wipe-sim-data', async (req, res) => {
   }
 });
 
+// GET /api/admin/backfill-gig-times?key=...&email=...
+// One-shot repair: calendar-imported gigs that landed without start/end
+// times. All-day events legitimately have none; timed events should have
+// carried theirs over. Reads each gcal-sourced gig's original Google event
+// and fills the missing times, reporting timed/all-day/missing per gig.
+app.get('/api/admin/backfill-gig-times', async (req, res) => {
+  if (!simAuthOk(req, res)) return;
+  try {
+    const email = String(req.query.email || '');
+    const u = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (u.rows.length === 0) return res.status(404).json({ error: 'user not found' });
+    const userId = u.rows[0].id;
+    const { getGoogleAuth, londonDateTime } = require('./routes/calendar');
+    const handle = await getGoogleAuth(userId);
+    if (!handle) return res.status(400).json({ error: 'no google connection' });
+    const { google } = require('googleapis');
+    const calendar = google.calendar({ version: 'v3', auth: handle.auth });
+    const gigs = await db.query(
+      `SELECT id, band_name, google_event_id, source FROM gigs
+        WHERE user_id = $1 AND start_time IS NULL
+          AND (google_event_id IS NOT NULL OR source LIKE '%gcal:%')`,
+      [userId]);
+    const results = [];
+    for (const g of gigs.rows) {
+      let eventId = g.google_event_id;
+      if (!eventId && g.source) {
+        const m = String(g.source).match(/gcal:([^+\s]+)/);
+        eventId = m ? m[1] : null;
+      }
+      if (!eventId) { results.push({ gig: g.band_name, outcome: 'no event id' }); continue; }
+      try {
+        const ev = await calendar.events.get({ calendarId: handle.calendarId, eventId });
+        const st = ev.data.start || {};
+        const en = ev.data.end || {};
+        if (!st.dateTime) { results.push({ gig: g.band_name, outcome: 'all-day event, no times to carry' }); continue; }
+        const s = londonDateTime(st.dateTime);
+        const e = en.dateTime ? londonDateTime(en.dateTime) : { time: null };
+        await db.query('UPDATE gigs SET start_time = $1, end_time = $2 WHERE id = $3', [s.time, e.time, g.id]);
+        results.push({ gig: g.band_name, outcome: `set ${s.time}${e.time ? '-' + e.time : ''}` });
+      } catch (err) {
+        results.push({ gig: g.band_name, outcome: 'event fetch failed: ' + (err.code || err.message) });
+      }
+    }
+    res.json({ ok: true, checked: gigs.rows.length, results });
+  } catch (err) {
+    console.error('[admin/backfill-gig-times]', err);
+    res.status(500).json({ error: 'backfill_failed', message: err.message });
+  }
+});
+
 // GET /api/admin/db-snapshot?key=...
 // Full-table JSON dump used as a safety net before destructive resets.
 // Skips sessions + magic_links entirely and drops token/secret/bytea

@@ -2797,5 +2797,6 @@ module.exports.removeGigFromGoogle = removeGigFromGoogle;
 module.exports.pullFromGoogle = pullFromGoogle;
 // For the admin test-hygiene endpoint (delete [TEST]-prefixed events).
 module.exports.getGoogleAuth = getGoogleAuth;
+module.exports.londonDateTime = londonDateTime;
 module.exports.pushBlockedDateToGoogle = pushBlockedDateToGoogle;
 module.exports.removeBlockedDateFromGoogle = removeBlockedDateFromGoogle;
