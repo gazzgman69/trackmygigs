@@ -14512,7 +14512,7 @@ function _agencySheetShell(title, nameVal, pctVal, saveId, tiers) {
       <label class="fl">Fee-banded rates (optional, override the flat %)</label>
       <div id="agTiers" style="margin-bottom:2px;">${tierRows.map(_agencyTierRow).join('')}</div>
       <div onclick="addAgencyTierRow()" style="font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;margin-bottom:14px;">+ Add band</div>
-      <button id="${saveId}" style="width:100%;background:#A78BFA;color:#1a1a1a;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;">Save agency</button>
+      <button id="${saveId}" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;">Save agency</button>
       <button onclick="document.querySelectorAll('.sheet-overlay').forEach(o=>o.remove());" style="width:100%;margin-top:8px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:24px;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
     </div>`;
 }
