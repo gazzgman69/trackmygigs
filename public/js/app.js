@@ -13766,6 +13766,9 @@ function onDiscoverQueryInput(ev) {
   const q = (st.query || '').trim();
   clearTimeout(window._discoverDebounce);
   if (!q) { renderDiscoverEmptyState(); return; }
+  // Editing the query invalidates whatever the last search painted, so
+  // stale profiles never linger behind a query that no longer matches.
+  if (q !== st.lastSubmit) renderDiscoverEmptyState();
   // A single word never reveals anyone mid-keystroke, but a full-looking
   // name (two real words) is deliberate enough: search after a typing
   // pause without demanding Enter. Email and phone stay submit-only.
