@@ -13944,7 +13944,7 @@ function renderDiscoverCard(u) {
     : '';
 
   return `
-    <div class="disc-card" data-user-id="${escapeAttr(u.id)}">
+    <div class="disc-card" data-user-id="${escapeAttr(u.id)}" onclick="openPersonProfile('${escapeAttr(u.id)}')" style="cursor:pointer;">
       <div class="disc-avatar">${photo}</div>
       <div class="disc-main">
         <div class="disc-name-row">
@@ -13957,7 +13957,7 @@ function renderDiscoverCard(u) {
         ${badges}
         ${bioBlock}
       </div>
-      <button class="disc-kebab" aria-label="More actions" onclick="openDiscoverKebab('${escapeAttr(u.id)}')">⋯</button>
+      <button class="disc-kebab" aria-label="More actions" onclick="event.stopPropagation(); openDiscoverKebab('${escapeAttr(u.id)}')">⋯</button>
     </div>`;
 }
 
@@ -14003,6 +14003,122 @@ function toggleDiscoverBio(userId, ev) {
   full.style.display = full.style.display === 'none' ? 'block' : 'none';
 }
 window.toggleDiscoverBio = toggleDiscoverBio;
+
+// ── Person profile page ─────────────────────────────────────────────────
+// Facebook-style full profile opened by tapping a Find People result card.
+// Paints instantly from the search-card cache, refreshes from the server,
+// and loads shared gig history in the background. Actions reuse the kebab
+// sheet's discoverAction_* functions.
+async function openPersonProfile(userId) {
+  const cached = (window._discoverCardCache || {})[userId] || null;
+  const existing = document.getElementById('personProfileOverlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.id = 'personProfileOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:var(--bg);display:flex;flex-direction:column;';
+  overlay.innerHTML = `
+    <div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <button onclick="document.getElementById('personProfileOverlay').remove()" style="background:none;border:none;color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;padding:0;min-width:60px;text-align:left;">&#8249; Back</button>
+      <div id="personProfileTitle" style="flex:1;text-align:center;font-size:15px;font-weight:700;color:var(--text);"></div>
+      <div style="min-width:60px;"></div>
+    </div>
+    <div id="personProfileBody" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+      <div style="padding:40px 20px;text-align:center;color:var(--text-3);font-size:13px;">Loading profile...</div>
+    </div>`;
+  document.body.appendChild(overlay);
+  if (cached) _renderPersonProfile(cached);
+  try {
+    const res = await fetch('/api/discover/user/' + encodeURIComponent(userId));
+    if (res.ok) {
+      const out = await res.json();
+      if (out && out.user && document.getElementById('personProfileOverlay')) {
+        window._discoverCardCache = window._discoverCardCache || {};
+        window._discoverCardCache[userId] = Object.assign({}, cached || {}, out.user);
+        _renderPersonProfile(window._discoverCardCache[userId]);
+      }
+    } else if (!cached) {
+      const body = document.getElementById('personProfileBody');
+      if (body) body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-2);font-size:13px;">Could not load this profile.</div>';
+      return;
+    }
+  } catch (_) { /* cached paint already covers offline */ }
+  _loadPersonProfileHistory(userId);
+}
+window.openPersonProfile = openPersonProfile;
+
+function _renderPersonProfile(u) {
+  const body = document.getElementById('personProfileBody');
+  const title = document.getElementById('personProfileTitle');
+  if (!body || !u) return;
+  const name = u.display_name || u.name || 'Musician';
+  if (title) title.textContent = name;
+  const initial = (name || 'M')[0].toUpperCase();
+  const photo = u.photo_url
+    ? `<img src="${escapeAttr(u.photo_url)}" alt="" style="width:96px;height:96px;border-radius:50%;object-fit:cover;border:2px solid var(--accent);" onerror="this.outerHTML='<div style=&quot;width:96px;height:96px;border-radius:50%;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:700;&quot;>${escapeAttr(initial)}</div>'" />`
+    : `<div style="width:96px;height:96px;border-radius:50%;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:700;">${escapeHtml(initial)}</div>`;
+  const instruments = Array.isArray(u.instruments) ? u.instruments.join(', ') : '';
+  const genres = Array.isArray(u.genres) && u.genres.length ? u.genres.join(' / ') : '';
+  const geoBits = [
+    u.outward_postcode || '',
+    u.travel_radius_miles != null ? `travels ${u.travel_radius_miles} mi` : '',
+    u.distance_miles != null ? `${Math.round(u.distance_miles)} mi from you` : '',
+  ].filter(Boolean).join(' \u00B7 ');
+  const availableNow = u.available_now
+    ? '<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(63,185,80,.18);color:var(--success);font-size:10px;font-weight:800;letter-spacing:.8px;padding:3px 10px;border-radius:999px;text-transform:uppercase;margin-top:8px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--success);"></span>Available now</div>'
+    : '';
+  const messageBtn = u.allow_direct_messages !== false
+    ? `<button onclick="document.getElementById('personProfileOverlay').remove(); discoverAction_message('${escapeAttr(u.id)}')" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;">\u{1F4AC} Message</button>`
+    : '';
+  body.innerHTML = `
+    <div style="text-align:center;padding:26px 20px 16px;">
+      <div style="display:flex;justify-content:center;">${photo}</div>
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-top:12px;">${escapeHtml(name)}${u.premium ? ' <span title="Premium" style="color:var(--accent);font-size:13px;">\u2726</span>' : ''}</div>
+      ${instruments ? `<div style="font-size:14px;color:var(--text-2);margin-top:4px;">${escapeHtml(instruments)}</div>` : ''}
+      ${genres ? `<div style="font-size:12px;color:var(--text-3);margin-top:2px;">${escapeHtml(genres)}</div>` : ''}
+      ${geoBits ? `<div style="font-size:12px;color:var(--text-3);margin-top:6px;">${escapeHtml(geoBits)}</div>` : ''}
+      ${availableNow}
+      <div style="display:flex;justify-content:center;margin-top:10px;">${renderTrustBadges(u)}</div>
+    </div>
+    <div style="display:flex;gap:8px;padding:0 16px 8px;">
+      ${messageBtn}
+      <button onclick="discoverAction_addContact('${escapeAttr(u.id)}')" style="flex:1;background:var(--card);color:var(--accent);border:1px solid var(--accent);border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;">Add to contacts</button>
+    </div>
+    ${u.bio ? `
+    <div style="padding:12px 16px 4px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;">About</div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;margin:6px 16px;padding:12px 14px;font-size:13px;color:var(--text);line-height:1.55;">${escapeHtml(u.bio)}</div>` : ''}
+    <div style="padding:12px 16px 4px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;">History with you</div>
+    <div id="personProfileHistory" style="background:var(--card);border:1px solid var(--border);border-radius:12px;margin:6px 16px;padding:12px 14px;font-size:12px;color:var(--text-3);">Checking shared gigs...</div>
+    <div style="text-align:center;padding:18px 16px 30px;">
+      <span onclick="discoverAction_report('${escapeAttr(u.id)}')" style="font-size:12px;color:var(--text-3);cursor:pointer;text-decoration:underline;margin-right:18px;">Report</span>
+      <span onclick="document.getElementById('personProfileOverlay').remove(); discoverAction_block('${escapeAttr(u.id)}')" style="font-size:12px;color:var(--danger);cursor:pointer;text-decoration:underline;">Block</span>
+    </div>`;
+}
+
+async function _loadPersonProfileHistory(userId) {
+  const slot = () => document.getElementById('personProfileHistory');
+  try {
+    const res = await fetch('/api/network/shared-history/' + encodeURIComponent(userId));
+    if (!res.ok) throw new Error();
+    const out = await res.json();
+    const items = Array.isArray(out.items) ? out.items : [];
+    const el = slot();
+    if (!el) return;
+    if (!items.length) {
+      el.textContent = 'No shared gigs yet.';
+      return;
+    }
+    el.innerHTML = items.slice(0, 10).map(it => {
+      const label = it.band_name || it.title || 'Gig';
+      const when = it.gig_date ? new Date(it.gig_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+      const venue = it.venue_name ? ' \u00B7 ' + it.venue_name : '';
+      return `<div style="padding:7px 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--text);">${escapeHtml(label)}<span style="color:var(--text-3);font-size:11px;">${escapeHtml(venue)}${when ? ' \u00B7 ' + when : ''}</span></div>`;
+    }).join('') + (items.length > 10 ? `<div style="padding-top:8px;font-size:11px;color:var(--text-3);">+ ${items.length - 10} more</div>` : '');
+  } catch (_) {
+    const el = slot();
+    if (el) el.textContent = 'No shared gigs yet.';
+  }
+}
 
 // ── Discover kebab bottom-sheet ────────────────────────────────────────
 
