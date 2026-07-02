@@ -11883,15 +11883,39 @@ function _getCachedGigLineup(gigId) {
 }
 
 async function addLineupMember(gigId) {
-  const name = prompt('Who’s on the gig? (name)');
-  if (name === null) return;
-  const trimmed = name.trim();
-  if (!trimmed) return;
-  const role = prompt('Their role or instrument (optional)') || '';
-  const { lineup } = _getCachedGigLineup(gigId);
-  lineup.push({ name: trimmed, role: role.trim() || null, status: 'pending' });
-  const gig = await _patchGigLineup(gigId, lineup);
-  if (gig) { renderGigLineupSection(gig); renderGigSplitsSection(gig); }
+  const existing = document.getElementById('lineupAddSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'lineupAddSheet';
+  sheet.className = 'sheet-overlay';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:560px;box-sizing:border-box;" onclick="event.stopPropagation()">
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:12px;">Add to lineup</div>
+      <div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px;">Name</div>
+      <input id="lineupAddName" type="text" maxlength="80" placeholder="e.g. Sarah" style="width:100%;box-sizing:border-box;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;padding:11px;margin-bottom:10px;">
+      <div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:4px;">Role or instrument (optional)</div>
+      <input id="lineupAddRole" type="text" maxlength="60" placeholder="e.g. Sax" style="width:100%;box-sizing:border-box;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;padding:11px;margin-bottom:14px;">
+      <button id="lineupAddSave" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">Add member</button>
+      <button onclick="document.getElementById('lineupAddSheet').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Cancel</button>
+    </div>`;
+  sheet.addEventListener('click', () => sheet.remove());
+  document.body.appendChild(sheet);
+  const nameEl = document.getElementById('lineupAddName');
+  const roleEl = document.getElementById('lineupAddRole');
+  const save = async () => {
+    const trimmed = nameEl.value.trim();
+    if (!trimmed) { nameEl.focus(); return; }
+    const role = roleEl.value.trim();
+    sheet.remove();
+    const { lineup } = _getCachedGigLineup(gigId);
+    lineup.push({ name: trimmed, role: role || null, status: 'pending' });
+    const gig = await _patchGigLineup(gigId, lineup);
+    if (gig) { renderGigLineupSection(gig); renderGigSplitsSection(gig); }
+  };
+  document.getElementById('lineupAddSave').addEventListener('click', save);
+  [nameEl, roleEl].forEach(el => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); }));
+  setTimeout(() => nameEl.focus(), 50);
 }
 window.addLineupMember = addLineupMember;
 
