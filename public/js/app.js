@@ -13745,6 +13745,13 @@ function renderDiscoverChips() {
   return html;
 }
 
+// Empty-search invite: share the app itself. Native share sheet on the
+// phone (WhatsApp, iMessage...), copy-with-toast on desktop.
+function inviteToTMG() {
+  _shareOrCopy(location.origin, 'TrackMyGigs', 'Join me on TrackMyGigs, the gigs, money and diary app for musicians.');
+}
+window.inviteToTMG = inviteToTMG;
+
 // One search bar, no mode chips: work out what the user typed. An @ means
 // email, a digit-heavy string means phone, anything else is a name.
 function _detectDiscoverMode(q) {
@@ -13834,8 +13841,20 @@ async function submitDiscoverSearch() {
     }
     const list = Array.isArray(data) ? data : (Array.isArray(data.results) ? data.results : []);
     if (!list.length) {
-      const label = st.mode === 'name' ? 'No musicians match that name.' : 'No one on TrackMyGigs matches that exactly.';
-      results.innerHTML = `<div class="disc-empty">${label}</div>`;
+      // Mode-aware nudge: whichever detail they tried first, point at the
+      // other two. Email and phone match exactly, so a name miss often just
+      // means a nickname or stage name.
+      const hint = st.mode === 'name'
+        ? 'No one matches that name. If you know their email address or phone number, try that instead. Those match exactly.'
+        : st.mode === 'email'
+          ? 'No one with that exact email. Try their name or phone number instead.'
+          : 'No one with that number. Try their name or email address instead.';
+      results.innerHTML = `
+        <div class="disc-empty">${hint}</div>
+        <div style="text-align:center;padding:4px 20px 20px;">
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px;">Not on TrackMyGigs yet?</div>
+          <button onclick="inviteToTMG()" style="background:var(--accent);color:#000;border:none;border-radius:10px;padding:11px 22px;font-size:13px;font-weight:700;cursor:pointer;">Invite them to TrackMyGigs</button>
+        </div>`;
       return;
     }
     results.innerHTML = list.map(renderDiscoverCard).join('');
