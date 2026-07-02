@@ -2109,7 +2109,7 @@ function _gigsBuildTasks() {
       if ((days != null && days <= 30) || ageDays >= 30) {
         const key = 'gigtask:pencilled:' + g.id;
         if (!_gpSnoozed(key)) tasks.push({
-          key, ico: '🤝', color: 'var(--accent)',
+          key, cat: 'admin', ico: '🤝', color: 'var(--accent)',
           title: `${name} still pencilled`,
           sub: `${fmtD(g)}${ageDays > 0 ? ' · sitting ' + ageDays + ' days' : ''}${days != null && days <= 30 ? ' · only ' + days + ' days away' : ''}`,
           cta: 'Chase / confirm', onclick: `openGigDetail('${escapeAttr(g.id)}')`,
@@ -2127,7 +2127,7 @@ function _gigsBuildTasks() {
       if (missing.length) {
         const key = 'gigtask:details:' + g.id;
         if (!_gpSnoozed(key)) tasks.push({
-          key, ico: '✍️', color: 'var(--accent)',
+          key, cat: 'admin', ico: '✍️', color: 'var(--accent)',
           title: `${name} has no ${missing.join(' or ')} set`,
           sub: fmtD(g),
           cta: 'Fill in', onclick: `openGigDetail('${escapeAttr(g.id)}')`,
@@ -2142,7 +2142,7 @@ function _gigsBuildTasks() {
     if (_gpIsPast(g) && _gpFee(g) > 0 && !inv) {
       const key = 'gigtask:invoiceit:' + g.id;
       if (!_gpSnoozed(key)) tasks.push({
-        key, ico: '🧾', color: 'var(--success)',
+        key, cat: 'money', ico: '🧾', color: 'var(--success)',
         title: `${name} played, not invoiced`,
         sub: `${fmtD(g)} · £${_gpFee(g).toLocaleString()} · opens ready-filled from the gig`,
         cta: 'Invoice it', onclick: `createInvoiceForGig('${escapeAttr(g.id)}')`,
@@ -2159,7 +2159,7 @@ function _gigsBuildTasks() {
     if (_gpSnoozed(key)) continue;
     const amount = parseFloat(inv.amount || 0);
     tasks.push({
-      key, ico: '💷', color: 'var(--danger)',
+      key, cat: 'money', ico: '💷', color: 'var(--danger)',
       title: `${inv.band_name || inv.invoice_number || 'Invoice'} ${late} day${late === 1 ? '' : 's'} overdue`,
       sub: `£${amount.toLocaleString()} · one polite nudge ready to go`,
       cta: 'Chase', onclick: `chaseInvoicePayment('${escapeAttr(inv.id)}')`,
@@ -2170,7 +2170,7 @@ function _gigsBuildTasks() {
   // Post-gig follow-ups (their own skip handles suppression server-side).
   ((window._followupData && window._followupData.gigs) || []).forEach(g => {
     tasks.push({
-      key: 'followup:' + g.id, ico: '⭐', color: 'var(--purple, #A78BFA)',
+      key: 'followup:' + g.id, cat: 'after', ico: '⭐', color: 'var(--purple, #A78BFA)',
       title: `Ask ${g.title || 'the client'} for a testimonial`,
       sub: 'Played recently · strike while it’s warm',
       cta: 'Send follow-up', onclick: `askForTestimonial('${escapeAttr(g.id)}')`,
@@ -2193,11 +2193,33 @@ function _gigsPaintTasks() {
   }
   // Cap the collapsed view at 3 so the actual gig list stays above the fold;
   // "Show N more" expands the full stack.
+  //
+  // Group by kind so a full list reads as "gig admin / money / after the gig"
+  // instead of ten identical cards (Gareth 2026-07-02: a full stack felt
+  // overwhelming). Stable sort keeps each group's internal priority order,
+  // and the whole card carries its group's colour wash, not just the edge.
+  const CAT_ORDER = { admin: 0, money: 1, after: 2 };
+  const CAT_META = {
+    admin: { label: 'Gig admin', color: 'var(--accent)' },
+    money: { label: 'Money', color: 'var(--success)' },
+    after: { label: 'After the gig', color: 'var(--purple, #A78BFA)' },
+  };
+  tasks.sort((a, b) => (CAT_ORDER[a.cat] ?? 9) - (CAT_ORDER[b.cat] ?? 9));
+  const catTotals = {};
+  tasks.forEach(t => { catTotals[t.cat] = (catTotals[t.cat] || 0) + 1; });
+
   const expanded = !!window._gigsTasksExpanded;
   const visible = expanded ? tasks : tasks.slice(0, 3);
-  const cards = visible.map(t => `
-    <div style="margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-left:3px solid ${t.color};border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;">
-      <span style="font-size:18px;flex-shrink:0;">${t.ico}</span>
+  let lastCat = null;
+  const cards = visible.map(t => {
+    const meta = CAT_META[t.cat] || { label: 'Other', color: 'var(--border)' };
+    const header = t.cat !== lastCat
+      ? `<div style="display:flex;align-items:center;gap:6px;margin:10px 16px 6px;font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:var(--text-3);"><span style="width:8px;height:8px;border-radius:2px;background:${meta.color};flex-shrink:0;"></span>${meta.label}${catTotals[t.cat] > 1 ? ` · ${catTotals[t.cat]}` : ''}</div>`
+      : '';
+    lastCat = t.cat;
+    return `${header}
+    <div style="margin:0 16px 8px;background:var(--card);background:color-mix(in srgb, ${t.color} 7%, var(--card));border:1px solid var(--border);border:1px solid color-mix(in srgb, ${t.color} 30%, transparent);border-left:3px solid ${t.color};border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;">
+      <span style="font-size:16px;flex-shrink:0;">${t.ico}</span>
       <div style="flex:1;min-width:0;">
         <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(t.title)}</div>
         <div style="font-size:11px;color:var(--text-2);margin-top:2px;">${escapeHtml(t.sub)}</div>
@@ -2206,7 +2228,8 @@ function _gigsPaintTasks() {
         <span onclick="${t.onclick}" style="font-size:12px;font-weight:700;color:#000;background:${t.color};border-radius:999px;padding:7px 12px;white-space:nowrap;cursor:pointer;">${escapeHtml(t.cta)}</span>
         <span onclick="${t.skipOnclick || `snoozeGigTask('${escapeAttr(t.key)}', ${t.snoozeDays || 7})`}" style="font-size:10px;color:var(--text-3);cursor:pointer;padding:2px 6px;">later</span>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   const more = (!expanded && tasks.length > 3)
     ? `<div onclick="window._gigsTasksExpanded=true;_gigsPaintTasks();" style="margin:0 16px;text-align:center;font-size:12px;color:var(--accent);font-weight:600;padding:8px;cursor:pointer;">Show ${tasks.length - 3} more</div>`
     : '';
