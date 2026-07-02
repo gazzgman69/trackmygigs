@@ -286,9 +286,11 @@ app.get('/api/admin/cleanup-test-events', async (req, res) => {
     if (!handle) return res.status(400).json({ error: 'no google connection' });
     const { google } = require('googleapis');
     const calendar = google.calendar({ version: 'v3', auth: handle.auth });
+    // q tokenizes away punctuation, so search the bare word and enforce the
+    // exact "[TEST]" prefix on the results ourselves.
     const list = await calendar.events.list({
-      calendarId: handle.calendarId, q: '[TEST]',
-      timeMin: new Date().toISOString(), maxResults: 50, singleEvents: true,
+      calendarId: handle.calendarId, q: 'TEST',
+      timeMin: new Date().toISOString(), maxResults: 100, singleEvents: true,
     });
     const victims = (list.data.items || []).filter(e => (e.summary || '').startsWith('[TEST]'));
     const deleted = [];
