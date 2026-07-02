@@ -2755,6 +2755,13 @@ router.delete('/personal-events/:id', async (req, res) => {
 // ── iCal subscribe feed token ────────────────────────────────────────────────
 // The feed itself is served unauthenticated at /calendar-feed/<token>.ics
 // (routes/public.js); these authed endpoints mint and rotate the secret.
+// Behind Replit's proxy req.protocol reads the internal http hop, so honour
+// x-forwarded-proto or users copy an insecure URL browsers refuse to fetch.
+function icalFeedUrl(req, token) {
+  const proto = String(req.get('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim();
+  return `${proto}://${req.get('host')}/calendar-feed/${token}.ics`;
+}
+
 router.get('/ical-info', async (req, res) => {
   try {
     const crypto = require('crypto');
@@ -2764,7 +2771,7 @@ router.get('/ical-info', async (req, res) => {
       token = crypto.randomBytes(16).toString('hex');
       await db.query('UPDATE users SET ical_feed_token = $1 WHERE id = $2', [token, req.user.id]);
     }
-    res.json({ url: `${req.protocol}://${req.get('host')}/calendar-feed/${token}.ics` });
+    res.json({ url: icalFeedUrl(req, token) });
   } catch (err) {
     console.error('ical-info error:', err);
     res.status(500).json({ error: 'Failed to get feed URL' });
@@ -2776,7 +2783,7 @@ router.post('/ical-regenerate', async (req, res) => {
     const crypto = require('crypto');
     const token = crypto.randomBytes(16).toString('hex');
     await db.query('UPDATE users SET ical_feed_token = $1 WHERE id = $2', [token, req.user.id]);
-    res.json({ url: `${req.protocol}://${req.get('host')}/calendar-feed/${token}.ics` });
+    res.json({ url: icalFeedUrl(req, token) });
   } catch (err) {
     console.error('ical-regenerate error:', err);
     res.status(500).json({ error: 'Failed to regenerate feed URL' });
