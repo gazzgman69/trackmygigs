@@ -1057,6 +1057,13 @@ function syncReviewAct(eventId, isGig) {
 }
 window.syncReviewAct = syncReviewAct;
 
+// Zone label shared across the Home stack: same dot + uppercase grammar as
+// the Gigs needs-attention groups, so every zone announces itself (Gareth
+// 2026-07-02: a full home felt overwhelming without separation).
+function _homeZoneLabel(text, color) {
+  return `<div style="display:flex;align-items:center;gap:6px;margin:14px 16px 6px;font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:var(--text-3);"><span style="width:8px;height:8px;border-radius:2px;background:${color};flex-shrink:0;"></span>${text}</div>`;
+}
+
 // ── Home vitals row ──────────────────────────────────────────────────────────
 // Three glanceable numbers at the top of Home: money booked this month, money
 // awaiting payment, and gigs in the next 30 days. Money figures are confirmed
@@ -1074,6 +1081,7 @@ function buildHomeVitals(stats) {
       <div style="font-size:10px;color:var(--text-3);margin-top:3px;font-weight:600;">${label}</div>
     </div>`;
   return `
+    ${_homeZoneLabel('At a glance', 'var(--accent)')}
     <div style="margin:0 16px 12px;display:flex;gap:8px;">
       ${cell(fmtGBP(stats.month_earnings), 'Booked · ' + monthName, 'var(--text)', "showScreen('money')")}
       ${cell(fmtGBP(owedTotal), owedCount > 0 ? 'Awaiting pay' : 'Nothing owed', owedTotal > 0 ? 'var(--danger)' : 'var(--text)', "showScreen('invoices')")}
@@ -1097,8 +1105,8 @@ function buildHomeWeekStrip() {
     cells.push(`<div data-next7-iso="${iso}" onclick="if (typeof openDayActionSheet === 'function') openDayActionSheet('${iso}'); else showScreen('calendar');" style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:7px 0;border-radius:9px;background:var(--card);border:1px solid var(--border);${isToday ? 'box-shadow:inset 0 0 0 1px var(--accent);' : ''}cursor:pointer;"><div style="font-size:9px;color:var(--text-3);font-weight:700;letter-spacing:.3px;">${dow}</div><div data-next7-num style="font-size:14px;font-weight:700;color:var(--text);">${d.getDate()}</div></div>`);
   }
   return `
+    ${_homeZoneLabel('This week', 'var(--accent)')}
     <div style="margin:0 16px 12px;">
-      <div style="font-size:10px;font-weight:700;color:var(--text-3);letter-spacing:.8px;text-transform:uppercase;margin-bottom:7px;">This week</div>
       <div id="next7DaysStrip" style="display:flex;gap:5px;">${cells.join('')}</div>
     </div>`;
 }
@@ -1336,7 +1344,7 @@ function buildHomeNeedsStrip(stats, state) {
   }
 
   return `
-    <div onclick="openNeedsYouSheet()" style="margin:0 16px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;">
+    <div onclick="openNeedsYouSheet()" style="margin:0 16px 12px;background:var(--card);background:color-mix(in srgb, var(--accent) 6%, var(--card));border:1px solid var(--border);border:1px solid color-mix(in srgb, var(--accent) 28%, transparent);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;">
       <div style="font-size:10px;font-weight:700;color:var(--text-3);letter-spacing:.8px;text-transform:uppercase;flex-shrink:0;">Needs you</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;flex:1;">${chips.join('')}</div>
       <span style="color:var(--text-3);font-size:16px;flex-shrink:0;">›</span>
@@ -1471,6 +1479,7 @@ window.openNeedsYouSheet = openNeedsYouSheet;
 // logging a gig should always be the fastest action in the app.
 function buildHomeActionGrid() {
   return `
+    ${_homeZoneLabel('Quick actions', 'var(--accent)')}
     <div style="margin:0 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
       <div onclick="openQuickLogSheet()" style="background:linear-gradient(160deg,rgba(240,165,0,.18) 0%,rgba(240,165,0,.06) 100%);border:1px solid rgba(240,165,0,.35);border-radius:12px;padding:14px 8px 12px;text-align:center;cursor:pointer;">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M12 5v14M5 12h14"/></svg>
