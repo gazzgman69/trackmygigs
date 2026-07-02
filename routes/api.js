@@ -25,6 +25,14 @@ router.use((req, res, next) => {
       !features.isVisible('marketplace')) {
     return res.status(404).json({ error: 'not_found' });
   }
+  // Same seal for the dep-offer machinery (gig sharing into chat is separate
+  // and stays on). Flip config/features.json dep_offers.mvp to restore whole.
+  if ((req.path === '/offers' || req.path.startsWith('/offers/')
+       || req.path === '/dep-offers' || req.path.startsWith('/dep-offers/')
+       || req.path === '/network/top-deps') &&
+      !features.isVisible('dep_offers')) {
+    return res.status(404).json({ error: 'not_found' });
+  }
   next();
 });
 

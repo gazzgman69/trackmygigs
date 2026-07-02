@@ -2,6 +2,7 @@
   "_doc": "Single source of truth for MVP feature flags. tier: free|paid. mvp: false = hidden/cut for the first release. Any feature NOT listed here defaults to free + visible. Server reads via lib/features.js; client reads via window.TMG_FEATURES (served at /js/features.js).",
 
   "marketplace": { "tier": "free", "mvp": false },
+  "dep_offers": { "tier": "free", "mvp": false },
   "find_musicians_directory": { "tier": "free", "mvp": true },
   "apple_wallet": { "tier": "free", "mvp": false },
   "voice_notes": { "tier": "paid", "mvp": false },

@@ -1876,4 +1876,5 @@ body.theme-teal {
    restore. */
 body.feat-hide-marketplace .feat-marketplace,
 body.feat-hide-directory .feat-directory,
-body.feat-hide-voice .feat-voice { display: none !important; }
+body.feat-hide-voice .feat-voice,
+body.feat-hide-dep .feat-dep { display: none !important; }

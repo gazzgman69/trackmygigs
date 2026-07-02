@@ -15,6 +15,7 @@ function applyFeatureCuts() {
   document.body.classList.toggle('feat-hide-marketplace', !featureVisible('marketplace'));
   document.body.classList.toggle('feat-hide-directory', !featureVisible('find_musicians_directory'));
   document.body.classList.toggle('feat-hide-voice', !featureVisible('voice_notes'));
+  document.body.classList.toggle('feat-hide-dep', !featureVisible('dep_offers'));
 }
 window.applyFeatureCuts = applyFeatureCuts;
 if (document.body) applyFeatureCuts();
@@ -11596,7 +11597,7 @@ async function openGigDetail(gigId) {
         const d = parseGigDate(gig.date);
         const upcoming = d && d >= new Date(new Date().setHours(0, 0, 0, 0));
         return (upcoming && gig.status !== 'cancelled')
-          ? `<button style="width:100%;background:var(--card);color:#A78BFA;border:1px solid #A78BFA;border-radius:24px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:8px;" onclick="closePanel('panel-gig-detail');selectGigForDep('${gig.id}')">🎵 Can't make it? Send a dep offer</button>`
+          ? `<button class="feat-dep" style="width:100%;background:var(--card);color:#A78BFA;border:1px solid #A78BFA;border-radius:24px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:8px;" onclick="closePanel('panel-gig-detail');selectGigForDep('${gig.id}')">🎵 Can't make it? Send a dep offer</button>`
           : '';
       })()}
       <!-- Ask for review -->
@@ -13974,7 +13975,7 @@ function openDiscoverKebab(userId) {
       ${togetherHeader}
       ${messageBtn}
       <button class="sheet-btn" onclick="discoverAction_addContact('${escapeAttr(userId)}')">Add to contacts</button>
-      <button class="sheet-btn" onclick="discoverAction_sendDep('${escapeAttr(userId)}')">Send dep offer</button>
+      <button class="sheet-btn feat-dep" onclick="discoverAction_sendDep('${escapeAttr(userId)}')">Send dep offer</button>
       <button class="sheet-btn danger" onclick="discoverAction_report('${escapeAttr(userId)}')">Report</button>
       <button class="sheet-btn danger" onclick="discoverAction_block('${escapeAttr(userId)}')">Block</button>
       <button class="sheet-btn" style="margin-top:10px;text-align:center;" onclick="closeDiscoverSheet()">Cancel</button>
@@ -14203,7 +14204,7 @@ async function openContactDetail(contactId) {
         ${contact.last_gig_date ? `<div style="padding:10px 0;font-size:13px;"><span style="color:var(--text-2);">Last gig</span><br/><span style="color:var(--text);font-weight:600;">${formatDateShort(contact.last_gig_date)}</span></div>` : ''}
       </div>
       <div style="padding:0 16px;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
-        <button onclick="sendDepOffer('${contact.id}')" class="pill-o">Send dep offer</button>
+        <button onclick="sendDepOffer('${contact.id}')" class="pill-o feat-dep">Send dep offer</button>
         <button onclick="messageContact('${contact.id}')" class="pill-o">Message</button>
         <button onclick="callContact('${contact.id}')" class="pill-g">Call</button>
         <button onclick="editContact('${contact.id}')" class="pill-g">Edit contact</button>
@@ -24573,7 +24574,7 @@ function renderCalendarListView(currentDate, gigs, blocked, googlePins) {
     <div id="calListGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:0 12px;-webkit-user-select:none;user-select:none;">${cells}</div>
     <div style="display:flex;gap:12px;justify-content:center;font-size:10px;color:var(--text-2);padding:8px 0 2px;">
       <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:var(--accent);"></i>Gig</span>
-      <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:#A78BFA;"></i>Dep</span>
+      <span class="feat-dep"><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:#A78BFA;"></i>Dep</span>
       <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:var(--info);"></i>Google</span>
       <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:var(--text-3);"></i>Blocked</span>
     </div>
