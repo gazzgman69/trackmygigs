@@ -22376,6 +22376,7 @@ const ONBOARDING_STEPS = [
   {
     kind: 'form',
     id: 'profile-basics',
+    livesIn: 'Profile › Edit profile',
     emoji: '👋',
     title: 'What should we call you?',
     render: (profile) => `
@@ -22401,6 +22402,7 @@ const ONBOARDING_STEPS = [
   {
     kind: 'form',
     id: 'profile-music',
+    livesIn: 'Profile › Edit profile',
     emoji: '🎸',
     title: 'What do you play?',
     render: (profile) => {
@@ -22464,10 +22466,16 @@ const ONBOARDING_STEPS = [
   {
     kind: 'form',
     id: 'getting-paid',
+    livesIn: 'Profile › Edit profile · stamped on every invoice',
     emoji: '💷',
     title: 'Get paid, stay sane',
     render: (profile) => `
       <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:14px;text-align:left;">Every gig can turn into an invoice with one tap. Add these once and they're stamped on every invoice you send. Both optional, both editable later in Profile.</div>
+      <div style="text-align:left;margin-bottom:14px;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Standard gig fee (£)</label>
+        <input id="onbRate" type="number" min="0" step="1" inputmode="decimal" value="${profile.rate_standard != null ? profile.rate_standard : ''}" placeholder="e.g. 300" style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;box-sizing:border-box;">
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Powers fee suggestions when you log a gig. Rough is fine.</div>
+      </div>
       <div style="text-align:left;margin-bottom:14px;">
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Bank details for transfers</label>
         <textarea id="onbBankDetails" rows="3" placeholder="e.g. Sort code: 12-34-56&#10;Account: 12345678&#10;Your name" style="width:100%;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;font-family:inherit;">${escapeHtml(profile.bank_details || '')}</textarea>
@@ -22479,6 +22487,8 @@ const ONBOARDING_STEPS = [
       </div>`,
     collect: () => {
       const body = {};
+      const rate = (document.getElementById('onbRate')?.value || '').trim();
+      if (rate && !isNaN(parseFloat(rate))) body.rate_standard = parseFloat(rate);
       const bank = (document.getElementById('onbBankDetails')?.value || '').trim();
       let link = (document.getElementById('onbPayLink')?.value || '').trim();
       if (bank) body.bank_details = bank;
@@ -22613,7 +22623,8 @@ function showOnboardingStep(index) {
     <div style="max-width:360px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px 24px;text-align:center;box-shadow:0 30px 60px rgba(0,0,0,.5);">
       <div style="font-size:52px;margin-bottom:12px;">${step.emoji}</div>
       <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:14px;">${escapeHtml(step.title)}</div>
-      <div style="margin-bottom:20px;">${bodyHtml}</div>
+      <div style="margin-bottom:${step.livesIn ? '12px' : '20px'};">${bodyHtml}</div>
+      ${step.livesIn ? `<div style="display:inline-flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:5px 12px;font-size:11px;color:var(--text-3);margin-bottom:16px;">📍 Lives in <b style="color:var(--text-2);">${step.livesIn}</b></div>` : ''}
       <div style="display:flex;justify-content:center;gap:6px;margin-bottom:20px;">${pips}</div>
       <button id="onbNext" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:12px;font-size:15px;font-weight:700;cursor:pointer;">${escapeHtml(step.cta)}</button>
       <button id="onbSkip" style="margin-top:10px;width:100%;background:transparent;color:var(--text-3);border:none;padding:8px;font-size:13px;cursor:pointer;">Skip tour</button>
@@ -22748,7 +22759,8 @@ function renderImportPicker(stepIndex, opts) {
     <div style="max-width:380px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;text-align:center;box-shadow:0 30px 60px rgba(0,0,0,.5);">
       <div style="font-size:46px;margin-bottom:8px;">📥</div>
       <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:10px;">${escapeHtml(titleHtml)}</div>
-      <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:16px;text-align:left;">${escapeHtml(subtitleHtml)}</div>
+      <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:12px;text-align:left;">${escapeHtml(subtitleHtml)}</div>
+      <div style="display:inline-flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:5px 12px;font-size:11px;color:var(--text-3);margin-bottom:14px;">📍 Lives in <b style="color:var(--text-2);">Profile › Connections</b></div>
       <div style="text-align:left;margin-bottom:14px;">${cardsHtml}</div>
       <div style="display:flex;justify-content:center;gap:6px;margin-bottom:14px;">${pips}</div>
       <button id="onbDone" style="width:100%;background:${allDone ? 'var(--accent)' : 'transparent'};color:${allDone ? '#000' : 'var(--text-2)'};border:1px solid ${allDone ? 'var(--accent)' : 'var(--border)'};border-radius:10px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;">${escapeHtml(doneCta)}</button>
