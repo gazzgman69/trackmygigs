@@ -78,3 +78,5 @@ ONE reload call per deploy, then poll the BUNDLE (grep for the new symbol)
 on a 15s+ cadence WITHOUT re-hitting the reload endpoint; only re-trigger
 reload if the bundle is still stale after 60s, and never more than once per
 30s. Recovery when wedged: Replit Git pane (UI) > Discard All > Pull.
+
+- 2026-07-02: Six rapid-fire /api/admin/reload calls in ~30s knocked the dev Repl process over (dead until Gareth pressed Run). Space reload attempts at least ~15s apart and stop after the first success; if the app 502s for over a minute after a deploy, ask for the Run button instead of hammering reload.
