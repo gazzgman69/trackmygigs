@@ -901,6 +901,7 @@ function buildHomeHTML(content, stats) {
     html += buildHomeHero(state, stats);
   }
   html += buildHomeNeedsStrip(stats, state);
+  html += '<div id="homeSyncReviewSlot"></div>';
   html += '<div id="homeRebookSlot"></div>';
   html += '<div id="homeFollowupSlot"></div>';
   html += '<div id="homeSetupSlot"></div>';
@@ -911,10 +912,88 @@ function buildHomeHTML(content, stats) {
   // The week strip is always in the DOM now, so hydrate its gig / blocked-day
   // dots on every render, not just the busy state.
   hydrateNext7DaysStrip();
+  paintHomeSyncReviewCard();
   paintHomeRebookCard();
   paintHomeFollowupCard();
   paintHomeSetupCard(stats);
 }
+
+// ── Home sync-review card ────────────────────────────────────────────────────
+// North star: after syncing a calendar, importing the real gigs should be the
+// most obvious, fastest action in the app. Surfaces the calendar nudges
+// ("this synced event looks like a gig") on Home with a one-tap-per-event
+// review sheet, instead of leaving them buried in the Calendar tab.
+async function paintHomeSyncReviewCard() {
+  const slot = document.getElementById('homeSyncReviewSlot');
+  if (!slot) return;
+  let nudges = null;
+  try { nudges = await loadCalendarNudges(); } catch (_) {}
+  if (!Array.isArray(nudges) || nudges.length === 0) { slot.innerHTML = ''; return; }
+  const n = nudges.length;
+  slot.innerHTML = `
+    <div onclick="openSyncReviewSheet()" style="margin:0 16px 12px;background:linear-gradient(135deg,rgba(240,165,0,.12),transparent);border:1px solid rgba(240,165,0,.4);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;">
+      <span style="font-size:20px;flex-shrink:0;">🎵</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">${n} synced event${n === 1 ? ' looks' : 's look'} like gigs</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:1px;">Import the real ones in one tap each</div>
+      </div>
+      <span style="background:var(--accent);color:#000;font-size:12px;font-weight:700;border-radius:999px;padding:7px 14px;flex-shrink:0;">Review</span>
+    </div>`;
+}
+
+function openSyncReviewSheet() {
+  const nudges = Array.isArray(window._calendarNudges) ? window._calendarNudges : [];
+  if (nudges.length === 0) return;
+  document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+
+  const rowHtml = (e) => {
+    const times = [e.start_time, e.end_time].filter(Boolean).join(' – ');
+    const feeBit = e.suggested_fee ? ` · ~£${e.suggested_fee}` : '';
+    return `
+      <div data-nudge-row="${escapeAttr(e.id)}" style="display:flex;align-items:center;gap:10px;padding:11px 12px;background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:8px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.title || 'Untitled event')}</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:1px;">${escapeHtml([e.date_formatted, times].filter(Boolean).join(' · '))}${feeBit}</div>
+        </div>
+        <button onclick="syncReviewAct('${escapeAttr(e.id)}', true)" title="Import as gig" style="width:36px;height:36px;border-radius:18px;background:var(--success);border:none;color:#000;font-size:15px;font-weight:700;cursor:pointer;flex-shrink:0;">✓</button>
+        <button onclick="syncReviewAct('${escapeAttr(e.id)}', false)" title="Not a gig" style="width:36px;height:36px;border-radius:18px;background:var(--card);border:1px solid var(--border);color:var(--text-2);font-size:14px;cursor:pointer;flex-shrink:0;">✕</button>
+      </div>`;
+  };
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;max-height:80vh;overflow-y:auto;">
+      <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>
+      <div style="display:flex;align-items:center;margin-bottom:4px;">
+        <div style="font-size:12px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;flex:1;">Synced events to review</div>
+        <div id="syncReviewCount" style="font-size:11px;color:var(--text-3);font-weight:700;">${nudges.length} left</div>
+      </div>
+      <div style="font-size:11px;color:var(--text-3);margin-bottom:12px;">✓ imports it as a gig · ✕ marks it not-a-gig (it stays a personal event)</div>
+      <div id="syncReviewList">${nudges.map(rowHtml).join('')}</div>
+      <button onclick="document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());" style="width:100%;margin-top:6px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;">Done for now</button>
+    </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+window.openSyncReviewSheet = openSyncReviewSheet;
+
+function syncReviewAct(eventId, isGig) {
+  if (isGig) quickImportNudgeByEventId(eventId);
+  else dismissNudgeByEventId(eventId);
+  const row = document.querySelector(`[data-nudge-row="${CSS.escape(eventId)}"]`);
+  if (row) row.remove();
+  const left = document.querySelectorAll('#syncReviewList [data-nudge-row]').length;
+  const counter = document.getElementById('syncReviewCount');
+  if (counter) counter.textContent = `${left} left`;
+  if (left === 0) {
+    document.querySelectorAll('.sheet-overlay').forEach(o => o.remove());
+    showToast('All reviewed 🎉');
+  }
+  paintHomeSyncReviewCard();
+}
+window.syncReviewAct = syncReviewAct;
 
 // ── Home vitals row ──────────────────────────────────────────────────────────
 // Three glanceable numbers at the top of Home: money booked this month, money
