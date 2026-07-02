@@ -1351,12 +1351,7 @@ function buildHomeNeedsStrip(stats, state) {
     chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.35);"><span style="font-size:10px;">💷</span>${stats.gigs_missing_fee} need fee${stats.gigs_missing_fee === 1 ? '' : 's'}</span>`);
   }
 
-  if (chips.length === 0) {
-    if (state && state.kind === 'quiet') {
-      return `<div style="margin:0 16px 12px;padding:10px 12px;background:transparent;border:1px dashed var(--border);border-radius:10px;text-align:center;font-size:11px;color:var(--text-3);font-style:italic;">Nothing needs you right now.</div>`;
-    }
-    return '';
-  }
+  if (chips.length === 0) return '';
 
   return `
     <div onclick="openNeedsYouSheet()" style="margin:0 16px 12px;background:var(--card);background:color-mix(in srgb, var(--accent) 6%, var(--card));border:1px solid var(--border);border:1px solid color-mix(in srgb, var(--accent) 28%, transparent);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;">
