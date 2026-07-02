@@ -6919,6 +6919,25 @@ function toggleSetType(type, btn) {
 }
 window.toggleSetType = toggleSetType;
 
+// Effective agency commission % for a given fee: fee-banded tiers when the
+// agency defines them, else the flat rate. Tiers are ascending with the open
+// "and above" band (up_to null) last, matching the server normaliser.
+function effectiveCommissionPct(flatPct, tiers, fee) {
+  try {
+    const t = typeof tiers === 'string' ? JSON.parse(tiers) : tiers;
+    if (Array.isArray(t) && t.length && fee > 0) {
+      for (const band of t) {
+        if (band.up_to != null && fee <= parseFloat(band.up_to)) return parseFloat(band.pct);
+      }
+      const open = t.find(b => b.up_to == null);
+      if (open) return parseFloat(open.pct);
+      return parseFloat(t[t.length - 1].pct);
+    }
+  } catch (_) {}
+  return flatPct != null && flatPct !== '' ? parseFloat(flatPct) : null;
+}
+window.effectiveCommissionPct = effectiveCommissionPct;
+
 // Shared between the wizard and the full form so the two lists never drift.
 const SET_TYPES = [
   { label: '\u{1F3B7} Solo', value: 'Solo' },
@@ -11149,7 +11168,14 @@ async function openGigDetail(gigId) {
       ${gig.venue_name ? `<div onclick="openVenueMemory('${escapeAttr(gig.venue_name)}')" style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:6px;cursor:pointer;">\uD83D\uDCD2 Venue history &amp; heads-ups \u203A</div>` : ''}
       <div style="font-size:14px;color:var(--text-2);">\uD83D\uDCB7 ${gig.fee ? '\u00A3' + parseFloat(gig.fee).toFixed(0) : 'No fee set'} <span class="badge badge-${statusBadgeClass(gig.status)}" style="margin-left:6px;">${statusLabel(gig.status)}</span></div>
       ${(gig.gig_type || gig.set_type) ? `<div style="font-size:13px;color:var(--text-2);margin-top:6px;">\uD83C\uDFF7\uFE0F ${escapeHtml([gig.gig_type, gig.set_type].filter(Boolean).join(' \u00B7 '))}</div>` : ''}
-      ${gig.agency_name ? `<div style="font-size:13px;color:var(--text-2);margin-top:6px;">\uD83C\uDFE2 ${escapeHtml(gig.agency_name)}${(gig.agency_commission_pct != null && gig.fee) ? ` \u00B7 ${gig.agency_commission_pct}% \u00B7 <b style="color:var(--success);">take-home \u00A3${(Math.round((parseFloat(gig.fee) - parseFloat(gig.fee) * parseFloat(gig.agency_commission_pct) / 100) * 100) / 100).toLocaleString()}</b>` : ''}</div>` : ''}
+      ${(() => {
+        if (!gig.agency_name) return '';
+        const agPct = effectiveCommissionPct(gig.agency_commission_pct, gig.agency_commission_tiers, parseFloat(gig.fee || 0));
+        const money = (agPct != null && gig.fee)
+          ? ` \u00B7 ${agPct}% \u00B7 <b style="color:var(--success);">take-home \u00A3${(Math.round((parseFloat(gig.fee) - parseFloat(gig.fee) * agPct / 100) * 100) / 100).toLocaleString()}</b>`
+          : '';
+        return `<div style="font-size:13px;color:var(--text-2);margin-top:6px;">\uD83C\uDFE2 ${escapeHtml(gig.agency_name)}${money}</div>`;
+      })()}
       <div id="gigDetailMileage" style="margin-top:8px;"></div>
       <div id="gigDetailWeather" style="display:none;margin-top:8px;font-size:12px;color:var(--text-2);"></div>
       <!-- Completeness tracker -->
@@ -11369,8 +11395,9 @@ function renderGigSplitsSection(gig) {
   const leaderCut = parseFloat(s.leader_cut) || 0;
   // Agency commission comes off the top first (before costs and the band split),
   // so the band only ever divides the net-of-agency money.
-  const commission = (gig.agency_commission_pct != null && fee > 0)
-    ? Math.round(fee * parseFloat(gig.agency_commission_pct) / 100 * 100) / 100 : 0;
+  const agencyPct = effectiveCommissionPct(gig.agency_commission_pct, gig.agency_commission_tiers, fee);
+  const commission = (agencyPct != null && fee > 0)
+    ? Math.round(fee * agencyPct / 100 * 100) / 100 : 0;
   const pot = Math.max(0, fee - commission - costs);
   const saved = {};
   (s.members || []).forEach(m => { saved[m.name] = m; });
@@ -11396,7 +11423,7 @@ function renderGigSplitsSection(gig) {
   el.innerHTML = `
     <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Gig fee</span><b>\u00A3${Math.round(fee)}</b></div>
-      ${commission > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Agency commission${gig.agency_commission_pct != null ? ' (' + gig.agency_commission_pct + '%)' : ''}</span><b style="color:var(--danger);">-\u00A3${Math.round(commission)}</b></div>` : ''}
+      ${commission > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Agency commission${agencyPct != null ? ' (' + agencyPct + '%)' : ''}</span><b style="color:var(--danger);">-\u00A3${Math.round(commission)}</b></div>` : ''}
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Costs off the top</span><input id="splitCosts" type="number" min="0" value="${costs || ''}" placeholder="0" onchange="saveGigSplits('${escapeAttr(gig.id)}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:6px 8px;width:84px;text-align:right;"></div>
       ${mode === 'leader' ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Your cut first (\u00A3)</span><input id="splitLeaderCut" type="number" min="0" value="${leaderCut || ''}" placeholder="0" onchange="saveGigSplits('${escapeAttr(gig.id)}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:6px 8px;width:84px;text-align:right;"></div>` : ''}
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px;"><span style="color:var(--text-2);font-size:12px;">Pot to split between ${n}</span><b style="color:var(--success);font-size:15px;">\u00A3${Math.round(pot)}</b></div>
@@ -14117,14 +14144,47 @@ function refreshAgencyTakeHome() {
   const sel = document.getElementById('editAgency');
   const fee = parseFloat((document.getElementById('editFee') || {}).value || '0') || 0;
   const a = sel && sel.value ? (window._agenciesCache || []).find(x => String(x.id) === String(sel.value)) : null;
-  if (!a || a.commission_pct == null || !(fee > 0)) { box.innerHTML = ''; return; }
+  const pct = a ? effectiveCommissionPct(a.commission_pct, a.commission_tiers, fee) : null;
+  if (pct == null || !(fee > 0)) { box.innerHTML = ''; return; }
   // Round take-home in one step (matching the gig-detail calc), then derive the
   // displayed commission from it, so the two surfaces never differ by a penny.
-  const keep = Math.round((fee - fee * parseFloat(a.commission_pct) / 100) * 100) / 100;
+  const keep = Math.round((fee - fee * pct / 100) * 100) / 100;
   const commission = Math.round((fee - keep) * 100) / 100;
-  box.innerHTML = `Fee £${fee.toLocaleString()} · ${a.commission_pct}% −£${commission.toLocaleString()} · <b style="color:var(--success);">you keep £${keep.toLocaleString()}</b>`;
+  box.innerHTML = `Fee £${fee.toLocaleString()} · ${pct}% −£${commission.toLocaleString()} · <b style="color:var(--success);">you keep £${keep.toLocaleString()}</b>`;
 }
-function _agencySheetShell(title, nameVal, pctVal, saveId) {
+function _agencyTierRow(t) {
+  t = t || {};
+  return `
+    <div class="ag-tier-row" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+      <span style="font-size:11px;color:var(--text-3);flex-shrink:0;">up to £</span>
+      <input type="number" class="fi ag-tier-upto" value="${t.up_to != null ? t.up_to : ''}" placeholder="blank = above" min="0" step="1" inputmode="decimal" style="flex:1;min-width:0;margin:0;">
+      <span style="font-size:11px;color:var(--text-3);flex-shrink:0;">at</span>
+      <input type="number" class="fi ag-tier-pct" value="${t.pct != null ? t.pct : ''}" placeholder="%" min="0" max="100" step="0.5" inputmode="decimal" style="width:64px;margin:0;">
+      <span style="font-size:11px;color:var(--text-3);flex-shrink:0;">%</span>
+      <span onclick="this.closest('.ag-tier-row').remove()" style="color:var(--text-3);font-size:15px;cursor:pointer;padding:0 4px;flex-shrink:0;">&times;</span>
+    </div>`;
+}
+function addAgencyTierRow() {
+  const host = document.getElementById('agTiers');
+  if (host && host.querySelectorAll('.ag-tier-row').length < 5) host.insertAdjacentHTML('beforeend', _agencyTierRow());
+}
+window.addAgencyTierRow = addAgencyTierRow;
+function collectAgencyTiers(overlay) {
+  const rows = overlay.querySelectorAll('#agTiers .ag-tier-row');
+  const tiers = [];
+  rows.forEach(r => {
+    const upto = r.querySelector('.ag-tier-upto').value;
+    const pct = r.querySelector('.ag-tier-pct').value;
+    if (pct !== '' && !isNaN(parseFloat(pct))) {
+      tiers.push({ up_to: upto !== '' && !isNaN(parseFloat(upto)) ? parseFloat(upto) : null, pct: parseFloat(pct) });
+    }
+  });
+  return tiers;
+}
+
+function _agencySheetShell(title, nameVal, pctVal, saveId, tiers) {
+  let tierRows = [];
+  try { const t = typeof tiers === 'string' ? JSON.parse(tiers) : tiers; if (Array.isArray(t)) tierRows = t; } catch (_) {}
   return `
     <div style="background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 24px;width:100%;max-width:390px;">
       <div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;"></div>
@@ -14132,7 +14192,10 @@ function _agencySheetShell(title, nameVal, pctVal, saveId) {
       <label class="fl">Agency name</label>
       <input id="agName" type="text" class="fi" value="${escapeHtml(nameVal || '')}" placeholder="e.g. Sound Music Agency" style="margin-bottom:12px;" />
       <label class="fl">Commission %</label>
-      <input id="agPct" type="number" class="fi" value="${pctVal != null && pctVal !== '' ? pctVal : ''}" placeholder="e.g. 15" step="0.5" inputmode="decimal" style="margin-bottom:14px;" />
+      <input id="agPct" type="number" class="fi" value="${pctVal != null && pctVal !== '' ? pctVal : ''}" placeholder="e.g. 15" step="0.5" inputmode="decimal" style="margin-bottom:12px;" />
+      <label class="fl">Fee-banded rates (optional, override the flat %)</label>
+      <div id="agTiers" style="margin-bottom:2px;">${tierRows.map(_agencyTierRow).join('')}</div>
+      <div onclick="addAgencyTierRow()" style="font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;margin-bottom:14px;">+ Add band</div>
       <button id="${saveId}" style="width:100%;background:#A78BFA;color:#1a1a1a;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;">Save agency</button>
       <button onclick="document.querySelectorAll('.sheet-overlay').forEach(o=>o.remove());" style="width:100%;margin-top:8px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:24px;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
     </div>`;
@@ -14150,7 +14213,7 @@ function addAgencySheet(onSaved) {
     const pct = overlay.querySelector('#agPct').value;
     if (!name) { if (typeof showToast === 'function') showToast('Agency name required'); return; }
     try {
-      const r = await fetch('/api/agencies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, commission_pct: pct }) });
+      const r = await fetch('/api/agencies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, commission_pct: pct, commission_tiers: collectAgencyTiers(overlay) }) });
       const a = await r.json();
       if (!r.ok) { if (typeof showToast === 'function') showToast(a.error || 'Could not save'); return; }
       await loadAgencies(true);
@@ -14176,7 +14239,7 @@ function renderAgenciesList() {
       <div style="font-size:20px;">🏢</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:14px;font-weight:600;color:var(--text);">${escapeHtml(a.name)}</div>
-        <div style="font-size:12px;color:var(--text-3);">${a.commission_pct != null ? a.commission_pct + '% commission' : 'No commission set'}</div>
+        <div style="font-size:12px;color:var(--text-3);">${(() => { try { const t = typeof a.commission_tiers === 'string' ? JSON.parse(a.commission_tiers) : a.commission_tiers; if (Array.isArray(t) && t.length) return t.map(x => (x.up_to != null ? '\u2264\u00A3' + x.up_to : 'above') + ' ' + x.pct + '%').join(' \u00B7 '); } catch (_) {} return a.commission_pct != null ? a.commission_pct + '% commission' : 'No commission set'; })()}</div>
       </div>
       <span onclick="editAgencyPrompt('${a.id}')" style="font-size:13px;color:var(--accent);cursor:pointer;margin-right:12px;">Edit</span>
       <span onclick="deleteAgency('${a.id}')" style="font-size:13px;color:var(--danger);cursor:pointer;">Delete</span>
@@ -14191,14 +14254,14 @@ function editAgencyPrompt(id) {
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
-  overlay.innerHTML = _agencySheetShell('Edit agency', a.name, a.commission_pct, 'agSave');
+  overlay.innerHTML = _agencySheetShell('Edit agency', a.name, a.commission_pct, 'agSave', a.commission_tiers);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   document.body.appendChild(overlay);
   overlay.querySelector('#agSave').onclick = async () => {
     const name = (overlay.querySelector('#agName').value || '').trim();
     const pct = overlay.querySelector('#agPct').value;
     try {
-      const r = await fetch('/api/agencies/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, commission_pct: pct }) });
+      const r = await fetch('/api/agencies/' + encodeURIComponent(id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, commission_pct: pct, commission_tiers: collectAgencyTiers(overlay) }) });
       if (!r.ok) { if (typeof showToast === 'function') showToast('Could not save'); return; }
       await loadAgencies(true);
       overlay.remove();

@@ -2171,6 +2171,9 @@ async function runMigrations() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS agencies_user_name_idx ON agencies (user_id, LOWER(name))`);
+    // Fee-banded commission (Gigflow parity W3): [{up_to:500,pct:15},{up_to:null,pct:12}]
+    // means 15% up to £500, 12% above. Flat commission_pct stays the fallback.
+    await db.query(`ALTER TABLE agencies ADD COLUMN IF NOT EXISTS commission_tiers JSONB`);
     // 2026-06-10 availability polls. Live objects, deliberately NOT message
     // snapshots: the chat attachment carries only {kind:'poll', poll_id} and
     // the card hydrates from these tables so votes always show current state.

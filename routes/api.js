@@ -294,7 +294,8 @@ router.get('/gigs', async (req, res) => {
     const result = await db.query(
       `SELECT g.*, COALESCE((SELECT SUM(amount) FROM gig_payments gp WHERE gp.gig_id = g.id), 0) AS paid_so_far,
               EXISTS(SELECT 1 FROM invoices i WHERE i.gig_id = g.id AND i.user_id = g.user_id) AS has_invoice,
-              a.name AS agency_name, a.commission_pct AS agency_commission_pct
+              a.name AS agency_name, a.commission_pct AS agency_commission_pct,
+              a.commission_tiers AS agency_commission_tiers
        FROM gigs g LEFT JOIN agencies a ON a.id = g.agency_id AND a.user_id = g.user_id
        WHERE g.user_id = $1 ORDER BY g.date DESC`,
       [req.user.id]
@@ -583,7 +584,8 @@ router.get('/gigs/:id/wallet-pass.pkpass', async (req, res) => {
 router.get('/gigs/:id', async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT g.*, a.name AS agency_name, a.commission_pct AS agency_commission_pct
+      `SELECT g.*, a.name AS agency_name, a.commission_pct AS agency_commission_pct,
+              a.commission_tiers AS agency_commission_tiers
        FROM gigs g LEFT JOIN agencies a ON a.id = g.agency_id AND a.user_id = g.user_id
        WHERE g.id = $1 AND g.user_id = $2`,
       [req.params.id, req.user.id]
@@ -5733,10 +5735,26 @@ router.delete('/invoice-clients/:id', async (req, res) => {
 // ── Agencies (booked-through, with a commission rate) ────────────────────────
 // Saved agencies a gig can be booked through. commission_pct comes off the fee
 // before any band split. All routes scope to req.user.id.
+// Fee-banded commission tiers: array of {up_to, pct}, ascending, the open
+// "and above" band (up_to null) last, capped at 5. Returns a JSON string for
+// the ::jsonb bind, or null when nothing valid was supplied.
+function normalizeCommissionTiers(raw) {
+  if (!Array.isArray(raw)) return null;
+  const tiers = raw
+    .map(t => ({
+      up_to: (t && t.up_to != null && t.up_to !== '' && isFinite(parseFloat(t.up_to))) ? parseFloat(t.up_to) : null,
+      pct: (t && isFinite(parseFloat(t.pct))) ? Math.max(0, Math.min(100, parseFloat(t.pct))) : null,
+    }))
+    .filter(t => t.pct != null)
+    .slice(0, 5)
+    .sort((a, b) => ((a.up_to == null) - (b.up_to == null)) || ((a.up_to || 0) - (b.up_to || 0)));
+  return tiers.length ? JSON.stringify(tiers) : null;
+}
+
 router.get('/agencies', async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT id, name, commission_pct, created_at
+      `SELECT id, name, commission_pct, commission_tiers, created_at
          FROM agencies WHERE user_id = $1 ORDER BY LOWER(name) ASC`,
       [req.user.id]
     );
@@ -5754,13 +5772,18 @@ router.post('/agencies', async (req, res) => {
     let pct = req.body.commission_pct;
     pct = (pct === '' || pct == null) ? null : Math.max(0, Math.min(100, parseFloat(pct)));
     if (pct != null && isNaN(pct)) pct = null;
+    // Tiers: only touched when the key is present, so older callers that never
+    // send it can't wipe an existing band structure. An empty array clears.
+    const tiersProvided = req.body.commission_tiers !== undefined;
+    const tiersVal = tiersProvided ? normalizeCommissionTiers(req.body.commission_tiers) : null;
     const result = await db.query(
-      `INSERT INTO agencies (user_id, name, commission_pct)
-       VALUES ($1, $2, $3)
+      `INSERT INTO agencies (user_id, name, commission_pct, commission_tiers)
+       VALUES ($1, $2, $3, $4::jsonb)
        ON CONFLICT (user_id, LOWER(name)) DO UPDATE
-         SET commission_pct = COALESCE(EXCLUDED.commission_pct, agencies.commission_pct)
-       RETURNING id, name, commission_pct, created_at`,
-      [req.user.id, cleanName.slice(0, 255), pct]
+         SET commission_pct = COALESCE(EXCLUDED.commission_pct, agencies.commission_pct),
+             commission_tiers = CASE WHEN $5::boolean THEN EXCLUDED.commission_tiers ELSE agencies.commission_tiers END
+       RETURNING id, name, commission_pct, commission_tiers, created_at`,
+      [req.user.id, cleanName.slice(0, 255), pct, tiersVal, tiersProvided]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -5773,15 +5796,18 @@ router.patch('/agencies/:id', async (req, res) => {
   try {
     let pct = req.body.commission_pct;
     pct = (pct === undefined) ? null : (pct === '' || pct == null ? null : Math.max(0, Math.min(100, parseFloat(pct))));
+    const tiersProvided = req.body.commission_tiers !== undefined;
+    const tiersVal = tiersProvided ? normalizeCommissionTiers(req.body.commission_tiers) : null;
     const result = await db.query(
       `UPDATE agencies SET
          name = COALESCE($1, name),
-         commission_pct = COALESCE($2, commission_pct)
+         commission_pct = COALESCE($2, commission_pct),
+         commission_tiers = CASE WHEN $5::boolean THEN $6::jsonb ELSE commission_tiers END
        WHERE id = $3 AND user_id = $4
-       RETURNING id, name, commission_pct, created_at`,
+       RETURNING id, name, commission_pct, commission_tiers, created_at`,
       [req.body.name ? String(req.body.name).trim().slice(0, 255) : null,
        (pct != null && !isNaN(pct)) ? pct : null,
-       req.params.id, req.user.id]
+       req.params.id, req.user.id, tiersProvided, tiersVal]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Agency not found' });
     res.json(result.rows[0]);
