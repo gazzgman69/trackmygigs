@@ -705,6 +705,118 @@ router.get('/share/:slug/next-gig.ics', async (req, res) => {
   }
 });
 
+// ── Private iCal subscribe feed ──────────────────────────────────────────────
+// /calendar-feed/<token>.ics — token-authed personal feed for Apple Calendar,
+// Outlook, or anything that subscribes to iCal URLs. Carries the musician's
+// gigs in full plus blocked dates and busy personal events as opaque "Busy"
+// blocks. Free tier (Gigflow Pro-gates its one-way feed). The token is a
+// per-user secret; a leaked URL is revocable via regenerate in Settings.
+router.get('/calendar-feed/:token', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').replace(/\.ics$/i, '');
+    if (!/^[a-f0-9]{24,64}$/.test(token)) return res.status(404).send('Not found');
+    const uR = await db.query(
+      'SELECT id, display_name, name FROM users WHERE ical_feed_token = $1',
+      [token]
+    );
+    if (uR.rows.length === 0) return res.status(404).send('Not found');
+    const user = uR.rows[0];
+
+    const [gigsR, blockedR, personalR] = await Promise.all([
+      db.query(
+        `SELECT id, date::text AS date, start_time, end_time, venue_name,
+                venue_address, band_name, fee, status
+           FROM gigs
+          WHERE user_id = $1 AND status <> 'cancelled'
+            AND date >= CURRENT_DATE - INTERVAL '30 days'
+            AND date <= CURRENT_DATE + INTERVAL '400 days'
+          ORDER BY date ASC`,
+        [user.id]
+      ),
+      db.query('SELECT * FROM blocked_dates WHERE user_id = $1', [user.id]),
+      // Opaque busy blocks only: times, never titles or details.
+      db.query(
+        `SELECT id, all_day, start_date::text AS sd,
+                COALESCE(end_date, start_date)::text AS ed,
+                to_char(start_at AT TIME ZONE 'Europe/London', 'YYYYMMDD"T"HH24MISS') AS s_local,
+                to_char(COALESCE(end_at, start_at) AT TIME ZONE 'Europe/London', 'YYYYMMDD"T"HH24MISS') AS e_local
+           FROM personal_events
+          WHERE user_id = $1 AND deleted_at IS NULL AND status <> 'cancelled'
+            AND is_recurring_master IS NOT TRUE
+            AND transparency <> 'transparent'
+            AND COALESCE(start_date, (start_at AT TIME ZONE 'Europe/London')::date)
+                BETWEEN CURRENT_DATE - 30 AND CURRENT_DATE + 400`,
+        [user.id]
+      ),
+    ]);
+
+    const { expandBlockedRow } = require('./api');
+    const displayName = user.display_name || user.name || 'TrackMyGigs';
+    const icsEsc = (s) => String(s || '')
+      .replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+    const ymd = (s) => String(s).slice(0, 10).replace(/-/g, '');
+    const nextDay = (dateStr) => {
+      const d = new Date(String(dateStr).slice(0, 10) + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().slice(0, 10).replace(/-/g, '');
+    };
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, 'Z');
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//TrackMyGigs//Calendar feed//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      `X-WR-CALNAME:${icsEsc(displayName + ' - gigs')}`,
+      'X-PUBLISHED-TTL:PT1H',
+    ];
+    const pushEvent = (uid, dtLines, summary, extra) => {
+      lines.push('BEGIN:VEVENT', `UID:${uid}@trackmygigs.app`, `DTSTAMP:${stamp}`, ...dtLines, `SUMMARY:${icsEsc(summary)}`);
+      (extra || []).forEach((l) => l && lines.push(l));
+      lines.push('END:VEVENT');
+    };
+
+    for (const g of gigsR.rows) {
+      const title = g.band_name || g.venue_name || 'Gig';
+      const descBits = [];
+      if (g.fee != null && g.fee !== '') descBits.push(`Fee: £${g.fee}`);
+      if (g.status) descBits.push(g.status);
+      const dt = g.start_time
+        ? [`DTSTART:${ymd(g.date)}T${String(g.start_time).replace(/:/g, '').slice(0, 6).padEnd(6, '0')}`,
+           `DTEND:${ymd(g.date)}T${String(g.end_time || g.start_time).replace(/:/g, '').slice(0, 6).padEnd(6, '0')}`]
+        : [`DTSTART;VALUE=DATE:${ymd(g.date)}`, `DTEND;VALUE=DATE:${nextDay(g.date)}`];
+      pushEvent(`gig-${g.id}`, dt, title, [
+        (g.venue_address || g.venue_name) ? `LOCATION:${icsEsc(g.venue_address || g.venue_name)}` : null,
+        descBits.length ? `DESCRIPTION:${icsEsc(descBits.join(' · '))}` : null,
+      ]);
+    }
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const maxIso = new Date(Date.now() + 400 * 86400000).toISOString().slice(0, 10);
+    for (const row of blockedR.rows) {
+      for (const d of expandBlockedRow(row)) {
+        if (d < todayIso || d > maxIso) continue;
+        pushEvent(`blocked-${row.id}-${d}`, [`DTSTART;VALUE=DATE:${ymd(d)}`, `DTEND;VALUE=DATE:${nextDay(d)}`], 'Busy', ['TRANSP:OPAQUE']);
+      }
+    }
+
+    for (const p of personalR.rows) {
+      const dt = p.all_day
+        ? [`DTSTART;VALUE=DATE:${ymd(p.sd)}`, `DTEND;VALUE=DATE:${nextDay(p.ed)}`]
+        : [`DTSTART:${p.s_local}`, `DTEND:${p.e_local}`];
+      pushEvent(`pe-${p.id}`, dt, 'Busy', ['TRANSP:OPAQUE']);
+    }
+
+    lines.push('END:VCALENDAR');
+    res.set('Content-Type', 'text/calendar; charset=utf-8');
+    res.set('Cache-Control', 'private, max-age=300');
+    res.send(lines.join('\r\n'));
+  } catch (err) {
+    console.error('iCal feed error:', err);
+    res.status(500).send('Error generating feed');
+  }
+});
+
 // ── Public EPK (Electronic Press Kit) ────────────────────────────────────────
 // /epk/:slug — artist bio, photo, video/audio links, recent gigs
 router.get('/epk/:slug', async (req, res) => {

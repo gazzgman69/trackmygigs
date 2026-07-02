@@ -1,4 +1,4 @@
-# Gigflow parity closure (plan 2026-07-01, AWAITING SIGN-OFF)
+# Gigflow parity closure (plan 2026-07-01, SIGNED OFF Gareth 2026-07-01: ALL FIVE waves, iCal = gigs + busy blocks)
 
 Goal: close the last 5 gaps in tasks/gigflow-parity.md so TMG has EVERYTHING
 Gigflow has, then we better it. Register verified against code 2026-07-01;
@@ -22,7 +22,7 @@ Gigflow has, then we better it. Register verified against code 2026-07-01;
 - [ ] W4: CSV import entry point (~15 min)
       Reuse the onboarding spreadsheet-upload flow; add "Import gigs (CSV)"
       next to the existing "Export gigs (CSV)" + a More-sheet row.
-- [ ] W5 (optional, propose skip for now): availability poster (~40 min)
+- [ ] W5: availability poster (~40 min)
       Shareable open-dates graphic. Lowest value; marketing fluff.
 
 Each wave: build -> syntax check -> ONE commit -> deploy -> live verify

@@ -8335,3 +8335,6 @@ router.get('/marketplace/:id/similar', async (req, res) => {
 });
 
 module.exports = router;
+// Reused by the public iCal feed so blocked-date patterns expand identically
+// to the in-app calendar.
+module.exports.expandBlockedRow = expandBlockedRow;

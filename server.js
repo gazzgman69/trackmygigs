@@ -2183,6 +2183,9 @@ async function runMigrations() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS review_link TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_data BYTEA`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime TEXT`);
+    // iCal subscribe feed: per-user secret token authing /calendar-feed/<token>.ics
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ical_feed_token TEXT`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_ical_feed_token_idx ON users(ical_feed_token) WHERE ical_feed_token IS NOT NULL`);
     // 2026-06-10 stage mode: breaks/markers/notes/speeds/transpose all live
     // in one JSONB blob keyed mostly by song_id so reorders don't break it.
     await db.query(`ALTER TABLE setlists ADD COLUMN IF NOT EXISTS stage_meta JSONB`);

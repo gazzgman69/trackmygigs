@@ -3036,6 +3036,13 @@ function buildCalendarView(content, gigsData, blockedData) {
         }
         return '';
       })()}
+      <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span style="min-width:0;font-size:12px;color:var(--text-2);">Apple Calendar / Outlook</span>
+          <button onclick="copyIcalFeedUrl()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text);font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0;">Copy feed URL</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-3);margin-top:4px;">Read-only iCal feed of your gigs and busy times. Paste the URL into any calendar app that subscribes. <span onclick="regenerateIcalFeed()" style="color:var(--accent);cursor:pointer;font-weight:600;">Regenerate link</span></div>
+      </div>
     </div>
     <div id="calendarMenu" style="display:none;margin:0 16px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px;z-index:10;">
       <div onclick="handleCalendarAction('add-gig')" style="padding:12px 14px;cursor:pointer;color:var(--text);font-size:14px;">Add gig</div>
@@ -3626,6 +3633,38 @@ async function selectCalendar(calendarId) {
     alert('Could not switch calendar. Please try again.');
   }
 }
+
+// iCal subscribe feed (Apple Calendar / Outlook). The URL carries a per-user
+// secret token; copy hands it to the clipboard, regenerate rotates it.
+async function copyIcalFeedUrl() {
+  try {
+    const r = await fetch('/api/calendar/ical-info');
+    const j = await r.json();
+    if (!r.ok || !j.url) { showToast('Could not get the feed URL. Try again.'); return; }
+    await navigator.clipboard.writeText(j.url);
+    showToast('Feed URL copied. Paste it into Apple Calendar or Outlook.');
+  } catch (_) {
+    showToast('Could not copy. Try again.');
+  }
+}
+window.copyIcalFeedUrl = copyIcalFeedUrl;
+
+async function regenerateIcalFeed() {
+  const ok = window.confirmModal
+    ? await window.confirmModal('Regenerate the feed link? Anywhere the old URL is subscribed will stop updating.')
+    : confirm('Regenerate the feed link? Anywhere the old URL is subscribed will stop updating.');
+  if (!ok) return;
+  try {
+    const r = await fetch('/api/calendar/ical-regenerate', { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok || !j.url) { showToast('Could not regenerate. Try again.'); return; }
+    await navigator.clipboard.writeText(j.url);
+    showToast('New feed URL copied to your clipboard.');
+  } catch (_) {
+    showToast('Could not regenerate. Try again.');
+  }
+}
+window.regenerateIcalFeed = regenerateIcalFeed;
 
 async function disconnectGoogleCalendar() {
   const who = window._googleCalendarEmail ? ` (${window._googleCalendarEmail})` : '';

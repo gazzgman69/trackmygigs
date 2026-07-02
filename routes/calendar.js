@@ -2752,6 +2752,37 @@ router.delete('/personal-events/:id', async (req, res) => {
   }
 });
 
+// ── iCal subscribe feed token ────────────────────────────────────────────────
+// The feed itself is served unauthenticated at /calendar-feed/<token>.ics
+// (routes/public.js); these authed endpoints mint and rotate the secret.
+router.get('/ical-info', async (req, res) => {
+  try {
+    const crypto = require('crypto');
+    let r = await db.query('SELECT ical_feed_token FROM users WHERE id = $1', [req.user.id]);
+    let token = r.rows[0] && r.rows[0].ical_feed_token;
+    if (!token) {
+      token = crypto.randomBytes(16).toString('hex');
+      await db.query('UPDATE users SET ical_feed_token = $1 WHERE id = $2', [token, req.user.id]);
+    }
+    res.json({ url: `${req.protocol}://${req.get('host')}/calendar-feed/${token}.ics` });
+  } catch (err) {
+    console.error('ical-info error:', err);
+    res.status(500).json({ error: 'Failed to get feed URL' });
+  }
+});
+
+router.post('/ical-regenerate', async (req, res) => {
+  try {
+    const crypto = require('crypto');
+    const token = crypto.randomBytes(16).toString('hex');
+    await db.query('UPDATE users SET ical_feed_token = $1 WHERE id = $2', [token, req.user.id]);
+    res.json({ url: `${req.protocol}://${req.get('host')}/calendar-feed/${token}.ics` });
+  } catch (err) {
+    console.error('ical-regenerate error:', err);
+    res.status(500).json({ error: 'Failed to regenerate feed URL' });
+  }
+});
+
 // Export helpers for fire-and-forget use in api.js
 module.exports = router;
 module.exports.pushGigToGoogle = pushGigToGoogle;
