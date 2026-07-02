@@ -4407,8 +4407,13 @@ router.get('/threads', async (req, res) => {
 
 router.get('/contacts', async (req, res) => {
   try {
+    // Linked TMG members bring their profile photo along so the contact
+    // list shows a face, not an initial, once someone is on the app.
     const result = await db.query(
-      'SELECT * FROM contacts WHERE owner_id = $1 ORDER BY name ASC',
+      `SELECT c.*, u.photo_url AS linked_photo_url
+         FROM contacts c
+         LEFT JOIN users u ON u.id = COALESCE(c.contact_user_id, c.linked_user_id)
+        WHERE c.owner_id = $1 ORDER BY c.name ASC`,
       [req.user.id]
     );
     res.json(result.rows);
@@ -4421,7 +4426,10 @@ router.get('/contacts', async (req, res) => {
 router.get('/contacts/:id', async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT * FROM contacts WHERE id = $1 AND owner_id = $2',
+      `SELECT c.*, u.photo_url AS linked_photo_url
+         FROM contacts c
+         LEFT JOIN users u ON u.id = COALESCE(c.contact_user_id, c.linked_user_id)
+        WHERE c.id = $1 AND c.owner_id = $2`,
       [req.params.id, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });

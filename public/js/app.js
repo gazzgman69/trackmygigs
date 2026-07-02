@@ -14383,7 +14383,7 @@ async function openContactDetail(contactId) {
 
     let html = `
       <div style="padding:0 16px;text-align:center;margin-bottom:12px;">
-        <div style="width:48px;height:48px;margin:0 auto 12px;border-radius:24px;background:var(--accent-dim);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--accent);">${initial}</div>
+        <div style="width:48px;height:48px;margin:0 auto 12px;border-radius:24px;background:var(--accent-dim);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--accent);overflow:hidden;">${contact.linked_photo_url ? `<img src="${escapeAttr(contact.linked_photo_url)}" alt="" style="width:100%;height:100%;border-radius:24px;object-fit:cover;" onerror="this.replaceWith(document.createTextNode('${escapeAttr(initial)}'))" />` : initial}</div>
         <div style="font-size:16px;font-weight:700;color:var(--text);">${escapeHtml(contact.name)}</div>
         <div style="font-size:12px;color:var(--text-2);margin-top:2px;">${escapeHtml(instrumentsText || 'No instruments')}</div>
         ${contact.location ? `<div style="font-size:12px;color:var(--text-2);">&#x1F4CD; ${escapeHtml(contact.location)}</div>` : ''}
@@ -16183,9 +16183,12 @@ function renderContactsList() {
 
 function renderContactRow(contact) {
   const initial = (contact.name || 'U')[0].toUpperCase();
+  const face = contact.linked_photo_url
+    ? `<img src="${escapeAttr(contact.linked_photo_url)}" alt="" style="width:100%;height:100%;border-radius:20px;object-fit:cover;" onerror="this.replaceWith(document.createTextNode('${escapeAttr(initial)}'))" />`
+    : initial;
   return `
     <div onclick="openContactDetail('${contact.id}')" style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;">
-      <div style="width:40px;height:40px;border-radius:20px;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--accent);flex-shrink:0;">${initial}</div>
+      <div style="width:40px;height:40px;border-radius:20px;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--accent);flex-shrink:0;overflow:hidden;">${face}</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHtml(contact.name)}</div>
         <div style="font-size:11px;color:var(--text-2);">${escapeHtml(Array.isArray(contact.instruments) ? (contact.instruments.join(', ') || 'No instruments') : (contact.instruments || 'No instruments'))}</div>
