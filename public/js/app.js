@@ -12438,6 +12438,13 @@ async function openEditGig(gigId) {
           <div class="form-label">Load-in time</div>
           <input type="time" class="form-input" id="editLoadInTime" value="${gig.load_in_time || ''}" />
         </div>
+        <div class="form-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <div class="form-label" style="margin-bottom:0;">Sets</div>
+            <span onclick="addSetTimeRow()" style="font-size:11px;color:var(--accent);cursor:pointer;">+ Add set</span>
+          </div>
+          <div id="editSetTimesContainer">${buildEditSetTimesHTML(gig)}</div>
+        </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
           <div class="form-group">
             <div class="form-label">Fee (\u00a3)</div>
@@ -12508,13 +12515,6 @@ async function openEditGig(gigId) {
           </div>
           <textarea class="form-input" id="editNotes" style="resize:vertical;min-height:80px;">${escapeHtml(getGigNotes(gig))}</textarea>
           <div id="editNotesMicStatus" style="font-size:10px;color:var(--text-3);margin-top:4px;min-height:14px;"></div>
-        </div>
-        <div class="form-group">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-            <div class="form-label" style="margin-bottom:0;">Sets</div>
-            <span onclick="addSetTimeRow()" style="font-size:11px;color:var(--accent);cursor:pointer;">+ Add set</span>
-          </div>
-          <div id="editSetTimesContainer">${buildEditSetTimesHTML(gig)}</div>
         </div>
         <button onclick="saveEditGig('${gig.id}')" class="btn-pill" style="width:100%;margin-top:8px;">Save Changes</button>
       </div>`;
@@ -21142,6 +21142,11 @@ function renderGigPack(gig) {
         <div style="flex:1;"><div style="font-size:10px;color:var(--text-2);margin-bottom:3px;">Load-in</div><input type="time" id="packLoadIn" value="${_packTime(gig.load_in_time)}" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:8px;"></div>
         <div style="flex:1;"><div style="font-size:10px;color:var(--text-2);margin-bottom:3px;">Soundcheck</div><input type="time" id="packSoundcheck" value="${_packTime(gig.soundcheck_time)}" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:8px;"></div>
       </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 3px;">
+        <div style="font-size:10px;color:var(--text-2);">Sets</div>
+        <span onclick="addPackSetTimeRow()" style="font-size:11px;color:var(--accent);cursor:pointer;">+ Add set</span>
+      </div>
+      <div id="packSetTimesContainer">${(Array.isArray(gig.set_times) ? gig.set_times : []).map((s, i) => buildSetTimeRow(i, s.name, s.start, s.end)).join('')}</div>
       <div style="font-size:10px;color:var(--text-2);margin:8px 0 3px;">Parking note</div>
       <input type="text" id="packParking" maxlength="200" value="${escapeHtml(gig.parking_info || '')}" placeholder="e.g. behind the venue, two spaces by the fire door" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:8px;">
       <button onclick="saveGigPackFields()" style="margin-top:10px;background:var(--accent);color:#000;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;">Save</button>
@@ -21154,12 +21159,24 @@ function renderGigPack(gig) {
     </div>`;
 }
 
+function addPackSetTimeRow() {
+  const container = document.getElementById('packSetTimesContainer');
+  if (!container) return;
+  container.insertAdjacentHTML('beforeend', buildSetTimeRow(container.querySelectorAll('.set-time-row').length));
+}
+window.addPackSetTimeRow = addPackSetTimeRow;
+
 async function saveGigPackFields() {
   const gig = window._gigPackGig;
   if (!gig) return;
   const loadIn = document.getElementById('packLoadIn');
   const sound = document.getElementById('packSoundcheck');
   const parking = document.getElementById('packParking');
+  const setTimes = [...document.querySelectorAll('#packSetTimesContainer .set-time-row')].map(r => ({
+    name: r.querySelector('.set-name').value.trim(),
+    start: r.querySelector('.set-start').value || null,
+    end: r.querySelector('.set-end').value || null,
+  })).filter(s => s.name || s.start || s.end);
   try {
     const resp = await fetch('/api/gigs/' + encodeURIComponent(gig.id), {
       method: 'PATCH',
@@ -21168,6 +21185,7 @@ async function saveGigPackFields() {
         load_in_time: loadIn && loadIn.value ? loadIn.value : undefined,
         soundcheck_time: sound && sound.value ? sound.value : undefined,
         parking_info: parking ? parking.value : undefined,
+        set_times: setTimes,
       }),
     });
     if (!resp.ok) throw new Error();
