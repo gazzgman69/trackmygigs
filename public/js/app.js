@@ -12687,7 +12687,6 @@ window.openDeleteAccountSheet = openDeleteAccountSheet;
 window.confirmDeleteAccount = confirmDeleteAccount;
 
 function buildDirectoryProfileEditor(profile) {
-  const discoverable = profile.discoverable !== false; // default TRUE if never set
   const bioText = profile.bio || '';
   const bioLen = bioText.length;
   const photoUrl = profile.photo_url || '';
@@ -12698,11 +12697,6 @@ function buildDirectoryProfileEditor(profile) {
   const minFeePence = Number.isFinite(profile.min_fee_pence) ? profile.min_fee_pence : 3000;
   const minFeePounds = Math.max(0, Math.round(minFeePence / 100));
   const notifyFreeGigs = profile.notify_free_gigs === true;
-  // 2026-04-28 chat batch: directory open-DM toggle. Defaults TRUE (column
-  // default in the migration) so existing users are reachable from Find
-  // Musicians without an explicit opt-in. Power users who don't want
-  // unsolicited DMs flip it off here.
-  const allowDms = profile.allow_direct_messages !== false;
   const genreSeeds = [
     'Vocals', 'Guitar', 'Bass', 'Keys', 'Piano', 'Drums',
     'Saxophone', 'Trumpet', 'Trombone', 'Violin', 'Cello',
@@ -12715,33 +12709,7 @@ function buildDirectoryProfileEditor(profile) {
   }).join('');
 
   return `
-    <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Directory Profile</div>
-    <div style="margin-bottom:14px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">
-      <div style="display:flex;align-items:flex-start;gap:12px;">
-        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
-          <input id="editDiscoverable" type="checkbox" ${discoverable ? 'checked' : ''} style="opacity:0;width:0;height:0;" onchange="this.parentElement.querySelector('.tmg-toggle-dot').style.transform = this.checked ? 'translateX(20px)' : 'translateX(0)'; this.parentElement.style.background = this.checked ? 'var(--accent)' : 'var(--border)';" />
-          <span style="position:absolute;inset:0;background:${discoverable ? 'var(--accent)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
-          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${discoverable ? 'translateX(20px)' : 'translateX(0)'};"></span>
-        </label>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Appear in Find Musicians</div>
-          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">Lets other TrackMyGigs users discover you by name, instrument or location. Your email and phone stay private and are only matched for Add Contact lookups you control.</div>
-        </div>
-      </div>
-    </div>
-    <div style="margin-bottom:14px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">
-      <div style="display:flex;align-items:flex-start;gap:12px;">
-        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
-          <input id="editAllowDms" type="checkbox" ${allowDms ? 'checked' : ''} style="opacity:0;width:0;height:0;" onchange="this.parentElement.querySelector('.tmg-toggle-dot').style.transform = this.checked ? 'translateX(20px)' : 'translateX(0)'; this.parentElement.querySelector('.tmg-toggle-bg').style.background = this.checked ? 'var(--accent)' : 'var(--border)';" />
-          <span class="tmg-toggle-bg" style="position:absolute;inset:0;background:${allowDms ? 'var(--accent)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
-          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${allowDms ? 'translateX(20px)' : 'translateX(0)'};"></span>
-        </label>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Allow direct messages</div>
-          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">When on, anyone in Find Musicians can send you a chat. Off restricts new chats to people you've added as contacts. Either way, gig and dep conversations always work.</div>
-        </div>
-      </div>
-    </div>
+    <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Reminders</div>
     ${(() => {
       // Push reminders toggle. Browser-permission gated: tapping ON
       // triggers Notification.requestPermission(), subscribes via
@@ -12761,32 +12729,6 @@ function buildDirectoryProfileEditor(profile) {
           <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Gig day reminders</div>
           <div style="font-size:11px;color:var(--text-2);line-height:1.4;">Get a push notification on the morning of a confirmed gig with the venue and load-in time. Requires browser permission. Disable any time.</div>
           ${pushOn ? '<button onclick="sendTestPushNotification()" style="margin-top:8px;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.4);border-radius:8px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;">Send test notification</button>' : ''}
-        </div>
-      </div>
-    </div>`;
-    })()}
-    ${(() => {
-      // "Available now": green-accent toggle so the live signal reads
-      // differently from the orange directory-status toggles above. When
-      // ON we compute the live-expiry label client-side from the server's
-      // available_now_until timestamp; the toggle treats the OFF state
-      // as the default if the user has never set it.
-      const availActive = !!(profile.available_now && (!profile.available_now_until || new Date(profile.available_now_until) > new Date()));
-      const expiryLabel = availActive && profile.available_now_until
-        ? 'Expires ' + new Date(profile.available_now_until).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
-        : 'Auto-expires after 7 days';
-      return `
-    <div style="margin-bottom:14px;padding:12px;background:${availActive ? 'rgba(63,185,80,.10)' : 'var(--card)'};border:1px solid ${availActive ? 'rgba(63,185,80,.4)' : 'var(--border)'};border-radius:var(--rs);">
-      <div style="display:flex;align-items:flex-start;gap:12px;">
-        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
-          <input id="editAvailableNow" type="checkbox" ${availActive ? 'checked' : ''} style="opacity:0;width:0;height:0;" onchange="this.parentElement.querySelector('.tmg-toggle-dot').style.transform = this.checked ? 'translateX(20px)' : 'translateX(0)'; this.parentElement.querySelector('.tmg-toggle-bg').style.background = this.checked ? 'var(--success,#3FB950)' : 'var(--border)'; this.closest('div[style*=padding]').style.background = this.checked ? 'rgba(63,185,80,.10)' : 'var(--card)'; this.closest('div[style*=padding]').style.borderColor = this.checked ? 'rgba(63,185,80,.4)' : 'var(--border)'; saveAvailableNowInstant(this);" />
-          <span class="tmg-toggle-bg" style="position:absolute;inset:0;background:${availActive ? 'var(--success,#3FB950)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
-          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${availActive ? 'translateX(20px)' : 'translateX(0)'};"></span>
-        </label>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Available for last-minute deps</div>
-          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">When on, you float to the top of Find Musicians searches and your card shows a green pulse. Use it before a quiet weekend when you'd take a dep.</div>
-          <div style="font-size:10px;color:${availActive ? 'var(--success,#3FB950)' : 'var(--text-3)'};margin-top:6px;font-weight:${availActive ? '700' : '500'};">${escapeHtml(expiryLabel)}</div>
         </div>
       </div>
     </div>`;
@@ -23491,7 +23433,7 @@ window.isTimeAutoBlocked = isTimeAutoBlocked;
     document.body.appendChild(overlay);
 
     // Fetch the current tax year by default; the UI lets users widen it.
-    await fiFetchAndRender('current_tax_year');
+    await fiFetchAndRender('future');
   };
 
   async function fiFetchAndRender(windowMode, from, to) {
@@ -23572,9 +23514,9 @@ window.isTimeAutoBlocked = isTimeAutoBlocked;
         <div style="flex:1;">
           <div style="font-size:12px;color:var(--text);font-weight:600;margin-bottom:2px;">Range</div>
           <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+            ${rangeChip('future', 'Future only', windowMode)}
             ${rangeChip('current_tax_year', 'This tax year', windowMode)}
             ${rangeChip('all', 'Last 2 years', windowMode)}
-            ${rangeChip('future', 'Future only', windowMode)}
           </div>
         </div>
       </div>
