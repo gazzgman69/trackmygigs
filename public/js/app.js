@@ -12691,12 +12691,6 @@ function buildDirectoryProfileEditor(profile) {
   const bioLen = bioText.length;
   const photoUrl = profile.photo_url || '';
   const selectedGenres = Array.isArray(profile.genres) ? profile.genres.filter(Boolean) : [];
-  // Phase X: Urgent-gigs marketplace preferences. min_fee_pence defaults to
-  // 3000 (£30) per the paid-tab floor; notify_free_gigs defaults to FALSE so
-  // the badge stays quiet for users who don't play unpaid work.
-  const minFeePence = Number.isFinite(profile.min_fee_pence) ? profile.min_fee_pence : 3000;
-  const minFeePounds = Math.max(0, Math.round(minFeePence / 100));
-  const notifyFreeGigs = profile.notify_free_gigs === true;
   const genreSeeds = [
     'Vocals', 'Guitar', 'Bass', 'Keys', 'Piano', 'Drums',
     'Saxophone', 'Trumpet', 'Trombone', 'Violin', 'Cello',
@@ -12709,6 +12703,13 @@ function buildDirectoryProfileEditor(profile) {
   }).join('');
 
   return `
+    <div style="margin-bottom:14px;">
+      <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span>Short bio</span>
+        <span id="editBioCount" style="color:${bioLen > 280 ? 'var(--danger)' : 'var(--text-3)'};font-weight:500;text-transform:none;letter-spacing:0;">${bioLen}/280</span>
+      </label>
+      <textarea id="editBio" rows="3" maxlength="280" placeholder="One or two lines about you. Shown on your directory card." oninput="const c=document.getElementById('editBioCount'); if(c){c.textContent=this.value.length+'/280'; c.style.color=this.value.length>280?'var(--danger)':'var(--text-3)';}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;min-height:60px;font-family:inherit;">${escapeHtml(bioText)}</textarea>
+    </div>
     <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Reminders</div>
     ${(() => {
       // Push reminders toggle. Browser-permission gated: tapping ON
@@ -12734,38 +12735,9 @@ function buildDirectoryProfileEditor(profile) {
     </div>`;
     })()}
     <div style="margin-bottom:14px;">
-      <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-        <span>Short bio</span>
-        <span id="editBioCount" style="color:${bioLen > 280 ? 'var(--danger)' : 'var(--text-3)'};font-weight:500;text-transform:none;letter-spacing:0;">${bioLen}/280</span>
-      </label>
-      <textarea id="editBio" rows="3" maxlength="280" placeholder="One or two lines about you. Shown on your directory card." oninput="const c=document.getElementById('editBioCount'); if(c){c.textContent=this.value.length+'/280'; c.style.color=this.value.length>280?'var(--danger)':'var(--text-3)';}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;resize:vertical;min-height:60px;font-family:inherit;">${escapeHtml(bioText)}</textarea>
-    </div>
-    <div style="margin-bottom:14px;">
       <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Genres &amp; tags</label>
       <div id="editGenresGrid" style="display:flex;flex-wrap:wrap;gap:6px;">${chipHTML}</div>
       <div style="font-size:10px;color:var(--text-3);margin-top:6px;">Tap up to 8 that describe your sound. Shown on your directory card.</div>
-    </div>
-    <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Urgent Gigs</div>
-    <div style="margin-bottom:14px;">
-      <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Minimum fee you'll consider</label>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="color:var(--text-2);font-size:14px;">&pound;</span>
-        <input id="editMinFeePounds" type="number" min="0" step="5" value="${minFeePounds}" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;" />
-      </div>
-      <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Default for the urgent gigs Browse filter and your notification badge. &pound;30 matches the paid-tab floor.</div>
-    </div>
-    <div style="margin-bottom:14px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);">
-      <div style="display:flex;align-items:flex-start;gap:12px;">
-        <label style="position:relative;display:inline-block;width:44px;height:24px;flex:0 0 44px;cursor:pointer;margin-top:2px;">
-          <input id="editNotifyFreeGigs" type="checkbox" ${notifyFreeGigs ? 'checked' : ''} style="opacity:0;width:0;height:0;" onchange="this.parentElement.querySelector('.tmg-toggle-dot').style.transform = this.checked ? 'translateX(20px)' : 'translateX(0)'; this.parentElement.querySelector('.tmg-toggle-bg').style.background = this.checked ? 'var(--accent)' : 'var(--border)';" />
-          <span class="tmg-toggle-bg" style="position:absolute;inset:0;background:${notifyFreeGigs ? 'var(--accent)' : 'var(--border)'};border-radius:12px;transition:background .2s;"></span>
-          <span class="tmg-toggle-dot" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s;transform:${notifyFreeGigs ? 'translateX(20px)' : 'translateX(0)'};"></span>
-        </label>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;">Notify me about free gigs</div>
-          <div style="font-size:11px;color:var(--text-2);line-height:1.4;">Opt in to the Free tab of urgent gigs: charity, open mic, promo slots and favours. Off by default so your badge stays clean for paid work.</div>
-        </div>
-      </div>
     </div>
   `;
 }
@@ -12841,14 +12813,6 @@ function editProfile() {
         <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Home Postcode</label>
         <input id="editHomePostcode" type="text" value="${escapeHtml(profile.home_postcode || '')}" placeholder="e.g. CF10 1AA" style="width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-size:14px;box-sizing:border-box;text-transform:uppercase;" />
         <div style="font-size:10px;color:var(--text-3);margin-top:3px;">Used to calculate mileage to gig venues and filter dep offers by distance</div>
-      </div>
-      <div style="margin-bottom:14px;">
-        <label style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-          <span>Travel Radius</span>
-          <span id="editTravelRadiusValue" style="color:var(--accent);font-weight:700;">${profile.travel_radius_miles != null ? profile.travel_radius_miles : 50} mi</span>
-        </label>
-        <input id="editTravelRadius" type="range" min="10" max="500" step="5" value="${profile.travel_radius_miles != null ? profile.travel_radius_miles : 50}" oninput="document.getElementById('editTravelRadiusValue').textContent = this.value + ' mi'" style="width:100%;accent-color:var(--accent);" />
-        <div style="font-size:10px;color:var(--text-3);margin-top:3px;">How far you'll travel for a gig. Broadcast dep offers beyond this distance are silently filtered out. Direct pick-dep offers still reach you but are flagged as outside your radius.</div>
       </div>
       <div style="margin-top:20px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;">Review Links</div>
       <div style="margin-bottom:14px;">
@@ -12932,7 +12896,7 @@ async function saveProfile() {
   const instrumentsRaw = document.getElementById('editInstruments')?.value?.trim();
   const homePostcode = document.getElementById('editHomePostcode')?.value?.trim().toUpperCase();
   const travelRadiusRaw = document.getElementById('editTravelRadius')?.value;
-  const travelRadius = travelRadiusRaw != null && travelRadiusRaw !== '' ? parseInt(travelRadiusRaw, 10) : null;
+  const travelRadius = travelRadiusRaw != null && travelRadiusRaw !== '' ? parseInt(travelRadiusRaw, 10) : undefined;
   const googleReviewUrl = document.getElementById('editGoogleReview')?.value?.trim();
   const facebookReviewUrl = document.getElementById('editFacebookReview')?.value?.trim();
   const bankDetails = document.getElementById('editBankDetails')?.value?.trim();
