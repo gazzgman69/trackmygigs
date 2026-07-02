@@ -900,19 +900,21 @@ async function renderHomeScreen() {
 
   // Stale-while-revalidate: if ANY cached stats exist for this user, paint
   // them immediately so the home page never shows a skeleton after the very
-  // first load. If the cache is older than STATS_CACHE_TTL we still refetch
-  // in the background and swap in the new data when it lands.
+  // first load, then ALWAYS refetch in the background. Gating the refetch on
+  // STATS_CACHE_TTL left action chips (fees owed, unpaid invoices) frozen for
+  // up to 5 minutes after the user had actually done the work. Repaint only
+  // when the numbers changed so identical data never causes a visible swap.
   if (cacheMatchesUser && window._cachedStats) {
     buildHomeHTML(content, window._cachedStats);
-    const isStale = (Date.now() - window._cachedStatsTime) >= STATS_CACHE_TTL;
-    if (isStale) {
-      fetchStatsWithCache(true)
-        .then((stats) => {
-          // Only re-render if the user hasn't navigated away in the meantime
-          if (currentScreen === 'home') buildHomeHTML(content, stats);
-        })
-        .catch((err) => console.error('Background stats refresh failed:', err));
-    }
+    const painted = JSON.stringify(window._cachedStats);
+    fetchStatsWithCache(true)
+      .then((stats) => {
+        // Only re-render if the user is still on Home and something changed
+        if (currentScreen === 'home' && JSON.stringify(stats) !== painted) {
+          buildHomeHTML(content, stats);
+        }
+      })
+      .catch((err) => console.error('Background stats refresh failed:', err));
     return;
   }
 
@@ -21622,7 +21624,7 @@ async function paintHomeSetupCard(stats) {
     { done: calConnected,   label: 'Connect Google Calendar', sub: 'Two-way sync your diary',   onclick: "window.location.href='/auth/google/calendar'" },
     { done: hasGig,         label: 'Log your first gig',      sub: 'Get it on the board',        onclick: "openQuickLogSheet()" },
     { done: hasInstruments, label: 'Add your instruments',    sub: 'So bookers can find you',    onclick: "openPanel('profile-panel'); if (typeof renderProfileScreen === 'function') renderProfileScreen();" },
-    { done: hasEpk,         label: 'Build your EPK',          sub: 'Your shareable press kit',   onclick: "if (typeof openEpkPanel === 'function') openEpkPanel();" },
+    { done: hasEpk,         label: 'Build your EPK',          sub: 'Your shareable press kit',   onclick: "if (typeof viewEPK === 'function') viewEPK();" },
   ];
   const doneCount = items.filter((i) => i.done).length;
 
