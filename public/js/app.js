@@ -14016,15 +14016,18 @@ async function openPersonProfile(userId) {
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
   overlay.id = 'personProfileOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:var(--bg);display:flex;flex-direction:column;';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.6);display:flex;flex-direction:row;justify-content:center;align-items:stretch;';
+  overlay.addEventListener('click', (ev) => { if (ev.target === overlay) overlay.remove(); });
   overlay.innerHTML = `
-    <div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">
-      <button onclick="document.getElementById('personProfileOverlay').remove()" style="background:none;border:none;color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;padding:0;min-width:60px;text-align:left;">&#8249; Back</button>
-      <div id="personProfileTitle" style="flex:1;text-align:center;font-size:15px;font-weight:700;color:var(--text);"></div>
-      <div style="min-width:60px;"></div>
-    </div>
-    <div id="personProfileBody" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
-      <div style="padding:40px 20px;text-align:center;color:var(--text-3);font-size:13px;">Loading profile...</div>
+    <div style="width:100%;max-width:520px;background:var(--bg);display:flex;flex-direction:column;" onclick="event.stopPropagation()">
+      <div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">
+        <button onclick="document.getElementById('personProfileOverlay').remove()" style="background:none;border:none;color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;padding:0;min-width:60px;text-align:left;">&#8249; Back</button>
+        <div id="personProfileTitle" style="flex:1;text-align:center;font-size:15px;font-weight:700;color:var(--text);"></div>
+        <div style="min-width:60px;"></div>
+      </div>
+      <div id="personProfileBody" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+        <div style="padding:40px 20px;text-align:center;color:var(--text-3);font-size:13px;">Loading profile...</div>
+      </div>
     </div>`;
   document.body.appendChild(overlay);
   if (cached) _renderPersonProfile(cached);
