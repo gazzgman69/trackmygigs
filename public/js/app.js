@@ -14658,7 +14658,7 @@ function renderGigPaymentSection(gigId, d) {
       ${pill}
     </div>
     <div style="height:8px;border-radius:999px;background:var(--card);overflow:hidden;margin-bottom:6px;border:1px solid var(--border);">
-      <div style="width:${pct}%;height:100%;background:${d.status === 'paid' ? 'var(--success)' : '#A78BFA'};"></div>
+      <div style="width:${pct}%;height:100%;background:${d.status === 'paid' ? 'var(--success)' : 'var(--accent)'};"></div>
     </div>
     <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-3);">
       <span>${_gpFmtMoney(paid)} received</span><span>Fee ${_gpFmtMoney(fee)}</span>
@@ -14685,7 +14685,7 @@ function openRecordPaymentSheet(gigId, outstanding, fee) {
       <div id="rpKind" style="display:flex;gap:6px;margin:6px 0 12px;">
         <span data-k="deposit" onclick="_rpSetKind(this)" class="rpchip" style="flex:1;text-align:center;font-size:13px;padding:9px 0;border:1px solid var(--border);border-radius:10px;color:var(--text-2);cursor:pointer;">Deposit</span>
         <span data-k="balance" onclick="_rpSetKind(this)" class="rpchip" style="flex:1;text-align:center;font-size:13px;padding:9px 0;border:1px solid var(--border);border-radius:10px;color:var(--text-2);cursor:pointer;">Balance</span>
-        <span data-k="other" onclick="_rpSetKind(this)" class="rpchip" style="flex:1;text-align:center;font-size:13px;padding:9px 0;border:1px solid #A78BFA;background:rgba(167,139,250,0.12);border-radius:10px;color:var(--text);cursor:pointer;">Other</span>
+        <span data-k="other" onclick="_rpSetKind(this)" class="rpchip" style="flex:1;text-align:center;font-size:13px;padding:9px 0;border:1px solid var(--accent);background:var(--accent-dim);border-radius:10px;color:var(--text);cursor:pointer;">Other</span>
       </div>
       <div style="display:flex;gap:10px;margin-bottom:14px;">
         <div style="flex:1;"><label class="fl">Date</label><input id="rpDate" type="date" class="fi" value="${today}" /></div>
@@ -14709,8 +14709,8 @@ function _rpSetKind(elm) {
   window._rpKind = elm.getAttribute('data-k');
   document.querySelectorAll('#rpKind .rpchip').forEach(c => {
     const sel = c === elm;
-    c.style.border = sel ? '1px solid #A78BFA' : '1px solid var(--border)';
-    c.style.background = sel ? 'rgba(167,139,250,0.12)' : 'transparent';
+    c.style.border = sel ? '1px solid var(--accent)' : '1px solid var(--border)';
+    c.style.background = sel ? 'var(--accent-dim)' : 'transparent';
     c.style.color = sel ? 'var(--text)' : 'var(--text-2)';
   });
 }
