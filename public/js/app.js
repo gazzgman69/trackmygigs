@@ -13713,24 +13713,13 @@ function renderFindTab() {
   }
   const st = window._discoverState;
 
-  const placeholder = st.mode === 'name'
-    ? 'Search by name...'
-    : st.mode === 'email'
-      ? 'Exact email match'
-      : 'Phone number (UK or E.164)';
-
   tabBody.innerHTML = `
     <div style="padding:0 16px 10px;">
-      <input type="text" class="form-input" placeholder="${placeholder}" id="discoverQuery"
+      <input type="text" class="form-input" placeholder="Name, email or phone number" id="discoverQuery"
              value="${escapeHtml(st.query)}"
              oninput="onDiscoverQueryInput(event)"
              onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitDiscoverSearch(); }"
              autocomplete="off" />
-    </div>
-    <div class="disc-modes">
-      <button class="disc-mode ${st.mode === 'name' ? 'ac' : ''}"  onclick="setDiscoverMode('name')">Name</button>
-      <button class="disc-mode ${st.mode === 'email' ? 'ac' : ''}" onclick="setDiscoverMode('email')">Email</button>
-      <button class="disc-mode ${st.mode === 'phone' ? 'ac' : ''}" onclick="setDiscoverMode('phone')">Phone</button>
     </div>
     ${featureVisible('find_musicians_directory') ? `<div class="disc-chips" id="discoverChips">${renderDiscoverChips()}</div>` : ''}
     <div id="discoverResults"></div>`;
@@ -13756,13 +13745,13 @@ function renderDiscoverChips() {
   return html;
 }
 
-function setDiscoverMode(mode) {
-  const st = window._discoverState;
-  st.mode = mode;
-  // Re-render the tab so placeholder updates.
-  renderFindTab();
+// One search bar, no mode chips: work out what the user typed. An @ means
+// email, a digit-heavy string means phone, anything else is a name.
+function _detectDiscoverMode(q) {
+  if (q.includes('@')) return 'email';
+  if (/^[+\d][\d\s().-]{5,}$/.test(q)) return 'phone';
+  return 'name';
 }
-window.setDiscoverMode = setDiscoverMode;
 
 function onDiscoverQueryInput(ev) {
   const st = window._discoverState;
@@ -13814,6 +13803,7 @@ async function submitDiscoverSearch() {
     renderDiscoverEmptyState();
     return;
   }
+  st.mode = _detectDiscoverMode(q);
   if (q.length < 2 && st.mode === 'name') {
     results.innerHTML = '<div class="disc-empty">Keep typing — at least 2 characters.</div>';
     return;
