@@ -13769,16 +13769,24 @@ function onDiscoverQueryInput(ev) {
   // Editing the query invalidates whatever the last search painted, so
   // stale profiles never linger behind a query that no longer matches.
   if (q !== st.lastSubmit) renderDiscoverEmptyState();
-  // A single word never reveals anyone mid-keystroke, but a full-looking
-  // name (two real words) is deliberate enough: search after a typing
-  // pause without demanding Enter. Email and phone stay submit-only.
-  if (_detectDiscoverMode(q) === 'name') {
+  // Partial input never reveals anyone mid-keystroke, but once the query
+  // looks COMPLETE for its kind it is deliberate enough to search after a
+  // typing pause without demanding Enter: a full name (two real words), a
+  // full email (with a domain and dot), or a full-length phone number.
+  const mode = _detectDiscoverMode(q);
+  let ready = false;
+  if (mode === 'name') {
     const words = q.split(/\s+/).filter(Boolean);
-    if (words.length >= 2 && words[words.length - 1].length >= 2) {
-      window._discoverDebounce = setTimeout(() => {
-        if ((window._discoverState.query || '').trim() === q) submitDiscoverSearch();
-      }, 600);
-    }
+    ready = words.length >= 2 && words[words.length - 1].length >= 2;
+  } else if (mode === 'email') {
+    ready = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(q);
+  } else if (mode === 'phone') {
+    ready = q.replace(/\D/g, '').length >= 10;
+  }
+  if (ready) {
+    window._discoverDebounce = setTimeout(() => {
+      if ((window._discoverState.query || '').trim() === q) submitDiscoverSearch();
+    }, 600);
   }
 }
 window.onDiscoverQueryInput = onDiscoverQueryInput;
