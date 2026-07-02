@@ -80,12 +80,12 @@ const BASE_STYLES = `
   .cal-month { font-size: 14px; font-weight: 700; color: var(--text); margin: 12px 0 6px; }
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; font-size: 12px; }
   .cal-hd { color: var(--text-3); text-align: center; font-size: 10px; padding: 4px 0; }
-  .cal-cell { background: var(--card); border: 1px solid var(--border); padding: 8px 0; text-align: center; border-radius: 4px; position: relative; }
+  .cal-cell { background: var(--card); border: 1px solid var(--border); padding: 8px 0; text-align: center; border-radius: 4px; }
   .cal-cell.booked { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
   .cal-cell.free { background: var(--card); color: var(--text-3); }
-  /* Mobile affordance: hover hints don't exist on phones, so every tappable
-     free day carries a small accent + badge that reads as "request this". */
-  .cal-cell.free:not(.past)::after { content: '+'; position: absolute; top: 0; right: 3px; font-size: 9px; font-weight: 700; color: #F0A500; opacity: .8; }
+  /* Mobile affordance: hover hints don't exist on phones, so every month
+     carries its own quiet request bar directly under the grid. */
+  .cal-request-bar { margin: 8px 0 2px; background: rgba(240,165,0,.08); border: 1px solid rgba(240,165,0,.35); color: #F0A500; border-radius: 8px; padding: 7px 12px; font-size: 12px; text-align: center; }
   .cal-cell.blocked { background: #6E7681; border-color: #6E7681; color: #fff; }
   .cal-cell.past { opacity: 0.3; }
   .legend { display: flex; gap: 12px; font-size: 11px; color: var(--text-2); justify-content: center; margin: 12px 0 20px; flex-wrap: wrap; }
@@ -506,7 +506,9 @@ router.get('/share/:slug', async (req, res) => {
         const enquireAttr = (cls === 'free' && !isPast) ? ` onclick="enqOpen('${dateStr}')" style="cursor:pointer;"` : '';
         cells += `<div class="cal-cell ${cls}"${enquireAttr}${showTimes && timesByDate.has(dateStr) ? ` title="Booked ${esc(timesByDate.get(dateStr))}"` : ''}>${d}${timeLabel}</div>`;
       }
-      return `<div class="cal-month">${esc(monthLabel)}</div><div class="cal-grid">${cells}</div>`;
+      const monthName = first.toLocaleDateString('en-GB', { month: 'long' });
+      return `<div class="cal-month">${esc(monthLabel)}</div><div class="cal-grid">${cells}</div>
+        <div class="cal-request-bar">Tap any free day in ${esc(monthName)} to request it</div>`;
     }).join('');
 
     const toggleHref = `/share/${esc(req.params.slug)}${showTimes ? '' : '?times=1'}`;
@@ -518,11 +520,10 @@ router.get('/share/:slug', async (req, res) => {
       ${isEmbed ? '' : '<h1 style="text-align:center;">Availability</h1>\n      <p class="sub" style="text-align:center;">Next 12 months</p>'}
       ${toggleLink}
       <div class="legend">
-        <span><span class="legend-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free &middot; tap to request</span>
+        <span><span class="legend-dot" style="background:var(--card);border:1px solid var(--border);"></span>Free</span>
         <span><span class="legend-dot" style="background:var(--danger);"></span>Booked</span>
         <span><span class="legend-dot" style="background:#6E7681;"></span>Unavailable</span>
       </div>
-      <p style="text-align:center;font-size:12px;color:#F0A500;margin:0 0 12px;">Tap a free day to request it</p>
       <div class="card">${monthsHtml}</div>
       <div id="enqOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;align-items:flex-end;justify-content:center;">
         <div style="background:#161B22;border-top:1px solid #30363D;border-radius:16px 16px 0 0;padding:18px 16px 26px;width:100%;max-width:480px;">
