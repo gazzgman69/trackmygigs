@@ -6013,6 +6013,10 @@ async function renderProfileScreen() {
 }
 
 function buildProfileHTML(content, profile) {
+    // Pre-warm the public slug so a Share tap can call navigator.share
+    // synchronously. If the tap has to await the slug fetch first, Chrome
+    // expires the click's user activation and the share sheet is refused.
+    if (!profile.public_slug) _ensurePublicSlug();
     // Prefer display_name (real name) over name (which may be an act/band name)
     const displayName = profile.display_name || profile.name || '';
     const userInitial = (displayName || profile.email || 'G')[0].toUpperCase();
@@ -13040,8 +13044,12 @@ async function _ensurePublicSlug() {
 }
 
 async function _shareOrCopy(url, shareTitle, shareText) {
-  // Native Web Share if available
-  if (navigator.share) {
+  // Native Web Share on touch devices only. On desktop Chrome the share
+  // popover opens up by the address bar where nobody is looking, and when
+  // the promise is refused (expired click activation) there is no feedback
+  // at all, so desktop always takes the copy-with-toast path.
+  const touchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
+  if (navigator.share && touchDevice) {
     try {
       await navigator.share({ title: shareTitle, text: shareText, url });
       return;
@@ -13049,13 +13057,33 @@ async function _shareOrCopy(url, shareTitle, shareText) {
       if (e && e.name === 'AbortError') return;
     }
   }
-  // Fallback: copy to clipboard
   try {
     await navigator.clipboard.writeText(url);
     showToast('Link copied: ' + url);
   } catch {
-    prompt('Copy this link:', url);
+    _showShareLinkSheet(url);
   }
+}
+
+// Last-resort share fallback. prompt() gets silently suppressed once the
+// click's user activation has expired, which read as "the button does
+// nothing", so render a real sheet with the link and a copy button instead.
+function _showShareLinkSheet(url) {
+  const existing = document.getElementById('shareLinkSheet');
+  if (existing) existing.remove();
+  const sheet = document.createElement('div');
+  sheet.id = 'shareLinkSheet';
+  sheet.className = 'sheet-overlay';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center;';
+  sheet.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:560px;box-sizing:border-box;" onclick="event.stopPropagation()">
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px;">Your share link</div>
+      <input id="shareLinkSheetUrl" type="text" readonly value="${escapeHtml(url)}" onclick="this.select()" style="width:100%;box-sizing:border-box;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:11px;margin-bottom:10px;" />
+      <button onclick="const i=document.getElementById('shareLinkSheetUrl'); i.select(); navigator.clipboard.writeText(i.value).then(()=>showToast('Link copied')).catch(()=>document.execCommand('copy')); " style="width:100%;background:var(--accent);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">Copy link</button>
+      <button onclick="document.getElementById('shareLinkSheet').remove()" style="width:100%;background:transparent;color:var(--text-2);border:none;padding:10px;font-size:13px;cursor:pointer;">Close</button>
+    </div>`;
+  sheet.addEventListener('click', () => sheet.remove());
+  document.body.appendChild(sheet);
 }
 
 async function shareProfile() {
