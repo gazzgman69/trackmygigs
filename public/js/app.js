@@ -14561,7 +14561,7 @@ function renderAgenciesList() {
       <span onclick="deleteAgency('${a.id}')" style="font-size:13px;color:var(--danger);cursor:pointer;">Delete</span>
     </div>`).join('') : '<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13px;">No agencies yet. Add the agencies you get work through, with their commission rate, then pick one on a gig.</div>';
   body.innerHTML = `<div style="padding:0 16px 16px;">${rows}
-    <button onclick="addAgencySheet(function(){ renderAgenciesList(); })" style="width:100%;margin-top:14px;background:#A78BFA;color:#1a1a1a;border:none;border-radius:24px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">+ Add agency</button></div>`;
+    <button onclick="addAgencySheet(function(){ renderAgenciesList(); })" style="width:100%;margin-top:14px;background:var(--accent);color:#000;border:none;border-radius:24px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;">+ Add agency</button></div>`;
 }
 function editAgencyPrompt(id) {
   const a = (window._agenciesCache || []).find(x => String(x.id) === String(id));
@@ -14665,7 +14665,7 @@ function renderGigPaymentSection(gigId, d) {
     </div>
     ${rows}
     ${d.status !== 'paid' ? `
-      <button onclick="openRecordPaymentSheet('${gigId}', ${out}, ${fee})" style="width:100%;margin-top:12px;background:#A78BFA;color:#1a1a1a;border:none;border-radius:24px;padding:11px;font-size:14px;font-weight:700;cursor:pointer;">+ Record payment</button>
+      <button onclick="openRecordPaymentSheet('${gigId}', ${out}, ${fee})" style="width:100%;margin-top:12px;background:var(--accent);color:#000;border:none;border-radius:24px;padding:11px;font-size:14px;font-weight:700;cursor:pointer;">+ Record payment</button>
       <div style="text-align:center;margin-top:8px;"><span onclick="markGigFullyPaid('${gigId}', ${out})" style="font-size:12px;color:var(--text-2);cursor:pointer;">Mark fully paid</span></div>
     ` : ''}`;
 }
@@ -14698,7 +14698,7 @@ function openRecordPaymentSheet(gigId, outstanding, fee) {
           </select>
         </div>
       </div>
-      <button onclick="saveGigPayment('${gigId}')" style="width:100%;background:#A78BFA;color:#1a1a1a;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;">Save payment</button>
+      <button onclick="saveGigPayment('${gigId}')" style="width:100%;background:var(--accent);color:#000;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;">Save payment</button>
       <button onclick="document.querySelectorAll('.sheet-overlay').forEach(o=>o.remove());" style="width:100%;margin-top:8px;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:11px;border-radius:24px;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
     </div>`;
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
