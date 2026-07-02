@@ -2107,6 +2107,8 @@ function _gigsApplyQuery(list) {
     (g.band_name || '').toLowerCase().includes(q) ||
     (g.venue_name || '').toLowerCase().includes(q) ||
     (g.venue_address || '').toLowerCase().includes(q) ||
+    (g.gig_type || '').toLowerCase().includes(q) ||
+    (g.set_type || '').toLowerCase().includes(q) ||
     (g.date || '').includes(q)
   );
 }
@@ -6331,6 +6333,7 @@ function openGigWizard() {
     fee: '',
     status: 'confirmed',
     gig_type: '',
+    set_type: '',
     dress_code: '',
     notes: '',
     // Teaching-specific: only populated when gig_type === 'Teaching'.
@@ -6554,6 +6557,21 @@ function renderWizardStep(step) {
             .join('')}
         </div>
         <div id="feeBenchmarkChip" style="margin-top:10px;"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">What did you play as?</label>
+        <div class="chip-group">
+          ${SET_TYPES
+            .map(
+              (t) => `
+            <button
+              class="chip ${gigWizardData.set_type === t.value ? 'selected' : ''}"
+              onclick="toggleSetType('${t.value}', this)"
+            >${t.label}</button>
+          `
+            )
+            .join('')}
+        </div>
       </div>
       ${renderTeachingBlock()}
       <div class="form-group">
@@ -6866,8 +6884,10 @@ function toggleGigType(type, btn) {
     btn.classList.remove('selected');
   } else {
     gigWizardData.gig_type = type;
-    document
-      .querySelectorAll('.chip-group .chip')
+    // Scope the clear to THIS chip group; the set-type group below is a
+    // separate single-select axis and must keep its own selection.
+    (btn.closest('.chip-group') || document)
+      .querySelectorAll('.chip')
       .forEach((c) => c.classList.remove('selected'));
     btn.classList.add('selected');
   }
@@ -6881,6 +6901,35 @@ function toggleGigType(type, btn) {
   }
   renderFeeBenchmarkChip();
 }
+
+// Second categorisation axis (WHAT you performed). Same single-select chip
+// behaviour as gig type, scoped to its own group.
+function toggleSetType(type, btn) {
+  captureStep5Fields();
+  if (gigWizardData.set_type === type) {
+    gigWizardData.set_type = '';
+    btn.classList.remove('selected');
+  } else {
+    gigWizardData.set_type = type;
+    (btn.closest('.chip-group') || document)
+      .querySelectorAll('.chip')
+      .forEach((c) => c.classList.remove('selected'));
+    btn.classList.add('selected');
+  }
+}
+window.toggleSetType = toggleSetType;
+
+// Shared between the wizard and the full form so the two lists never drift.
+const SET_TYPES = [
+  { label: '\u{1F3B7} Solo', value: 'Solo' },
+  { label: '\u{1F3A4} Duo', value: 'Duo' },
+  { label: '\u{1F3B8} Trio', value: 'Trio' },
+  { label: '\u{1F941} Full band', value: 'Full band' },
+  { label: '\u{1F3A7} DJ set', value: 'DJ set' },
+  { label: '\u{1F3B7} Sax + DJ', value: 'Sax + DJ' },
+  { label: '\u{1FA95} Acoustic', value: 'Acoustic' },
+  { label: '\u{1F4CC} Other', value: 'Other' },
+];
 
 // Capture all editable fields on Step 5 into gigWizardData. Safe to call even
 // when the teaching block isn't rendered (the lookups just no-op).
@@ -7357,6 +7406,7 @@ async function submitGigWizard() {
       status: gigWizardData.status,
       notes: gigWizardData.notes || null,
       gig_type: gigWizardData.gig_type || null,
+      set_type: gigWizardData.set_type || null,
       dress_code: gigWizardData.dress_code || null,
       mileage_miles: gigWizardData.mileage_miles || null,
       // Teaching-only fields: only send when gig type is Teaching, so a user
@@ -7493,6 +7543,14 @@ function renderFullGigForm() {
           </div>
         </div>
         <div class="form-group">
+          <label class="form-label">What did you play as?</label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;" id="fullFormSetTypes">
+            ${SET_TYPES.map(t => `
+              <span onclick="selectFullFormSetType('${t.value}')" style="padding:5px 12px;border-radius:20px;font-size:11px;font-weight:500;cursor:pointer;${d.set_type === t.value ? 'background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,.3);' : 'background:var(--card);color:var(--text-2);border:1px solid var(--border);'}">${t.label}</span>
+            `).join('')}
+          </div>
+        </div>
+        <div class="form-group">
           <label class="form-label">Venue</label>
           <input type="text" class="form-input" name="venue_name" value="${escapeHtml(d.venue_name)}" placeholder="Search venues...">
           ${d.venue_address ? `<div style="font-size:11px;color:var(--success);margin-top:4px;">📍 ${escapeHtml(d.venue_address)}</div>` : ''}
@@ -7607,6 +7665,7 @@ function renderFullGigForm() {
     data.status = gigWizardData.status || 'confirmed';
     data.source = gigWizardData.source || 'manual';
     data.gig_type = gigWizardData.gig_type || null;
+    data.set_type = gigWizardData.set_type || null;
     // Teaching-only fields: only send when gig type is Teaching. The form
     // inputs stay in the DOM even when hidden, so guard against stale values.
     if (data.gig_type !== 'Teaching') {
@@ -7823,6 +7882,11 @@ function setFullFormPayment(kind) {
   }
 }
 window.setFullFormPayment = setFullFormPayment;
+
+function selectFullFormSetType(value) {
+  gigWizardData.set_type = gigWizardData.set_type === value ? '' : value;
+  renderFullGigForm();
+}
 
 function selectFullFormGigType(value, el) {
   gigWizardData.gig_type = gigWizardData.gig_type === value ? '' : value;
@@ -11084,6 +11148,7 @@ async function openGigDetail(gigId) {
       ${gig.venue_address ? `<div onclick="openDirections('${escapeHtml(gig.venue_address).replace(/'/g, '&#39;')}')" style="font-size:14px;color:var(--text-2);margin-bottom:6px;cursor:pointer;"><span style="color:var(--accent);">\uD83D\uDCCD</span> ${escapeHtml(gig.venue_address)} <span style="color:var(--accent);font-size:12px;font-weight:600;margin-left:4px;">Open in Maps \u203A</span></div>` : ''}
       ${gig.venue_name ? `<div onclick="openVenueMemory('${escapeAttr(gig.venue_name)}')" style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:6px;cursor:pointer;">\uD83D\uDCD2 Venue history &amp; heads-ups \u203A</div>` : ''}
       <div style="font-size:14px;color:var(--text-2);">\uD83D\uDCB7 ${gig.fee ? '\u00A3' + parseFloat(gig.fee).toFixed(0) : 'No fee set'} <span class="badge badge-${statusBadgeClass(gig.status)}" style="margin-left:6px;">${statusLabel(gig.status)}</span></div>
+      ${(gig.gig_type || gig.set_type) ? `<div style="font-size:13px;color:var(--text-2);margin-top:6px;">\uD83C\uDFF7\uFE0F ${escapeHtml([gig.gig_type, gig.set_type].filter(Boolean).join(' \u00B7 '))}</div>` : ''}
       ${gig.agency_name ? `<div style="font-size:13px;color:var(--text-2);margin-top:6px;">\uD83C\uDFE2 ${escapeHtml(gig.agency_name)}${(gig.agency_commission_pct != null && gig.fee) ? ` \u00B7 ${gig.agency_commission_pct}% \u00B7 <b style="color:var(--success);">take-home \u00A3${(Math.round((parseFloat(gig.fee) - parseFloat(gig.fee) * parseFloat(gig.agency_commission_pct) / 100) * 100) / 100).toLocaleString()}</b>` : ''}</div>` : ''}
       <div id="gigDetailMileage" style="margin-top:8px;"></div>
       <div id="gigDetailWeather" style="display:none;margin-top:8px;font-size:12px;color:var(--text-2);"></div>
@@ -12073,9 +12138,16 @@ async function openEditGig(gigId) {
             </select>
           </div>
           <div class="form-group">
-            <div class="form-label">Dress code</div>
-            <input type="text" class="form-input" id="editDressCode" value="${escapeHtml(gig.dress_code || '')}" placeholder="e.g. Smart casual" />
+            <div class="form-label">Played as</div>
+            <select class="form-input" id="editSetType">
+              <option value="" ${!gig.set_type ? 'selected' : ''}>None</option>
+              ${SET_TYPES.map(t => `<option value="${t.value}" ${gig.set_type === t.value ? 'selected' : ''}>${t.value}</option>`).join('')}
+            </select>
           </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Dress code</div>
+          <input type="text" class="form-input" id="editDressCode" value="${escapeHtml(gig.dress_code || '')}" placeholder="e.g. Smart casual" />
         </div>
         <div class="form-group">
           <div class="form-label">Booked through (agency)</div>
@@ -12191,6 +12263,7 @@ async function saveEditGig(gigId) {
       })(),
       status: document.getElementById('editStatus').value,
       gig_type: document.getElementById('editGigType').value || null,
+      set_type: (document.getElementById('editSetType') || {}).value || null,
       agency_id: (document.getElementById('editAgency') || {}).value || null,
       dress_code: document.getElementById('editDressCode').value || null,
       parking_info: document.getElementById('editParkingInfo').value || null,
