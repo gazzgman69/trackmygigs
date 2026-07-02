@@ -58,6 +58,51 @@ router.get('/vapid-public', (req, res) => {
   res.json({ ok: true, public_key: process.env.VAPID_PUBLIC_KEY });
 });
 
+// POST /api/push/cron-morning-reminders?key=<RELOAD_SECRET>
+// Designed to be hit by a daily cron job around 9am UK time. Iterates
+// every user with reminders enabled who has a confirmed gig today, then
+// pushes a "Tonight: {venue}" notification to each device. Idempotent
+// within a calendar day via the `tag` field (browsers replace prior
+// notifications with the same tag rather than stacking).
+router.post('/cron-morning-reminders', async (req, res) => {
+  const want = process.env.RELOAD_SECRET || 'LEROADSECRET!';
+  if ((req.query && req.query.key) !== want) return res.status(403).json({ error: 'forbidden' });
+  if (!_configured) return res.status(503).json({ error: 'push_not_configured' });
+
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const r = await db.query(
+      `SELECT u.id AS user_id, u.push_subscriptions, g.venue_name, g.band_name, g.start_time, g.load_in_time
+         FROM users u
+         JOIN gigs g ON g.user_id = u.id
+        WHERE u.push_reminders_enabled = TRUE
+          AND jsonb_array_length(COALESCE(u.push_subscriptions, '[]'::jsonb)) > 0
+          AND g.status = 'confirmed'
+          AND g.date = $1`,
+      [today]
+    );
+    let pushed = 0; let failed = 0;
+    for (const row of r.rows) {
+      const arr = Array.isArray(row.push_subscriptions) ? row.push_subscriptions : [];
+      const venue = row.venue_name || row.band_name || 'your gig';
+      const loadInBit = row.load_in_time ? ` Load-in at ${String(row.load_in_time).slice(0, 5)}.` : '';
+      const payload = JSON.stringify({
+        title: 'Tonight: ' + venue,
+        body: 'Gig day.' + loadInBit + ' Tap to open.',
+        url: '/',
+        tag: 'tmg-morning-' + today,
+      });
+      const out = await sendToSubscriptions(row.user_id, arr, payload);
+      pushed += out.sent || 0;
+      failed += out.failed || 0;
+    }
+    res.json({ ok: true, users_notified: r.rows.length, pushed, failed });
+  } catch (err) {
+    console.error('[push/cron-morning-reminders]', err);
+    res.status(500).json({ error: 'cron_failed', message: err.message });
+  }
+});
+
 // Everything below requires a session.
 router.use(authMiddleware);
 
@@ -144,50 +189,6 @@ router.post('/test', async (req, res) => {
   }
 });
 
-// POST /api/push/cron-morning-reminders?key=<RELOAD_SECRET>
-// Designed to be hit by a daily cron job around 9am UK time. Iterates
-// every user with reminders enabled who has a confirmed gig today, then
-// pushes a "Tonight: {venue}" notification to each device. Idempotent
-// within a calendar day via the `tag` field (browsers replace prior
-// notifications with the same tag rather than stacking).
-router.post('/cron-morning-reminders', async (req, res) => {
-  const want = process.env.RELOAD_SECRET || 'LEROADSECRET!';
-  if ((req.query && req.query.key) !== want) return res.status(403).json({ error: 'forbidden' });
-  if (!_configured) return res.status(503).json({ error: 'push_not_configured' });
-
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const r = await db.query(
-      `SELECT u.id AS user_id, u.push_subscriptions, g.venue_name, g.band_name, g.start_time, g.load_in_time
-         FROM users u
-         JOIN gigs g ON g.user_id = u.id
-        WHERE u.push_reminders_enabled = TRUE
-          AND jsonb_array_length(COALESCE(u.push_subscriptions, '[]'::jsonb)) > 0
-          AND g.status = 'confirmed'
-          AND g.date = $1`,
-      [today]
-    );
-    let pushed = 0; let failed = 0;
-    for (const row of r.rows) {
-      const arr = Array.isArray(row.push_subscriptions) ? row.push_subscriptions : [];
-      const venue = row.venue_name || row.band_name || 'your gig';
-      const loadInBit = row.load_in_time ? ` Load-in at ${String(row.load_in_time).slice(0, 5)}.` : '';
-      const payload = JSON.stringify({
-        title: 'Tonight: ' + venue,
-        body: 'Gig day.' + loadInBit + ' Tap to open.',
-        url: '/',
-        tag: 'tmg-morning-' + today,
-      });
-      const out = await sendToSubscriptions(row.user_id, arr, payload);
-      pushed += out.sent || 0;
-      failed += out.failed || 0;
-    }
-    res.json({ ok: true, users_notified: r.rows.length, pushed, failed });
-  } catch (err) {
-    console.error('[push/cron-morning-reminders]', err);
-    res.status(500).json({ error: 'cron_failed', message: err.message });
-  }
-});
 
 // Helper: send the same payload to every subscription in `subs` for one
 // user. On 404 / 410 (subscription gone — user uninstalled / cleared
