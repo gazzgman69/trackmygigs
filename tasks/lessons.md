@@ -80,3 +80,15 @@ reload if the bundle is still stale after 60s, and never more than once per
 30s. Recovery when wedged: Replit Git pane (UI) > Discard All > Pull.
 
 - 2026-07-02: Six rapid-fire /api/admin/reload calls in ~30s knocked the dev Repl process over (dead until Gareth pressed Run). Space reload attempts at least ~15s apart and stop after the first success; if the app 502s for over a minute after a deploy, ask for the Run button instead of hammering reload.
+
+## 2026-07-02 (afternoon) — force reload race truncates files
+A reload?force=1 got its `git reset --hard` killed mid-checkout when nodemon
+restarted the process on the first rewritten .js file, leaving public/js/app.js
+ZERO BYTES on the Repl and every later plain pull blocked by "local changes".
+Symptoms to recognize: reload responds empty (connection died with the
+process), /js/app.js serves 0b while / serves fine. Repeat force attempts can
+lose the same race and eventually 502 the whole Repl. Recovery: Gareth runs
+`git fetch origin main && git reset --hard origin/main` in the Shell, then Run.
+Deploy-side rules: after ANY force reload, verify the served /js/app.js
+byte size is sane (not 0) alongside the usual bundle grep; if the response
+came back empty, do not immediately re-force, check file sizes first.
