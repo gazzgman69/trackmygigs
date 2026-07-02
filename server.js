@@ -292,7 +292,9 @@ app.get('/api/admin/cleanup-test-events', async (req, res) => {
       calendarId: handle.calendarId, q: 'TEST',
       timeMin: new Date().toISOString(), maxResults: 100, singleEvents: true,
     });
-    const victims = (list.data.items || []).filter(e => (e.summary || '').startsWith('[TEST]'));
+    // Pushed gigs carry a leading emoji prefix (e.g. "🎵 [TEST] ..."), so
+    // match the tag anywhere in the summary rather than as a strict prefix.
+    const victims = (list.data.items || []).filter(e => (e.summary || '').includes('[TEST]'));
     const deleted = [];
     for (const e of victims) {
       const id = e.recurringEventId || e.id;
