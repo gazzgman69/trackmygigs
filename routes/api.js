@@ -1647,10 +1647,12 @@ router.get('/user/profile', async (req, res) => {
     // Demo 2026-04-28 bug 2: Profile screen rendered "0 Gigs / 0 Acts / £0
     // Earned" for users who clearly had data because /user/profile was
     // shipping the raw user row only — gigs_count, acts_count and
-    // total_earned were never computed. Compute them here in one round
-    // trip so the Profile card matches Home's tax-year totals (which are
-    // confirmed-only per the financial-views memory). Acts count is the
-    // distinct band_name values across all of the user's gigs.
+    // total_earned were never computed. Compute them here in one round trip.
+    // Acts: calendar-imported gigs carry the EVENT TITLE in band_name, so a
+    // naive distinct count made every import its own act. Count the user's
+    // own act name plus distinct band_names from manually logged gigs only.
+    // Earned: confirmed money per the financial-views rule, this tax year,
+    // and only gigs already played. A booked future wedding isn't earned yet.
     const userId = req.user.id;
     const now = new Date();
     const month = now.getMonth() + 1;
@@ -1661,10 +1663,16 @@ router.get('/user/profile', async (req, res) => {
     const stats = await db.query(
       `SELECT
          (SELECT COUNT(*)::int FROM gigs WHERE user_id = $1)                                      AS gigs_count,
-         (SELECT COUNT(DISTINCT band_name)::int FROM gigs
-            WHERE user_id = $1 AND band_name IS NOT NULL AND band_name <> '')                     AS acts_count,
+         (SELECT COUNT(DISTINCT b)::int FROM (
+            SELECT band_name AS b FROM gigs
+             WHERE user_id = $1 AND band_name IS NOT NULL AND band_name <> ''
+               AND (source IS NULL OR source NOT LIKE 'gcal:%')
+            UNION
+            SELECT name FROM users WHERE id = $1 AND name IS NOT NULL AND name <> ''
+          ) acts)                                                                                 AS acts_count,
          (SELECT COALESCE(SUM(fee), 0)::int FROM gigs
-            WHERE user_id = $1 AND status = 'confirmed' AND date >= $2)                           AS total_earned`,
+            WHERE user_id = $1 AND status = 'confirmed'
+              AND date >= $2 AND date <= CURRENT_DATE)                                            AS total_earned`,
       [userId, taxYearStart]
     );
     const counts = stats.rows[0] || { gigs_count: 0, acts_count: 0, total_earned: 0 };
