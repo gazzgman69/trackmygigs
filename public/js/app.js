@@ -784,6 +784,19 @@ function setupScreenHandlers() {
 }
 
 function showScreen(screenName) {
+  // Money and Receipt are nav tabs but not screens: they live in overlay
+  // panels (see setupNavigation). Route them here too so any caller of
+  // showScreen('money') gets the Finance panel instead of a blank app.
+  if (screenName === 'money' || screenName === 'receipt') {
+    const panelId = screenName === 'money' ? 'panel-finance' : 'panel-receipt';
+    openPanel(panelId);
+    if (screenName === 'money' && typeof renderFinancePanel === 'function') renderFinancePanel();
+    if (screenName === 'receipt' && typeof initReceiptPanel === 'function') initReceiptPanel();
+    document.querySelectorAll('.nav-item').forEach((n) => n.classList.remove('active'));
+    const navItem = document.querySelector(`.nav-item[data-screen="${screenName}"]`);
+    if (navItem) navItem.classList.add('active');
+    return;
+  }
   // Close any open overlay panels before switching screens. The bottom-row
   // quick actions (Invoice, Block, Dep, Receipt) open .panel-keep-header
   // overlays that leave the nav visible and clickable. When the user taps a
