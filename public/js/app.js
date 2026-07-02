@@ -13953,8 +13953,7 @@ function renderDiscoverCard(u) {
 
   const bio = (u.bio || '').trim();
   const bioBlock = bio
-    ? `<div class="disc-bio-preview" onclick="toggleDiscoverBio('${escapeAttr(u.id)}', event)" data-bio-id="${escapeAttr(u.id)}">${escapeHtml(bio.length > 100 ? bio.slice(0, 97) + '…' : bio)}</div>
-       <div class="disc-bio-full" id="discBioFull-${escapeAttr(u.id)}" style="display:none;">${escapeHtml(bio)}</div>`
+    ? `<div class="disc-bio-preview">${escapeHtml(bio.length > 100 ? bio.slice(0, 97) + '…' : bio)}</div>`
     : '';
 
   return `
@@ -14009,14 +14008,6 @@ function renderTrustBadges(u) {
   if (!items.length) return '';
   return `<div class="disc-badges">${items.slice(0, 4).join('')}</div>`;
 }
-
-function toggleDiscoverBio(userId, ev) {
-  if (ev) ev.stopPropagation();
-  const full = document.getElementById('discBioFull-' + userId);
-  if (!full) return;
-  full.style.display = full.style.display === 'none' ? 'block' : 'none';
-}
-window.toggleDiscoverBio = toggleDiscoverBio;
 
 // ── Person profile page ─────────────────────────────────────────────────
 // Facebook-style full profile opened by tapping a Find People result card.
