@@ -13715,7 +13715,7 @@ function renderFindTab() {
 
   tabBody.innerHTML = `
     <div style="padding:0 16px 10px;">
-      <input type="text" class="form-input" placeholder="Name, email or phone number" id="discoverQuery"
+      <input type="search" enterkeyhint="search" class="form-input" placeholder="Name, email or phone number" id="discoverQuery"
              value="${escapeHtml(st.query)}"
              oninput="onDiscoverQueryInput(event)"
              onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitDiscoverSearch(); }"
@@ -13756,14 +13756,9 @@ function _detectDiscoverMode(q) {
 function onDiscoverQueryInput(ev) {
   const st = window._discoverState;
   st.query = (ev && ev.target && ev.target.value) || '';
-  // Debounce name mode; email/phone wait for Enter/submit.
-  if (st.mode === 'name') {
-    clearTimeout(window._discoverDebounce);
-    window._discoverDebounce = setTimeout(() => {
-      if ((st.query || '').trim().length >= 2) submitDiscoverSearch();
-      else renderDiscoverEmptyState();
-    }, 350);
-  }
+  // No live search: like email and phone, names only reveal people on a
+  // deliberate submit (Enter / the keyboard search key), never mid-keystroke.
+  if (!(st.query || '').trim()) renderDiscoverEmptyState();
 }
 window.onDiscoverQueryInput = onDiscoverQueryInput;
 
@@ -13858,7 +13853,7 @@ async function renderDiscoverEmptyState() {
   if (!featureVisible('find_musicians_directory')) {
     // Lookup-only mode: no browse rails to suggest from, so explain the
     // search instead of fetching sealed endpoints.
-    results.innerHTML = `<div style="padding:24px 20px;text-align:center;color:var(--text-3);font-size:12px;line-height:1.6;">Search for someone by name, or use their exact email or phone number.<br>If they're on TrackMyGigs, their profile shows up here.</div>`;
+    results.innerHTML = `<div style="padding:24px 20px;text-align:center;color:var(--text-3);font-size:12px;line-height:1.6;">Search for someone by name, or use their exact email or phone number, then hit search.<br>If they're on TrackMyGigs, their profile shows up here.</div>`;
     return;
   }
   results.innerHTML = '<div class="disc-loading">Loading suggestions...</div>';
