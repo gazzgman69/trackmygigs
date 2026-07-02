@@ -13763,9 +13763,20 @@ function _detectDiscoverMode(q) {
 function onDiscoverQueryInput(ev) {
   const st = window._discoverState;
   st.query = (ev && ev.target && ev.target.value) || '';
-  // No live search: like email and phone, names only reveal people on a
-  // deliberate submit (Enter / the keyboard search key), never mid-keystroke.
-  if (!(st.query || '').trim()) renderDiscoverEmptyState();
+  const q = (st.query || '').trim();
+  clearTimeout(window._discoverDebounce);
+  if (!q) { renderDiscoverEmptyState(); return; }
+  // A single word never reveals anyone mid-keystroke, but a full-looking
+  // name (two real words) is deliberate enough: search after a typing
+  // pause without demanding Enter. Email and phone stay submit-only.
+  if (_detectDiscoverMode(q) === 'name') {
+    const words = q.split(/\s+/).filter(Boolean);
+    if (words.length >= 2 && words[words.length - 1].length >= 2) {
+      window._discoverDebounce = setTimeout(() => {
+        if ((window._discoverState.query || '').trim() === q) submitDiscoverSearch();
+      }, 600);
+    }
+  }
 }
 window.onDiscoverQueryInput = onDiscoverQueryInput;
 
