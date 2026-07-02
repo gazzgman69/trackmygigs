@@ -286,20 +286,34 @@ app.get('/api/admin/cleanup-test-events', async (req, res) => {
     if (!handle) return res.status(400).json({ error: 'no google connection' });
     const { google } = require('googleapis');
     const calendar = google.calendar({ version: 'v3', auth: handle.auth });
-    // q tokenizes away punctuation, so search the bare word and enforce the
-    // exact "[TEST]" prefix on the results ourselves.
-    const list = await calendar.events.list({
-      calendarId: handle.calendarId, q: 'TEST',
-      timeMin: new Date().toISOString(), maxResults: 100, singleEvents: true,
-    });
-    // Pushed gigs carry a leading emoji prefix (e.g. "🎵 [TEST] ..."), so
-    // match the tag anywhere in the summary rather than as a strict prefix.
-    const victims = (list.data.items || []).filter(e => (e.summary || '').includes('[TEST]'));
+    // ?match=[TEST],[DEMO],[QA] widens the sweep to other seeded-junk tags.
+    // Tags are locked to the [UPPERCASE] shape so a typo can never match a
+    // real event title. ?since=YYYY-MM-DD reaches back past the default
+    // future-only window (seeded gigs can be in the past by the time we
+    // clean them up).
+    const tags = String(req.query.match || '[TEST]').split(',').map(t => t.trim())
+      .filter(t => /^\[[A-Z]{2,10}\]$/.test(t));
+    if (!tags.length) return res.status(400).json({ error: 'match must be [TAG],[TAG] style' });
+    let timeMin = new Date().toISOString();
+    if (req.query.since && /^\d{4}-\d{2}-\d{2}$/.test(req.query.since)) {
+      timeMin = new Date(req.query.since + 'T00:00:00Z').toISOString();
+    }
     const deleted = [];
-    for (const e of victims) {
-      const id = e.recurringEventId || e.id;
-      try { await calendar.events.delete({ calendarId: handle.calendarId, eventId: id }); deleted.push(e.summary); }
-      catch (err) { if (err.code !== 404 && err.code !== 410) throw err; }
+    for (const tag of tags) {
+      // q tokenizes away punctuation, so search the bare word and enforce
+      // the exact "[TAG]" form on the results ourselves. Pushed gigs carry
+      // a leading emoji prefix (e.g. "🎵 [TEST] ..."), so match the tag
+      // anywhere in the summary rather than as a strict prefix.
+      const list = await calendar.events.list({
+        calendarId: handle.calendarId, q: tag.slice(1, -1),
+        timeMin, maxResults: 100, singleEvents: true,
+      });
+      const victims = (list.data.items || []).filter(e => (e.summary || '').includes(tag));
+      for (const e of victims) {
+        const id = e.recurringEventId || e.id;
+        try { await calendar.events.delete({ calendarId: handle.calendarId, eventId: id }); deleted.push(e.summary); }
+        catch (err) { if (err.code !== 404 && err.code !== 410) throw err; }
+      }
     }
     res.json({ deleted: deleted.length, summaries: deleted });
   } catch (err) {
