@@ -3239,6 +3239,7 @@ function buildCalendarView(content, gigsData, blockedData) {
       <div class="tb ${view !== 'day' && view !== 'week' ? 'ac' : ''}" onclick="switchCalendarView('list')">List</div>
       <div class="tb ${view === 'day' ? 'ac' : ''}" onclick="switchCalendarView('day')">Day</div>
       <div class="tb ${view === 'week' ? 'ac' : ''}" onclick="switchCalendarView('week')">Week</div>
+      <div class="tb" onclick="goCalendarToday()" style="margin-left:auto;color:var(--accent);font-weight:700;">Today</div>
     </div>`;
 
   const googlePins = (layers.google && Array.isArray(window._googlePins)) ? window._googlePins : [];
@@ -3260,13 +3261,70 @@ function buildCalendarView(content, gigsData, blockedData) {
   // every view because the bar used to sit between the toolbar and the grid.
   html += `<div id="calScreenNudgeBar" style="margin-top:12px;"></div>`;
 
+  // Google-style + FAB: THE add affordance (goal 2026-07-02: super easy gig
+  // adding). Expands into Gig / Event / Block, matching Google's create menu.
+  // Absolute inside the fixed .app-container, so it floats over the scroll.
+  html += `
+    <div id="calFabMenu" style="display:none;position:absolute;right:16px;bottom:calc(var(--app-nav-h) + 84px);z-index:60;flex-direction:column;gap:10px;align-items:flex-end;">
+      <button onclick="calFabAct('block')" style="display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:22px;padding:10px 16px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.4);">🚫 Block a date</button>
+      <button onclick="calFabAct('event')" style="display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:22px;padding:10px 16px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.4);">📅 Event</button>
+      <button onclick="calFabAct('gig')" style="display:flex;align-items:center;gap:8px;background:var(--accent);border:none;color:#000;border-radius:22px;padding:12px 18px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.4);">🎵 Gig</button>
+    </div>
+    <button id="calFab" onclick="toggleCalFab()" aria-label="Add" style="position:absolute;right:16px;bottom:calc(var(--app-nav-h) + 16px);width:56px;height:56px;border-radius:28px;background:var(--accent);border:none;color:#000;font-size:28px;font-weight:400;line-height:1;cursor:pointer;z-index:60;box-shadow:0 8px 22px rgba(240,165,0,.35);display:flex;align-items:center;justify-content:center;">+</button>`;
+
   content.innerHTML = html;
+
+  // Swipe navigation, Google's most tactile gesture: horizontal swipe moves
+  // a month in List view, a week in Week view, a day in Day view.
+  if (!content._calSwipeWired) {
+    content._calSwipeWired = true;
+    let sx = 0, sy = 0;
+    content.addEventListener('touchstart', (e) => {
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    }, { passive: true });
+    content.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - sx;
+      const dy = e.changedTouches[0].clientY - sy;
+      if (Math.abs(dx) < 60 || Math.abs(dy) > 50 || currentScreen !== 'calendar') return;
+      const v = window._calViewMode || 'list';
+      const fwd = dx < 0;
+      if (v === 'day') { fwd ? nextCalendarDay() : prevCalendarDay(); }
+      else if (v === 'week') { fwd ? nextCalendarWeek() : prevCalendarWeek(); }
+      else { fwd ? nextCalendarMonth() : prevCalendarMonth(); }
+    }, { passive: true });
+  }
 
   if (view !== 'day' && view !== 'week') {
     setTimeout(initCalListBehaviour, 0);
     loadCalendarListOffers();
   }
 }
+
+function toggleCalFab() {
+  const menu = document.getElementById('calFabMenu');
+  const fab = document.getElementById('calFab');
+  if (!menu || !fab) return;
+  const opening = menu.style.display === 'none';
+  menu.style.display = opening ? 'flex' : 'none';
+  fab.style.transform = opening ? 'rotate(45deg)' : '';
+  fab.style.transition = 'transform .15s ease';
+}
+window.toggleCalFab = toggleCalFab;
+
+function calFabAct(kind) {
+  toggleCalFab();
+  const dateStr = window._calSelectedDate || null;
+  if (kind === 'gig') {
+    if (dateStr) window._prefillGigDate = dateStr;
+    openGigWizard();
+  } else if (kind === 'event') {
+    openPersonalEventForm({ dateStr });
+  } else if (kind === 'block') {
+    if (dateStr) window._prefillBlockDate = dateStr;
+    openPanel('panel-block');
+  }
+}
+window.calFabAct = calFabAct;
 
 function toggleCalendarMenu() {
   const menu = document.getElementById('calendarMenu');
@@ -3958,7 +4016,7 @@ function handleCalendarAction(action) {
   if (action === 'add-gig') {
     openGigWizard();
   } else if (action === 'add-event') {
-    // TODO: implement add-event panel
+    openPersonalEventForm({ dateStr: window._calSelectedDate || null });
   } else if (action === 'block-dates') {
     openPanel('panel-block');
   }
@@ -4057,7 +4115,7 @@ function renderCalendarMonth(currentDate, gigs, blocked, googlePins = []) {
     pinsOnDay.forEach(p => {
       const isNudge = !!(window._calendarNudgesById && window._calendarNudgesById[p.id]);
       const isAllDay = p.all_day || !p.start_time;
-      const hue = isNudge ? 'var(--accent)' : '#4285F4';
+      const hue = isNudge ? 'var(--accent)' : (_peColorHex(p.color_id) || '#4285F4');
       items.push({
         kind: 'pin',
         label: p.summary || 'Busy',
@@ -4233,13 +4291,14 @@ function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
   weekPins.forEach(p => {
     const pDate = (p.date || '').slice(0, 10);
     if (p.all_day || !p.start_time) {
-      if (allDayByDate[pDate]) allDayByDate[pDate].push({ kind: 'pin', label: p.summary || 'Busy', id: p.id, isNudge: !!(window._calendarNudgesById && window._calendarNudgesById[p.id]) });
+      if (allDayByDate[pDate]) allDayByDate[pDate].push({ kind: 'pin', label: p.summary || 'Busy', id: p.id, color_id: p.color_id, isNudge: !!(window._calendarNudgesById && window._calendarNudgesById[p.id]) });
     } else {
       const sMin = toMin(p.start_time);
       const eMin = toMin(p.end_time) != null ? toMin(p.end_time) : sMin + 60;
       timedPins.push({
         kind: 'pin',
         id: p.id,
+        color_id: p.color_id,
         dateStr: pDate,
         startMin: sMin,
         endMin: Math.max(eMin, sMin + 30),
@@ -4352,8 +4411,8 @@ function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
       if (it.kind === 'pin') {
         const isNudge = it.isNudge;
         bg = isNudge ? 'rgba(240,165,0,.18)' : 'rgba(66,133,244,.18)';
-        border = isNudge ? 'var(--accent)' : '#4285F4';
-        col = isNudge ? 'var(--accent)' : '#4285F4';
+        border = isNudge ? 'var(--accent)' : (_peColorHex(it.color_id) || '#4285F4');
+        col = border;
         click = isNudge ? ` onclick="openCalendarNudgeByEventId('${String(it.id).replace(/'/g, "\\'")}')"` : '';
       } else if (it.kind === 'blocked') {
         bg = 'rgba(230,70,70,.16)'; border = 'var(--danger)'; col = 'var(--danger)';
@@ -4444,12 +4503,13 @@ function renderCalendarWeek(currentDate, gigs, blocked, googlePins = []) {
       } else {
         const safeId = String(ev.id).replace(/'/g, "\\'");
         const isNudge = ev.isNudge;
+        const pinHue = isNudge ? 'var(--accent)' : (_peColorHex(ev.color_id) || '#4285F4');
         const bg = isNudge ? 'rgba(240,165,0,.18)' : 'rgba(66,133,244,.18)';
-        const border = isNudge ? 'var(--accent)' : '#4285F4';
+        const border = pinHue;
         const click = isNudge ? ` onclick="openCalendarNudgeByEventId('${safeId}')"` : '';
         const cursor = isNudge ? 'pointer' : 'default';
         html += `<div${click} style="position:absolute;top:${top}px;height:${height}px;left:calc(${evLeftPct}% + 1px);width:calc(${evWidthPct}% - 2px);background:${bg};border-left:3px solid ${border};border-radius:4px;padding:2px 4px;font-size:10px;color:var(--text);overflow:hidden;cursor:${cursor};pointer-events:auto;box-sizing:border-box;" title="${escapeHtml(ev.label)}">
-          <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;color:${isNudge ? 'var(--accent)' : '#4285F4'};">${escapeHtml(ev.label)}</div>
+          <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;color:${pinHue};">${escapeHtml(ev.label)}</div>
           ${height > 28 && ev.sub ? `<div style="font-size:9px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;">${escapeHtml(ev.sub)}</div>` : ''}
         </div>`;
       }
@@ -4560,6 +4620,7 @@ function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
         kind: 'pin',
         label: p.summary || 'Busy',
         id: p.id,
+        color_id: p.color_id,
         isNudge: !!(window._calendarNudgesById && window._calendarNudgesById[p.id]),
       });
     } else {
@@ -4568,6 +4629,7 @@ function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
       timedEvents.push({
         kind: 'pin',
         id: p.id,
+        color_id: p.color_id,
         startMin: sMin,
         endMin: Math.max(eMin, sMin + 30),
         crossMidnight: eMin < sMin,
@@ -4732,7 +4794,7 @@ function renderCalendarDay(currentDate, gigs, blocked, googlePins = []) {
       const click = isNudge ? ` onclick="openCalendarNudgeByEventId('${safeId}')"` : '';
       const cursor = isNudge ? 'pointer' : 'default';
       html += `<div${click} style="position:absolute;top:${top}px;height:${height}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);background:${bg};border-left:3px solid ${border};border-radius:4px;padding:3px 6px;font-size:11px;color:var(--text);overflow:hidden;cursor:${cursor};pointer-events:auto;box-sizing:border-box;" title="${escapeHtml(ev.label)}">
-        <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;color:${isNudge ? 'var(--accent)' : '#4285F4'};">${escapeHtml(ev.label)}</div>
+        <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;color:${pinHue};">${escapeHtml(ev.label)}</div>
         ${height > 30 && ev.sub ? `<div style="font-size:10px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;">${escapeHtml(ev.sub)}</div>` : ''}
       </div>`;
     }
