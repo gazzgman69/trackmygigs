@@ -17721,7 +17721,7 @@ function _renderChatInboxList() {
     html += gigThreads.map(t => renderThreadItem(t, 'gig')).join('');
   }
   if (depThreads.length > 0) {
-    html += '<div style="font-size:11px;font-weight:600;color:#A78BFA;text-transform:uppercase;letter-spacing:1px;padding:12px 20px 6px;">Dep conversations</div>';
+    html += '<div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:1px;padding:12px 20px 6px;">Direct messages</div>';
     html += depThreads.map(t => renderThreadItem(t, 'dep')).join('');
   }
   html += '</div>';
