@@ -1030,6 +1030,65 @@ app.post('/api/admin/wipe-sim-data', async (req, res) => {
   }
 });
 
+// GET /api/admin/db-snapshot?key=...
+// Full-table JSON dump used as a safety net before destructive resets.
+// Skips sessions + magic_links entirely and drops token/secret/bytea
+// columns everywhere else, so the saved file never contains credentials
+// or binary blobs.
+app.get('/api/admin/db-snapshot', async (req, res) => {
+  if (!simAuthOk(req, res)) return;
+  try {
+    const tablesRes = await db.query(
+      `SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`);
+    const skip = new Set(['sessions', 'magic_links']);
+    const tables = {};
+    for (const { tablename } of tablesRes.rows) {
+      if (skip.has(tablename)) continue;
+      const colsRes = await db.query(
+        `SELECT column_name, data_type FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position`,
+        [tablename]);
+      const cols = colsRes.rows
+        .filter(c => c.data_type !== 'bytea' && !/token|secret|password|credential/i.test(c.column_name))
+        .map(c => '"' + c.column_name + '"');
+      if (!cols.length) continue;
+      const dataRes = await db.query(`SELECT ${cols.join(', ')} FROM "${tablename}"`);
+      tables[tablename] = dataRes.rows;
+    }
+    res.json({ ok: true, generated_at: new Date().toISOString(), tables });
+  } catch (err) {
+    console.error('[admin/db-snapshot]', err);
+    res.status(500).json({ error: 'snapshot_failed', message: err.message });
+  }
+});
+
+// POST /api/admin/wipe-all?key=...&confirm=WIPE-EVERYTHING
+// Factory reset: truncates every public table (users included) in one
+// statement. Pure SQL, nothing here talks to Google, so connected
+// calendars are never touched. Requires the literal confirm string so a
+// mistyped call can never fire it.
+app.post('/api/admin/wipe-all', async (req, res) => {
+  if (!simAuthOk(req, res)) return;
+  if (req.query.confirm !== 'WIPE-EVERYTHING') {
+    return res.status(400).json({ error: 'confirm=WIPE-EVERYTHING required' });
+  }
+  try {
+    const tablesRes = await db.query(
+      `SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`);
+    const before = {};
+    for (const { tablename } of tablesRes.rows) {
+      const c = await db.query(`SELECT COUNT(*)::int AS n FROM "${tablename}"`);
+      before[tablename] = c.rows[0].n;
+    }
+    const names = tablesRes.rows.map(r => '"' + r.tablename + '"');
+    await db.query(`TRUNCATE ${names.join(', ')} RESTART IDENTITY CASCADE`);
+    res.json({ ok: true, truncated: names.length, rows_deleted: before });
+  } catch (err) {
+    console.error('[admin/wipe-all]', err);
+    res.status(500).json({ error: 'wipe_failed', message: err.message });
+  }
+});
+
 // Stripe routes. The webhook inside stripeRoutes uses express.raw() itself
 // so mounting here (after express.json) is fine: Express matches the first
 // body-parser that accepts the content-type and the raw parser short-circuits
